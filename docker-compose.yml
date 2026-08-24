@@ -1,0 +1,96 @@
+# سبدیار — استک کامل (web + api + postgres)
+# از ریشهٔ مخزن:
+#   cp docker/env.production.example .env
+#   docker compose up -d --build
+#
+# UI از راه دور: http://46.249.100.230:3000
+
+name: sabadyar
+
+services:
+  db:
+    image: postgres:16-alpine
+    container_name: sabadyar-db
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER:-sabadyar}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-sabadyar}
+      POSTGRES_DB: ${POSTGRES_DB:-sabadyar}
+    volumes:
+      - sabadyar_pg:/var/lib/postgresql/data
+    healthcheck:
+      test: ['CMD-SHELL', 'pg_isready -U ${POSTGRES_USER:-sabadyar} -d ${POSTGRES_DB:-sabadyar}']
+      interval: 5s
+      timeout: 5s
+      retries: 20
+    # فقط داخل شبکهٔ داکر؛ روی اینترنت باز نیست
+    expose:
+      - '5432'
+    networks:
+      - sabadyar
+
+  api:
+    build:
+      context: .
+      dockerfile: docker/Dockerfile.api
+    container_name: sabadyar-api
+    restart: unless-stopped
+    depends_on:
+      db:
+        condition: service_healthy
+    environment:
+      NODE_ENV: production
+      API_PORT: 3001
+      DATABASE_URL: postgresql://${POSTGRES_USER:-sabadyar}:${POSTGRES_PASSWORD:-sabadyar}@db:5432/${POSTGRES_DB:-sabadyar}?schema=public
+      JWT_SECRET: ${JWT_SECRET:-change-me-to-a-long-random-string}
+      LLM_TOKEN_ENCRYPTION_KEY: ${LLM_TOKEN_ENCRYPTION_KEY:-0123456789abcdef0123456789abcdef}
+      CORS_ORIGIN: ${CORS_ORIGIN:-http://46.249.100.230:3000}
+      PLATFORM_LLM_BASE_URL: ${PLATFORM_LLM_BASE_URL:-https://api.openai.com/v1}
+      PLATFORM_LLM_API_KEY: ${PLATFORM_LLM_API_KEY:-}
+      PLATFORM_LLM_MODEL: ${PLATFORM_LLM_MODEL:-gpt-4o-mini}
+    volumes:
+      - sabadyar_uploads:/app/apps/api/uploads
+    ports:
+      - '${API_HOST_PORT:-3001}:3001'
+    healthcheck:
+      test: ['CMD', 'wget', '-qO-', 'http://127.0.0.1:3001/api/market/quotes?take=1']
+      interval: 15s
+      timeout: 5s
+      retries: 10
+      start_period: 40s
+    networks:
+      - sabadyar
+
+  web:
+    build:
+      context: .
+      dockerfile: docker/Dockerfile.web
+      args:
+        NEXT_PUBLIC_API_URL: ${NEXT_PUBLIC_API_URL:-http://46.249.100.230:3001}
+    container_name: sabadyar-web
+    restart: unless-stopped
+    depends_on:
+      api:
+        condition: service_healthy
+    environment:
+      NODE_ENV: production
+      PORT: 3000
+      HOSTNAME: 0.0.0.0
+    ports:
+      - '${WEB_HOST_PORT:-3000}:3000'
+    healthcheck:
+      test: ['CMD', 'wget', '-qO-', 'http://127.0.0.1:3000']
+      interval: 15s
+      timeout: 5s
+      retries: 10
+      start_period: 20s
+    networks:
+      - sabadyar
+
+volumes:
+  sabadyar_pg:
+  sabadyar_uploads:
+
+networks:
+  sabadyar:
+    driver: bridge

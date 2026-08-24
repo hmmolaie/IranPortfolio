@@ -6,15 +6,45 @@
 
 - **وب:** Next.js + React + Tailwind (RTL کامل)
 - **API:** NestJS + Prisma
-- **دیتابیس:** SQLite برای توسعه محلی (اختیاری PostgreSQL با Docker)
+- **دیتابیس:** PostgreSQL (Docker) — برای توسعهٔ بدون Docker می‌توانید موقتاً SQLite بگذارید
 
-## راه‌اندازی
+## اجرای کامل با Docker (توصیه‌شده روی سرور)
+
+روی سرور لینوکس (دسترسی از راه دور روی `46.249.100.230`):
+
+```bash
+cp docker/env.production.example .env
+# در صورت نیاز JWT_SECRET و رمز Postgres را عوض کنید
+docker compose up -d --build
+```
+
+- وب: http://46.249.100.230:3000  
+- API: http://46.249.100.230:3001  
+
+فایروال باید پورت‌های `3000` و `3001` را باز کند. دیتابیس فقط داخل شبکهٔ Docker است و روی اینترنت expose نمی‌شود.
+
+توقف:
+
+```bash
+docker compose down
+```
+
+لاگ‌ها:
+
+```bash
+docker compose logs -f web api
+```
+
+همان استک با مسیر قدیمی هم در دسترس است: `docker compose -f docker/docker-compose.yml up -d --build`
+
+## راه‌اندازی بدون Docker (توسعه)
 
 ```bash
 cp .env.example .env
 cp .env.example apps/api/.env
+# Postgres محلی لازم است؛ یا provider را در schema به sqlite برگردانید
 npm install
-cd apps/api && npx prisma db push && cd ../..
+npm run db:push
 npm run dev:api
 # ترمینال دیگر:
 npm run dev:web
@@ -22,14 +52,6 @@ npm run dev:web
 
 - وب: http://localhost:3000  
 - API: http://localhost:3001  
-
-### PostgreSQL (اختیاری)
-
-```bash
-docker compose -f docker/docker-compose.yml up -d
-```
-
-سپس در `apps/api/prisma/schema.prisma` مقدار `provider` را به `postgresql` برگردانید و `DATABASE_URL` را مطابق `.env.example` تنظیم کنید.
 
 ## امکانات
 
@@ -52,3 +74,4 @@ docker compose -f docker/docker-compose.yml up -d
 | [CONTRIBUTING.md](./CONTRIBUTING.md) | راه‌اندازی و قرارداد مشارکت |
 | [SECURITY.md](./SECURITY.md) | اسرار، گزارش آسیب‌پذیری، مسئولیت محصول |
 | [CHANGELOG.md](./CHANGELOG.md) | تاریخچهٔ نسخه‌ها |
+| [docker/env.production.example](./docker/env.production.example) | نمونه env برای سرور |

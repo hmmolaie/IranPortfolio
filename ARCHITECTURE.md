@@ -57,7 +57,10 @@ Enumها و DTOهای پیشنهاد سبد + لیبل‌های فارسی اس�
 2. **بازار:** اینجست دوره‌ای/دستی → `Instrument` و `PriceBar`.
 3. **صندوق:** آپلود PDF → استخراج متن → امتیاز/استراتژی حدسی → اختیاری در پیشنهادها.
 
-## استقرار محلی
+## استقرار
 
-- پیش‌فرض: SQLite بدون Docker.
-- تولید/اشتراک: `docker/docker-compose.yml` برای Postgres؛ `provider` در schema را به `postgresql` تغییر دهید.
+- **توصیه:** `docker compose up -d --build` — سرویس‌های `web`، `api`، `db`.
+- `NEXT_PUBLIC_API_URL` در **زمان build** وب تزریق می‌شود (آدرس API از دید مرورگر).
+- `CORS_ORIGIN` باید origin همان UI عمومی باشد (مثلاً `http://46.249.100.230:3000`).
+- آپلودها در volume با نام `sabadyar_uploads` ماندگار می‌مانند.
+- schema پیش‌فرض Prisma: `postgresql`.

@@ -11,20 +11,26 @@
 | `apps/web` | Next.js 15 + React 19 + Tailwind (`@sabadyar/web`) |
 | `apps/api` | NestJS 11 + Prisma (`@sabadyar/api`) — پیشوند `/api` |
 | `packages/shared` | انواع و لیبل‌های مشترک (`@sabadyar/shared`) |
-| `docker/` | PostgreSQL اختیاری |
+| `docker/` | Dockerfileهای api/web و نمونه env سرور |
+| `docker-compose.yml` | استک کامل: web + api + postgres |
 
 ## دستورات
 
 ```bash
+# سرور / production
+cp docker/env.production.example .env
+docker compose up -d --build
+
+# توسعه بدون Docker
 cp .env.example .env && cp .env.example apps/api/.env
 npm install
-npm run db:push          # یا: cd apps/api && npx prisma db push
+npm run db:push
 npm run dev:api          # :3001
 npm run dev:web          # :3000
 npm run build
 ```
 
-Node `>=20`. دیتابیس پیش‌فرض SQLite (`apps/api/prisma`).
+Node `>=20`. با Docker دیتابیس PostgreSQL است؛ `NEXT_PUBLIC_API_URL` و `CORS_ORIGIN` باید IP/دامنهٔ عمومی سرور باشند.
 
 ## قواعد اجباری
 

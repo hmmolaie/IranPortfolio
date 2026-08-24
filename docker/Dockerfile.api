@@ -1,0 +1,50 @@
+# syntax=docker/dockerfile:1
+
+FROM node:20-alpine AS deps
+RUN apk add --no-cache libc6-compat openssl
+WORKDIR /app
+COPY package.json package-lock.json ./
+COPY apps/api/package.json ./apps/api/
+COPY apps/web/package.json ./apps/web/
+COPY packages/shared/package.json ./packages/shared/
+RUN npm ci
+
+FROM node:20-alpine AS builder
+RUN apk add --no-cache libc6-compat openssl
+WORKDIR /app
+COPY --from=deps /app/node_modules ./node_modules
+COPY --from=deps /app/package.json /app/package-lock.json ./
+COPY --from=deps /app/apps/api/package.json ./apps/api/
+COPY --from=deps /app/apps/web/package.json ./apps/web/
+COPY --from=deps /app/packages/shared/package.json ./packages/shared/
+COPY packages/shared ./packages/shared
+COPY apps/api ./apps/api
+RUN npm run build -w @sabadyar/shared \
+  && npm run prisma:generate -w @sabadyar/api \
+  && npm run build -w @sabadyar/api
+
+FROM node:20-alpine AS runner
+RUN apk add --no-cache libc6-compat openssl wget
+WORKDIR /app
+ENV NODE_ENV=production
+ENV API_PORT=3001
+
+COPY package.json package-lock.json ./
+COPY apps/api/package.json ./apps/api/
+COPY apps/web/package.json ./apps/web/
+COPY packages/shared/package.json ./packages/shared/
+RUN npm ci --omit=dev && npm cache clean --force
+
+COPY --from=builder /app/packages/shared/dist ./packages/shared/dist
+COPY --from=builder /app/packages/shared/package.json ./packages/shared/package.json
+COPY --from=builder /app/apps/api/dist ./apps/api/dist
+COPY --from=builder /app/apps/api/prisma ./apps/api/prisma
+COPY docker/api-entrypoint.sh /entrypoint.sh
+
+RUN chmod +x /entrypoint.sh \
+  && mkdir -p /app/apps/api/uploads/funds \
+  && npx prisma generate --schema=/app/apps/api/prisma/schema.prisma
+
+WORKDIR /app/apps/api
+EXPOSE 3001
+ENTRYPOINT ["/entrypoint.sh"]

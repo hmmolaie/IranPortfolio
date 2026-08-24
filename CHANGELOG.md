@@ -7,7 +7,13 @@
 
 ### Added
 
+- استک کامل Docker (`docker-compose.yml` + `Dockerfile.api` / `Dockerfile.web`) برای دسترسی از راه دور
+- نمونه env سرور: `docker/env.production.example` (IP پیش‌فرض `46.249.100.230`)
 - مستندات استاندارد مخزن: `AGENTS.md`، `ARCHITECTURE.md`، `CONTRIBUTING.md`، `SECURITY.md`
+
+### Changed
+
+- Prisma datasource پیش‌فرض: PostgreSQL (هماهنگ با Docker)
 
 ## [0.1.0] — 2026-08
 
