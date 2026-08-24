@@ -1,6 +1,6 @@
 import { Injectable, Logger } from '@nestjs/common';
 import { Cron } from '@nestjs/schedule';
-import { AssetType } from '@prisma/client';
+import { AssetType, Prisma } from '@prisma/client';
 import { PrismaService } from '../prisma/prisma.service';
 
 const UA =
@@ -118,9 +118,16 @@ export class MarketService {
           eps,
           pe,
           volume,
-          raw: row,
+          raw: row as Prisma.InputJsonValue,
         },
-        update: { lastPrice, closePrice, eps, pe, volume, raw: row },
+        update: {
+          lastPrice,
+          closePrice,
+          eps,
+          pe,
+          volume,
+          raw: row as Prisma.InputJsonValue,
+        },
       });
       upserted += 1;
     }
@@ -182,9 +189,9 @@ export class MarketService {
             symbol,
             nameFa,
             assetType: AssetType.OPTION,
-            meta: item as object,
+            meta: item as Prisma.InputJsonValue,
           },
-          update: { nameFa, meta: item as object, isActive: true },
+          update: { nameFa, meta: item as Prisma.InputJsonValue, isActive: true },
         });
         await this.prisma.priceBar.upsert({
           where: { instrumentId_tradeDate: { instrumentId: instrument.id, tradeDate } },
@@ -193,9 +200,13 @@ export class MarketService {
             tradeDate,
             lastPrice,
             closePrice: lastPrice,
-            raw: item as object,
+            raw: item as Prisma.InputJsonValue,
           },
-          update: { lastPrice, closePrice: lastPrice, raw: item as object },
+          update: {
+            lastPrice,
+            closePrice: lastPrice,
+            raw: item as Prisma.InputJsonValue,
+          },
         });
       }
     } catch (e) {
