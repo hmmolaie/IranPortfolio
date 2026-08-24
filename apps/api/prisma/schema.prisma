@@ -1,0 +1,243 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "sqlite"
+  url      = env("DATABASE_URL")
+}
+
+enum AssetType {
+  STOCK
+  GOLD_ETF
+  OPTION
+  DEPOSIT
+  FUND
+  CASH
+}
+
+enum PortfolioStrategy {
+  GROWTH
+  VALUE
+  INCOME
+  HEDGED
+  CONSERVATIVE
+  CUSTOM
+}
+
+enum SnapshotKind {
+  SUGGESTION
+  REBALANCE
+  MONTHLY_EVAL
+  USER_ADJUSTED
+}
+
+enum PortfolioEventType {
+  BUY
+  SELL
+  DEPOSIT_CASH
+  WITHDRAW_CASH
+  WEIGHT_EDIT
+  ACCEPT_REBALANCE
+  REJECT_REBALANCE
+}
+
+model User {
+  id           String   @id @default(cuid())
+  email        String   @unique
+  passwordHash String
+  name         String?
+  createdAt    DateTime @default(now())
+  updatedAt    DateTime @updatedAt
+
+  profile     UserProfile?
+  llmSetting  LlmSetting?
+  portfolios  Portfolio[]
+  fundReports FundReport[]
+  lessons     Lesson[]
+  aiTraces    AiTrace[]
+}
+
+model UserProfile {
+  id              String  @id @default(cuid())
+  userId          String  @unique
+  riskTolerance   Int     @default(5)
+  horizonMonths   Int     @default(12)
+  notes           String?
+  user            User    @relation(fields: [userId], references: [id], onDelete: Cascade)
+}
+
+model LlmSetting {
+  id                   String  @id @default(cuid())
+  userId               String  @unique
+  baseUrl              String  @default("https://api.openai.com/v1")
+  model                String  @default("gpt-4o-mini")
+  apiTokenEncrypted    String?
+  usePlatformFallback  Boolean @default(true)
+  user                 User    @relation(fields: [userId], references: [id], onDelete: Cascade)
+}
+
+model Instrument {
+  id        String    @id @default(cuid())
+  insCode   String?   @unique
+  symbol    String
+  nameFa    String
+  assetType AssetType
+  isActive  Boolean   @default(true)
+  meta      Json?
+  createdAt DateTime  @default(now())
+  updatedAt DateTime  @updatedAt
+
+  priceBars     PriceBar[]
+  snapshotItems SnapshotItem[]
+
+  @@unique([symbol, assetType])
+  @@index([assetType])
+}
+
+model PriceBar {
+  id            String   @id @default(cuid())
+  instrumentId  String
+  tradeDate     DateTime
+  lastPrice     Float?
+  closePrice    Float?
+  eps           Float?
+  pe            Float?
+  volume        Float?
+  raw           Json?
+  createdAt     DateTime @default(now())
+
+  instrument Instrument @relation(fields: [instrumentId], references: [id], onDelete: Cascade)
+
+  @@unique([instrumentId, tradeDate])
+  @@index([tradeDate])
+}
+
+model Portfolio {
+  id           String            @id @default(cuid())
+  userId       String
+  name         String
+  strategy     PortfolioStrategy
+  capitalRial  Float
+  cashRial     Float             @default(0)
+  description  String?
+  createdAt    DateTime          @default(now())
+  updatedAt    DateTime          @updatedAt
+
+  user      User                @relation(fields: [userId], references: [id], onDelete: Cascade)
+  snapshots PortfolioSnapshot[]
+  events    PortfolioEvent[]
+
+  @@index([userId])
+}
+
+model PortfolioSnapshot {
+  id                 String       @id @default(cuid())
+  portfolioId        String
+  kind               SnapshotKind
+  strategySummaryFa  String?
+  asOfDate           DateTime     @default(now())
+  totalValueRial     Float?
+  performancePct     Float?
+  meta               Json?
+  createdAt          DateTime     @default(now())
+
+  portfolio Portfolio      @relation(fields: [portfolioId], references: [id], onDelete: Cascade)
+  items     SnapshotItem[]
+
+  @@index([portfolioId])
+}
+
+model SnapshotItem {
+  id         String    @id @default(cuid())
+  snapshotId String
+  instrumentId String?
+  symbol     String
+  assetType  AssetType
+  weightPct  Float
+  quantity   Float
+  amountRial Float
+  reasonFa   String
+  unitPrice  Float?
+
+  snapshot   PortfolioSnapshot @relation(fields: [snapshotId], references: [id], onDelete: Cascade)
+  instrument Instrument?       @relation(fields: [instrumentId], references: [id])
+
+  @@index([snapshotId])
+}
+
+model PortfolioEvent {
+  id          String             @id @default(cuid())
+  portfolioId String
+  type        PortfolioEventType
+  payload     Json
+  noteFa      String?
+  createdAt   DateTime           @default(now())
+
+  portfolio Portfolio @relation(fields: [portfolioId], references: [id], onDelete: Cascade)
+
+  @@index([portfolioId])
+}
+
+model FundReport {
+  id                 String   @id @default(cuid())
+  userId             String
+  fundName           String
+  reportMonth        String
+  filePath           String
+  extractedText      String?
+  guessedStrategyFa  String?
+  rating             Float?
+  useInSuggestions   Boolean  @default(false)
+  analysisJson       Json?
+  createdAt          DateTime @default(now())
+
+  user    User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  lessons Lesson[]
+
+  @@index([userId])
+}
+
+model Lesson {
+  id           String   @id @default(cuid())
+  userId       String
+  fundReportId String?
+  titleFa      String
+  bodyFa       String
+  source       String?
+  createdAt    DateTime @default(now())
+
+  user       User        @relation(fields: [userId], references: [id], onDelete: Cascade)
+  fundReport FundReport? @relation(fields: [fundReportId], references: [id])
+
+  @@index([userId])
+}
+
+model MacroSnapshot {
+  id                String   @id @default(cuid())
+  asOfDate          DateTime
+  inflationPct      Float?
+  interestRatePct   Float?
+  usdIrr            Float?
+  geoRiskScore      Int?
+  summaryFa         String?
+  newsJson          Json?
+  createdAt         DateTime @default(now())
+
+  @@unique([asOfDate])
+}
+
+model AiTrace {
+  id        String   @id @default(cuid())
+  userId    String?
+  purpose   String
+  prompt    String
+  response  String
+  model     String?
+  createdAt DateTime @default(now())
+
+  user User? @relation(fields: [userId], references: [id], onDelete: SetNull)
+
+  @@index([userId])
+  @@index([purpose])
+}

@@ -1,0 +1,41 @@
+@import url('https://fonts.googleapis.com/css2?family=Vazirmatn:wght@300;400;500;600;700&display=swap');
+
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+:root {
+  --navy: #0b1f3a;
+  --cream: #f7f5f1;
+  --gold: #a8893e;
+}
+
+html {
+  direction: rtl;
+}
+
+body {
+  @apply bg-cream text-navy-900 font-sans antialiased;
+  background-image:
+    radial-gradient(ellipse at 100% 0%, rgba(11, 31, 58, 0.06), transparent 50%),
+    radial-gradient(ellipse at 0% 100%, rgba(168, 137, 62, 0.08), transparent 45%);
+  min-height: 100vh;
+}
+
+@layer components {
+  .btn-primary {
+    @apply inline-flex items-center justify-center rounded-lg bg-navy-900 px-5 py-2.5 text-sm font-medium text-white transition hover:bg-navy-800;
+  }
+  .btn-secondary {
+    @apply inline-flex items-center justify-center rounded-lg border border-navy-900/15 bg-white px-5 py-2.5 text-sm font-medium text-navy-900 transition hover:bg-navy-50;
+  }
+  .card {
+    @apply rounded-2xl border border-navy-900/8 bg-white/90 p-6 shadow-soft backdrop-blur;
+  }
+  .input {
+    @apply w-full rounded-lg border border-navy-900/15 bg-white px-3 py-2.5 text-sm outline-none ring-navy-900/20 focus:ring-2;
+  }
+  .label {
+    @apply mb-1.5 block text-sm font-medium text-navy-800;
+  }
+}

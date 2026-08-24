@@ -1,0 +1,21 @@
+{
+  "name": "sabadyar",
+  "private": true,
+  "version": "0.1.0",
+  "workspaces": [
+    "apps/*",
+    "packages/*"
+  ],
+  "scripts": {
+    "dev": "npm run dev --workspaces --if-present",
+    "dev:web": "npm run dev -w @sabadyar/web",
+    "dev:api": "npm run start:dev -w @sabadyar/api",
+    "build": "npm run build --workspaces --if-present",
+    "db:generate": "npm run prisma:generate -w @sabadyar/api",
+    "db:migrate": "npm run prisma:migrate -w @sabadyar/api",
+    "db:push": "npm run prisma:push -w @sabadyar/api"
+  },
+  "engines": {
+    "node": ">=20"
+  }
+}
