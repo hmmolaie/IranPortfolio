@@ -42,3 +42,13 @@ docker compose -f docker/docker-compose.yml up -d
 - دارایی‌ها: سهام، طلا، سپرده، اختیار فعال
 
 **توجه:** خروجی سایت مشاوره سرمایه‌گذاری رسمی نیست.
+
+## مستندات
+
+| فایل | موضوع |
+|------|--------|
+| [AGENTS.md](./AGENTS.md) | راهنمای ایجنت‌های کدنویسی (Cursor و سازگار) |
+| [ARCHITECTURE.md](./ARCHITECTURE.md) | معماری مونوریپو و جریان‌های اصلی |
+| [CONTRIBUTING.md](./CONTRIBUTING.md) | راه‌اندازی و قرارداد مشارکت |
+| [SECURITY.md](./SECURITY.md) | اسرار، گزارش آسیب‌پذیری، مسئولیت محصول |
+| [CHANGELOG.md](./CHANGELOG.md) | تاریخچهٔ نسخه‌ها |
