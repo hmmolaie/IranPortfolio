@@ -30,7 +30,7 @@ body {
     @apply inline-flex items-center justify-center rounded-lg border border-navy-900/15 bg-white px-5 py-2.5 text-sm font-medium text-navy-900 transition hover:bg-navy-50;
   }
   .card {
-    @apply rounded-2xl border border-navy-900/8 bg-white/90 p-6 shadow-soft backdrop-blur;
+    @apply rounded-2xl border border-navy-900/10 bg-white/90 p-6 shadow-soft backdrop-blur;
   }
   .input {
     @apply w-full rounded-lg border border-navy-900/15 bg-white px-3 py-2.5 text-sm outline-none ring-navy-900/20 focus:ring-2;
