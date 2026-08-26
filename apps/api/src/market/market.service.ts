@@ -1,24 +1,50 @@
-import { Injectable, Logger } from '@nestjs/common';
+import { Injectable, Logger, ServiceUnavailableException } from '@nestjs/common';
 import { Cron } from '@nestjs/schedule';
 import { AssetType, Prisma } from '@prisma/client';
 import { PrismaService } from '../prisma/prisma.service';
 
 const UA =
-  'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36';
+  'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/126.0.0.0 Safari/537.36';
+
+const FETCH_HEADERS: Record<string, string> = {
+  'User-Agent': UA,
+  Accept: 'application/json,text/plain,*/*',
+  Referer: 'https://www.tsetmc.com/',
+  Origin: 'https://www.tsetmc.com',
+};
 
 const GOLD_SYMBOLS = new Set(['عیار', 'طلا', 'گوهر', 'زر', 'ناب', 'مثقال', 'جواهر']);
 
+/** تاریخ تقویمی تهران (بازار ایران)، نه UTC کانتینر */
+function tehranNow(): Date {
+  return new Date(new Date().toLocaleString('en-US', { timeZone: 'Asia/Tehran' }));
+}
+
 function todayDateOnly(): Date {
-  const d = new Date();
+  const d = tehranNow();
   return new Date(Date.UTC(d.getFullYear(), d.getMonth(), d.getDate()));
 }
 
-function toDEven(d = new Date()): string {
+function toDEven(d = tehranNow()): string {
   const y = d.getFullYear();
   const m = String(d.getMonth() + 1).padStart(2, '0');
   const day = String(d.getDate()).padStart(2, '0');
   return `${y}${m}${day}`;
 }
+
+function shiftDEven(dEven: string, daysBack: number): string {
+  const y = Number(dEven.slice(0, 4));
+  const m = Number(dEven.slice(4, 6)) - 1;
+  const day = Number(dEven.slice(6, 8));
+  const d = new Date(Date.UTC(y, m, day));
+  d.setUTCDate(d.getUTCDate() - daysBack);
+  const yy = d.getUTCFullYear();
+  const mm = String(d.getUTCMonth() + 1).padStart(2, '0');
+  const dd = String(d.getUTCDate()).padStart(2, '0');
+  return `${yy}${mm}${dd}`;
+}
+
+type IngestRow = Record<string, unknown>;
 
 @Injectable()
 export class MarketService {
@@ -73,26 +99,32 @@ export class MarketService {
   async ingestToday() {
     const tradeDate = todayDateOnly();
     const dEven = toDEven();
-    this.logger.log(`شروع اینجست بازار برای ${dEven}`);
+    this.logger.log(`شروع اینجست بازار برای ${dEven} (تهران)`);
 
-    let rows = await this.fetchHistoryInDay(dEven);
+    const { rows, source } = await this.fetchMarketRows(dEven);
+    this.logger.log(`منبع داده: ${source} — ${rows.length} ردیف خام`);
+
     if (!rows.length) {
-      rows = await this.fetchMarketWatchLegacy();
+      throw new ServiceUnavailableException(
+        'هیچ داده‌ای از TSETMC/TSE دریافت نشد. دسترسی شبکه سرور به cdn.tsetmc.com یا webgw.tse.ir را بررسی کنید.',
+      );
     }
 
     let upserted = 0;
     for (const row of rows) {
       const symbol = String(row.lVal18AFC ?? row.symbol ?? '').trim();
       const nameFa = String(row.lVal30 ?? row.name ?? symbol).trim();
-      const insCode = row.insCode ? String(row.insCode) : undefined;
+      const insCodeRaw = row.insCode != null ? String(row.insCode).trim() : '';
+      // InsCode عددی tsetmc؛ ISINهای webgw را در insCode نگذار
+      const insCode = /^\d+$/.test(insCodeRaw) ? insCodeRaw : undefined;
       if (!symbol) continue;
 
       const assetType = this.detectAssetType(symbol, row);
       const lastPrice = this.num(row.pDrCotVal ?? row.pl ?? row.lastPrice);
-      const closePrice = this.num(row.pClosing ?? row.pc ?? row.closePrice);
+      const closePrice = this.num(row.pClosing ?? row.pc ?? row.closePrice ?? row.closingPrice);
       const eps = this.num(row.eps ?? row.estimatedEPS);
       const pe = this.num(row.pe ?? row.sectorPE ?? row.pE);
-      const volume = this.num(row.qTotTran5J ?? row.volume);
+      const volume = this.num(row.qTotTran5J ?? row.volume ?? row.tradeVolume);
 
       const instrument = insCode
         ? await this.prisma.instrument.upsert({
@@ -138,7 +170,76 @@ export class MarketService {
     // تکمیل EPS/PE برای نمادهای مهم (نمونه‌ای محدود برای سرعت)
     await this.enrichEpsPe(80);
 
-    return { tradeDate: dEven, upserted };
+    return { tradeDate: dEven, upserted, source };
+  }
+
+  private async fetchMarketRows(
+    dEven: string,
+  ): Promise<{ rows: IngestRow[]; source: string }> {
+    const webgw = await this.fetchWebgwMarketWatch();
+    if (webgw.length) return { rows: webgw, source: 'webgw.MarketWatch' };
+
+    for (let back = 0; back <= 6; back++) {
+      const day = back === 0 ? dEven : shiftDEven(dEven, back);
+      const hist = await this.fetchHistoryInDay(day);
+      if (hist.length) {
+        return {
+          rows: hist,
+          source: back === 0 ? `cdn.HistoryInDay:${day}` : `cdn.HistoryInDay:${day}(fallback)`,
+        };
+      }
+    }
+
+    const legacy = await this.fetchMarketWatchLegacy();
+    if (legacy.length) return { rows: legacy, source: 'old.MarketWatchInit' };
+
+    return { rows: [], source: 'none' };
+  }
+
+  /** دیده‌بان زنده TSE — جایگزین پایدار GetMarketWatch خالی و HistoryInDay روز تعطیل */
+  private async fetchWebgwMarketWatch(): Promise<IngestRow[]> {
+    const paths = [
+      { url: 'https://webgw.tse.ir/InstrumentProvider/api/v1/MarketWatch/MarketWatchCash/fa', kind: 'cash' },
+      { url: 'https://webgw.tse.ir/InstrumentProvider/api/v1/MarketWatch/MarketWatchEtf/fa', kind: 'etf' },
+    ];
+    const rows: IngestRow[] = [];
+    for (const p of paths) {
+      try {
+        const data = await this.fetchJson(p.url);
+        const items: unknown[] = data?.Items ?? data?.items ?? [];
+        if (!Array.isArray(items) || !items.length) {
+          this.logger.warn(`webgw ${p.kind}: پاسخ خالی`);
+          continue;
+        }
+        for (const item of items as IngestRow[]) {
+          const symbol = String(
+            item.instrumentName ?? item.instrument_Name ?? item.namad ?? item.lVal18AFC ?? '',
+          ).trim();
+          if (!symbol) continue;
+          const nameFa = String(
+            item.companyNamePersian ?? item.companyName ?? item.lVal30 ?? symbol,
+          ).trim();
+          const isin = item.instrumentId != null ? String(item.instrumentId) : undefined;
+          rows.push({
+            ...item,
+            symbol,
+            lVal18AFC: symbol,
+            lVal30: nameFa,
+            lastPrice: item.lastPrice ?? item.lastprice,
+            closingPrice: item.closingPrice ?? item.closingprice,
+            tradeVolume: item.tradeVolume ?? item.tradevolume,
+            pe: item.pe,
+            eps: item.eps,
+            assetHint: p.kind,
+            isin,
+          });
+        }
+        this.logger.log(`webgw ${p.kind}: ${items.length} آیتم`);
+      } catch (e) {
+        this.logger.warn(`webgw ${p.kind} ناموفق: ${(e as Error).message}`);
+      }
+    }
+    return rows;
   }
 
   private async enrichEpsPe(limit: number) {
@@ -179,8 +280,10 @@ export class MarketService {
       );
       const items: unknown[] = data?.Items ?? data?.items ?? [];
       for (const item of items as Record<string, unknown>[]) {
-        const symbol = String(item.namad ?? item.lVal18AFC ?? item.symbol ?? '').trim();
-        const nameFa = String(item.name ?? item.lVal30 ?? symbol).trim();
+        const symbol = String(item.namad ?? item.lVal18AFC ?? item.instrumentName ?? item.symbol ?? '').trim();
+        const nameFa = String(
+          item.name ?? item.lVal30 ?? item.companyNamePersian ?? symbol,
+        ).trim();
         if (!symbol) continue;
         const lastPrice = this.num(item.akharinGheymat ?? item.pl ?? item.lastPrice);
         const instrument = await this.prisma.instrument.upsert({
@@ -241,17 +344,17 @@ export class MarketService {
   }
 
   private detectAssetType(symbol: string, row: Record<string, unknown>): AssetType {
-    if (GOLD_SYMBOLS.has(symbol) || String(row.lVal30 ?? '').includes('طلا')) {
+    const name = String(row.lVal30 ?? row.name ?? '');
+    if (GOLD_SYMBOLS.has(symbol) || name.includes('طلا')) {
       return AssetType.GOLD_ETF;
     }
-    const flow = String(row.flowTitle ?? '');
-    if (flow.includes('اختیار') || symbol.startsWith('ط') || symbol.startsWith('ض')) {
-      // rough heuristic; real options come from options endpoint
+    if (row.assetHint === 'etf') {
+      return AssetType.FUND;
     }
     return AssetType.STOCK;
   }
 
-  private async fetchHistoryInDay(dEven: string): Promise<Record<string, unknown>[]> {
+  private async fetchHistoryInDay(dEven: string): Promise<IngestRow[]> {
     try {
       const data = await this.fetchJson(
         `https://cdn.tsetmc.com/api/ClosingPrice/GetInstrmentsHistoryInDay/${dEven}`,
@@ -272,22 +375,27 @@ export class MarketService {
           };
         });
       }
+      this.logger.warn(`HistoryInDay ${dEven}: بدون ردیف`);
     } catch (e) {
-      this.logger.warn(`HistoryInDay ناموفق: ${(e as Error).message}`);
+      this.logger.warn(`HistoryInDay ${dEven} ناموفق: ${(e as Error).message}`);
     }
     return [];
   }
 
-  private async fetchMarketWatchLegacy(): Promise<Record<string, unknown>[]> {
+  private async fetchMarketWatchLegacy(): Promise<IngestRow[]> {
     try {
       const res = await fetch('https://old.tsetmc.com/tsev2/data/MarketWatchInit.aspx?h=0&r=0', {
-        headers: { 'User-Agent': UA },
+        headers: FETCH_HEADERS,
       });
+      if (!res.ok) throw new Error(`HTTP ${res.status}`);
       const text = await res.text();
-      // فرمت: بخش‌ها با @ جدا می‌شوند؛ بخش دوم نمادها با ; و فیلدها با ,
+      if (/مسدود|دسترسی شما|request rejected|access denied/i.test(text)) {
+        throw new Error('پاسخ مسدود/WAF');
+      }
+      // فرمت: بخش‌ها با @ جدا؛ بخش نمادها معمولاً index 2
       const parts = text.split('@');
       const body = parts[2] ?? parts[1] ?? '';
-      const rows: Record<string, unknown>[] = [];
+      const rows: IngestRow[] = [];
       for (const line of body.split(';')) {
         if (!line.trim()) continue;
         const f = line.split(',');
@@ -312,14 +420,19 @@ export class MarketService {
 
   private async fetchJson(url: string) {
     const res = await fetch(url, {
-      headers: {
-        'User-Agent': UA,
-        Accept: 'application/json,text/plain,*/*',
-        Referer: 'https://www.tsetmc.com/',
-      },
+      headers: FETCH_HEADERS,
+      signal: AbortSignal.timeout(45_000),
     });
     if (!res.ok) throw new Error(`${res.status} ${url}`);
-    return res.json();
+    const text = await res.text();
+    if (/مسدود|دسترسی شما|request rejected|access denied/i.test(text)) {
+      throw new Error(`blocked: ${url}`);
+    }
+    try {
+      return JSON.parse(text);
+    } catch {
+      throw new Error(`non-json: ${url}`);
+    }
   }
 
   private num(v: unknown): number | null {
