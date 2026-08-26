@@ -1,10 +1,9 @@
-import { Injectable } from '@nestjs/common';
+import { BadRequestException, Injectable } from '@nestjs/common';
 import { PrismaService } from '../prisma/prisma.service';
 import { LlmService } from '../llm/llm.service';
 import * as fs from 'fs/promises';
 import * as path from 'path';
-// eslint-disable-next-line @typescript-eslint/no-require-imports
-const pdfParse = require('pdf-parse') as (buf: Buffer) => Promise<{ text: string }>;
+import { extractFundReportText, safeUploadFileName } from './extract-report-text';
 
 @Injectable()
 export class FundsService {
@@ -27,18 +26,19 @@ export class FundsService {
     fundName: string,
     reportMonth: string,
   ) {
+    if (!file?.buffer?.length) {
+      throw new BadRequestException('فایل گزارش ارسال نشده است');
+    }
+
+    const { kind, text: extractedText } = await extractFundReportText(file);
+    if (kind === 'unknown' && !extractedText) {
+      throw new BadRequestException('فرمت فایل پشتیبانی نمی‌شود. PDF یا Excel (xlsx/xls) بفرستید.');
+    }
+
     const dir = path.join(process.cwd(), 'uploads', 'funds');
     await fs.mkdir(dir, { recursive: true });
-    const filePath = path.join(dir, `${Date.now()}-${file.originalname}`);
+    const filePath = path.join(dir, safeUploadFileName(file.originalname));
     await fs.writeFile(filePath, file.buffer);
-
-    let extractedText = '';
-    try {
-      const parsed = await pdfParse(file.buffer);
-      extractedText = (parsed.text || '').slice(0, 40000);
-    } catch {
-      extractedText = '';
-    }
 
     type Analysis = {
       guessedStrategyFa: string;
@@ -47,28 +47,46 @@ export class FundsService {
       lessons: Array<{ titleFa: string; bodyFa: string }>;
       strengthsFa?: string;
       weaknessesFa?: string;
+      allocationSummaryFa?: string;
     };
 
     let analysis: Analysis;
     try {
       analysis = await this.llm.chatJson<Analysis>(
-        'fund_pdf_analysis',
-        `تو تحلیل‌گر صندوق‌های سرمایه‌گذاری ایران هستی. از متن گزارش ماهانه، استراتژی مدیر را حدس بزن و امتیاز ۱ تا ۱۰ بده.
+        'fund_report_analysis',
+        `تو تحلیل‌گر صندوق‌های سرمایه‌گذاری ایران هستی.
+ورودی می‌تواند متن PDF یا جدول استخراج‌شده از Excel صورت‌وضعیت پرتفوی باشد (شیت‌های سهام، کالا/شمش، اوراق، سپرده و درآمدها).
+از ترکیب دارایی‌ها، درصدها، خرید/فروش طی دوره و درآمدها، استراتژی مدیر را حدس بزن و امتیاز ۱ تا ۱۰ بده.
+فقط یک شیء JSON معتبر برگردان، بدون توضیح اضافه.
 JSON:
 {
   "guessedStrategyFa": "...",
+  "allocationSummaryFa": "خلاصه تخصیص (سهام/اوراق/طلا/سپرده/...)",
   "rating": 7.5,
   "useInSuggestions": true,
   "strengthsFa": "...",
   "weaknessesFa": "...",
   "lessons": [{"titleFa":"...","bodyFa":"..."}]
 }`,
-        `نام صندوق: ${fundName}\nماه گزارش: ${reportMonth}\nمتن:\n${extractedText || 'متن استخراج نشد'}`,
+        `نام صندوق: ${fundName}
+ماه گزارش: ${reportMonth}
+نوع فایل: ${kind}
+متن/جداول استخراج‌شده:
+${extractedText || 'متن استخراج نشد — فقط بر اساس نام صندوق و ماه حدس محتاطانه بزن و امتیاز را پایین نگه دار.'}`,
         userId,
       );
-    } catch {
+      if (!analysis.guessedStrategyFa) {
+        throw new Error('فیلد guessedStrategyFa در پاسخ مدل نبود');
+      }
+      analysis.lessons = Array.isArray(analysis.lessons) ? analysis.lessons : [];
+      analysis.rating = Number(analysis.rating) || 5;
+      if (analysis.allocationSummaryFa) {
+        analysis.guessedStrategyFa = `${analysis.guessedStrategyFa}\n\nتخصیص: ${analysis.allocationSummaryFa}`;
+      }
+    } catch (e) {
+      const detail = (e as Error).message?.slice(0, 240) || 'خطای نامشخص';
       analysis = {
-        guessedStrategyFa: 'تحلیل LLM در دسترس نبود؛ بررسی دستی لازم است.',
+        guessedStrategyFa: `تحلیل LLM در دسترس نبود؛ بررسی دستی لازم است. (${detail})`,
         rating: 5,
         useInSuggestions: false,
         lessons: [],

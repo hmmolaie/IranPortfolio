@@ -1,10 +1,14 @@
 import { createCipheriv, createDecipheriv, randomBytes, scryptSync } from 'crypto';
-import { Injectable } from '@nestjs/common';
+import { Injectable, Logger } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import { PrismaService } from '../prisma/prisma.service';
 
+type LlmCreds = { baseUrl: string; model: string; apiKey: string };
+
 @Injectable()
 export class LlmService {
+  private readonly logger = new Logger(LlmService.name);
+
   constructor(
     private readonly prisma: PrismaService,
     private readonly config: ConfigService,
@@ -38,18 +42,18 @@ export class LlmService {
     data: { baseUrl?: string; model?: string; apiToken?: string; usePlatformFallback?: boolean },
   ) {
     const update: Record<string, unknown> = {};
-    if (data.baseUrl !== undefined) update.baseUrl = data.baseUrl;
-    if (data.model !== undefined) update.model = data.model;
+    if (data.baseUrl !== undefined) update.baseUrl = data.baseUrl.trim().replace(/\/$/, '');
+    if (data.model !== undefined) update.model = data.model.trim();
     if (data.usePlatformFallback !== undefined) update.usePlatformFallback = data.usePlatformFallback;
-    if (data.apiToken) update.apiTokenEncrypted = this.encryptToken(data.apiToken);
+    if (data.apiToken) update.apiTokenEncrypted = this.encryptToken(data.apiToken.trim());
 
     return this.prisma.llmSetting.upsert({
       where: { userId },
       create: {
         userId,
-        baseUrl: data.baseUrl ?? 'https://api.openai.com/v1',
-        model: data.model ?? 'gpt-4o-mini',
-        apiTokenEncrypted: data.apiToken ? this.encryptToken(data.apiToken) : undefined,
+        baseUrl: (data.baseUrl ?? 'https://api.openai.com/v1').trim().replace(/\/$/, ''),
+        model: (data.model ?? 'gpt-4o-mini').trim(),
+        apiTokenEncrypted: data.apiToken ? this.encryptToken(data.apiToken.trim()) : undefined,
         usePlatformFallback: data.usePlatformFallback ?? true,
       },
       update,
@@ -67,7 +71,7 @@ export class LlmService {
     };
   }
 
-  private async resolveCredentials(userId?: string) {
+  private async resolveCredentials(userId?: string): Promise<LlmCreds> {
     if (userId) {
       const s = await this.prisma.llmSetting.findUnique({ where: { userId } });
       if (s?.apiTokenEncrypted) {
@@ -93,6 +97,80 @@ export class LlmService {
     };
   }
 
+  private requestHeaders(creds: LlmCreds): Record<string, string> {
+    const headers: Record<string, string> = {
+      Authorization: `Bearer ${creds.apiKey}`,
+      'Content-Type': 'application/json',
+    };
+    // OpenRouter: هدرهای توصیه‌شده برای شناسایی اپ
+    if (creds.baseUrl.includes('openrouter.ai')) {
+      headers['HTTP-Referer'] =
+        this.config.get<string>('CORS_ORIGIN')?.split(',')[0]?.trim() || 'https://sabadyar.local';
+      headers['X-Title'] = 'Sabadyar';
+      headers['X-OpenRouter-Title'] = 'Sabadyar';
+    }
+    return headers;
+  }
+
+  private extractJsonObject(content: string): unknown {
+    const trimmed = content.trim();
+    if (!trimmed) throw new Error('پاسخ خالی از مدل');
+
+    try {
+      return JSON.parse(trimmed);
+    } catch {
+      // بلوک ```json ... ```
+      const fenced = trimmed.match(/```(?:json)?\s*([\s\S]*?)```/i);
+      if (fenced?.[1]) {
+        return JSON.parse(fenced[1].trim());
+      }
+      const start = trimmed.indexOf('{');
+      const end = trimmed.lastIndexOf('}');
+      if (start >= 0 && end > start) {
+        return JSON.parse(trimmed.slice(start, end + 1));
+      }
+      throw new Error('پاسخ مدل JSON معتبر نبود');
+    }
+  }
+
+  private async callChatCompletions(
+    creds: LlmCreds,
+    body: Record<string, unknown>,
+  ): Promise<string> {
+    const res = await fetch(`${creds.baseUrl}/chat/completions`, {
+      method: 'POST',
+      headers: this.requestHeaders(creds),
+      body: JSON.stringify(body),
+      signal: AbortSignal.timeout(120_000),
+    });
+
+    const text = await res.text();
+    if (!res.ok) {
+      throw new Error(`خطای LLM: ${res.status} ${text.slice(0, 800)}`);
+    }
+
+    let json: {
+      choices?: Array<{ message?: { content?: string | Array<{ type?: string; text?: string }> } }>;
+      error?: { message?: string };
+    };
+    try {
+      json = JSON.parse(text);
+    } catch {
+      throw new Error(`پاسخ غیرJSON از LLM: ${text.slice(0, 300)}`);
+    }
+
+    if (json.error?.message) {
+      throw new Error(`خطای LLM: ${json.error.message}`);
+    }
+
+    const raw = json.choices?.[0]?.message?.content;
+    if (typeof raw === 'string') return raw;
+    if (Array.isArray(raw)) {
+      return raw.map((p) => (typeof p === 'string' ? p : p.text ?? '')).join('');
+    }
+    return '';
+  }
+
   async chatJson<T>(
     purpose: string,
     systemPrompt: string,
@@ -100,34 +178,28 @@ export class LlmService {
     userId?: string,
   ): Promise<T> {
     const creds = await this.resolveCredentials(userId);
-    const body = {
+    const messages = [
+      { role: 'system', content: systemPrompt },
+      { role: 'user', content: userPrompt },
+    ];
+
+    const baseBody: Record<string, unknown> = {
       model: creds.model,
       temperature: 0.3,
-      response_format: { type: 'json_object' },
-      messages: [
-        { role: 'system', content: systemPrompt },
-        { role: 'user', content: userPrompt },
-      ],
+      messages,
     };
 
-    const res = await fetch(`${creds.baseUrl}/chat/completions`, {
-      method: 'POST',
-      headers: {
-        Authorization: `Bearer ${creds.apiKey}`,
-        'Content-Type': 'application/json',
-      },
-      body: JSON.stringify(body),
-    });
-
-    if (!res.ok) {
-      const text = await res.text();
-      throw new Error(`خطای LLM: ${res.status} ${text}`);
+    let content: string;
+    try {
+      // بعضی مدل‌های رایگان OpenRouter از response_format پشتیبانی نمی‌کنند
+      content = await this.callChatCompletions(creds, {
+        ...baseBody,
+        response_format: { type: 'json_object' },
+      });
+    } catch (e) {
+      this.logger.warn(`chatJson با json_object ناموفق، تلاش بدون آن: ${(e as Error).message}`);
+      content = await this.callChatCompletions(creds, baseBody);
     }
-
-    const json = (await res.json()) as {
-      choices?: Array<{ message?: { content?: string } }>;
-    };
-    const content = json.choices?.[0]?.message?.content ?? '{}';
 
     await this.prisma.aiTrace.create({
       data: {
@@ -139,33 +211,27 @@ export class LlmService {
       },
     });
 
-    return JSON.parse(content) as T;
+    return this.extractJsonObject(content) as T;
   }
 
   async chatText(purpose: string, systemPrompt: string, userPrompt: string, userId?: string) {
     const creds = await this.resolveCredentials(userId);
-    const res = await fetch(`${creds.baseUrl}/chat/completions`, {
-      method: 'POST',
-      headers: {
-        Authorization: `Bearer ${creds.apiKey}`,
-        'Content-Type': 'application/json',
-      },
-      body: JSON.stringify({
-        model: creds.model,
-        temperature: 0.4,
-        messages: [
-          { role: 'system', content: systemPrompt },
-          { role: 'user', content: userPrompt },
-        ],
-      }),
+    const content = await this.callChatCompletions(creds, {
+      model: creds.model,
+      temperature: 0.4,
+      messages: [
+        { role: 'system', content: systemPrompt },
+        { role: 'user', content: userPrompt },
+      ],
     });
-    if (!res.ok) throw new Error(`خطای LLM: ${res.status} ${await res.text()}`);
-    const json = (await res.json()) as {
-      choices?: Array<{ message?: { content?: string } }>;
-    };
-    const content = json.choices?.[0]?.message?.content ?? '';
     await this.prisma.aiTrace.create({
-      data: { userId, purpose, prompt: `${systemPrompt}\n---\n${userPrompt}`, response: content, model: creds.model },
+      data: {
+        userId,
+        purpose,
+        prompt: `${systemPrompt}\n---\n${userPrompt}`,
+        response: content,
+        model: creds.model,
+      },
     });
     return content;
   }

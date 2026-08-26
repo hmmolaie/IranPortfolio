@@ -56,7 +56,7 @@ export default function FundsPage() {
         body: fd,
       });
       if (!res.ok) throw new Error(await res.text());
-      setMsg('PDF تحلیل شد و ذخیره گردید.');
+      setMsg('گزارش تحلیل شد و ذخیره گردید.');
       setFile(null);
       await load();
     } catch (err) {
@@ -71,7 +71,7 @@ export default function FundsPage() {
       <div>
         <h1 className="text-3xl font-bold">صندوق‌های سرمایه‌گذاری</h1>
         <p className="mt-2 text-navy-800/70">
-          PDF ماه قبل را بارگذاری کنید تا استراتژی مدیر حدس زده و امتیازدهی شود
+          گزارش ماهانه را به‌صورت PDF یا Excel (xlsx/xls) بارگذاری کنید تا ترکیب پرتفوی استخراج و استراتژی مدیر تحلیل شود
         </p>
       </div>
 
@@ -90,10 +90,10 @@ export default function FundsPage() {
           />
         </div>
         <div className="sm:col-span-2">
-          <label className="label">فایل PDF</label>
+          <label className="label">فایل گزارش (PDF یا Excel)</label>
           <input
             type="file"
-            accept="application/pdf"
+            accept=".pdf,.xlsx,.xls,application/pdf,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet,application/vnd.ms-excel"
             onChange={(e) => setFile(e.target.files?.[0] ?? null)}
             required
           />
