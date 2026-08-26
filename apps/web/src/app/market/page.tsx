@@ -56,10 +56,13 @@ export default function MarketPage() {
     setLoading(true);
     setMsg('');
     try {
-      const res = await api<{ upserted: number; tradeDate: string }>('/market/ingest', {
+      const res = await api<{ upserted: number; tradeDate: string; source?: string }>('/market/ingest', {
         method: 'POST',
       });
-      setMsg(`به‌روزرسانی انجام شد: ${res.upserted.toLocaleString('fa-IR')} نماد برای ${res.tradeDate}`);
+      const src = res.source ? ` (منبع: ${res.source})` : '';
+      setMsg(
+        `به‌روزرسانی انجام شد: ${res.upserted.toLocaleString('fa-IR')} نماد برای ${res.tradeDate}${src}`,
+      );
       await load();
     } catch (e) {
       setMsg((e as Error).message);

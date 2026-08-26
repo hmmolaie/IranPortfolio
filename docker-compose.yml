@@ -48,6 +48,9 @@ services:
       PLATFORM_LLM_BASE_URL: ${PLATFORM_LLM_BASE_URL:-https://api.openai.com/v1}
       PLATFORM_LLM_API_KEY: ${PLATFORM_LLM_API_KEY:-}
       PLATFORM_LLM_MODEL: ${PLATFORM_LLM_MODEL:-gpt-4o-mini}
+      # کلید رایگان از https://brsapi.ir — برای اینجست بازار از سرور خارج ایران ضروری است
+      BRS_API_KEY: ${BRS_API_KEY:-}
+      BRS_API_TYPES: ${BRS_API_TYPES:-1}
     volumes:
       - sabadyar_uploads:/app/apps/api/uploads
     ports:

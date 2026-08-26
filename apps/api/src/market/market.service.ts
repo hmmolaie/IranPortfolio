@@ -106,7 +106,7 @@ export class MarketService {
 
     if (!rows.length) {
       throw new ServiceUnavailableException(
-        'هیچ داده‌ای از TSETMC/TSE دریافت نشد. دسترسی شبکه سرور به cdn.tsetmc.com یا webgw.tse.ir را بررسی کنید.',
+        'هیچ داده‌ای از بازار دریافت نشد. سرور شما IP خارج ایران دارد؛ در .env مقدار BRS_API_KEY را از https://brsapi.ir تنظیم کنید و کانتینر api را دوباره بالا بیاورید.',
       );
     }
 
@@ -167,8 +167,10 @@ export class MarketService {
     await this.ensureDepositInstrument(tradeDate);
     await this.ingestOptions(tradeDate);
 
-    // تکمیل EPS/PE برای نمادهای مهم (نمونه‌ای محدود برای سرعت)
-    await this.enrichEpsPe(80);
+    // EPS/PE از CDN فقط وقتی منبع ایرانی در دسترس باشد (از VPS خارجی timeout می‌شود)
+    if (source.startsWith('cdn.') || source.startsWith('webgw.')) {
+      await this.enrichEpsPe(80);
+    }
 
     return { tradeDate: dEven, upserted, source };
   }
@@ -176,6 +178,10 @@ export class MarketService {
   private async fetchMarketRows(
     dEven: string,
   ): Promise<{ rows: IngestRow[]; source: string }> {
+    // اولویت ۱: BrsApi — از IP خارج ایران کار می‌کند (سرور فعلی Contabo/اروپا)
+    const brs = await this.fetchBrsApiAllSymbols();
+    if (brs.length) return { rows: brs, source: 'brsapi.AllSymbols' };
+
     const webgw = await this.fetchWebgwMarketWatch();
     if (webgw.length) return { rows: webgw, source: 'webgw.MarketWatch' };
 
@@ -196,7 +202,65 @@ export class MarketService {
     return { rows: [], source: 'none' };
   }
 
-  /** دیده‌بان زنده TSE — جایگزین پایدار GetMarketWatch خالی و HistoryInDay روز تعطیل */
+  /**
+   * پروکسی عمومی TSETMC — مناسب سرور خارج ایران.
+   * کلید رایگان: https://brsapi.ir  → متغیر محیطی BRS_API_KEY
+   */
+  private async fetchBrsApiAllSymbols(): Promise<IngestRow[]> {
+    const key = process.env.BRS_API_KEY?.trim();
+    if (!key) {
+      this.logger.warn(
+        'BRS_API_KEY تنظیم نشده؛ برای سرور خارج ایران این کلید لازم است (brsapi.ir).',
+      );
+      return [];
+    }
+
+    const types = (process.env.BRS_API_TYPES ?? '1').split(',').map((t) => t.trim()).filter(Boolean);
+    const rows: IngestRow[] = [];
+    const seen = new Set<string>();
+
+    for (const type of types) {
+      const url = `https://Api.BrsApi.ir/Tsetmc/AllSymbols.php?key=${encodeURIComponent(key)}&type=${encodeURIComponent(type)}`;
+      try {
+        const data = await this.fetchJson(url);
+        const list: unknown[] = Array.isArray(data)
+          ? data
+          : Array.isArray(data?.data)
+            ? data.data
+            : Array.isArray(data?.AllSymbols)
+              ? data.AllSymbols
+              : [];
+        if (!list.length) {
+          this.logger.warn(`BrsApi type=${type}: پاسخ خالی یا غیرمجاز`);
+          continue;
+        }
+        for (const item of list as IngestRow[]) {
+          const symbol = String(item.l18 ?? item.lVal18AFC ?? item.symbol ?? '').trim();
+          if (!symbol || seen.has(symbol)) continue;
+          seen.add(symbol);
+          const nameFa = String(item.l30 ?? item.lVal30 ?? item.name ?? symbol).trim();
+          const insCode = item.id != null ? String(item.id) : undefined;
+          rows.push({
+            ...item,
+            symbol,
+            lVal18AFC: symbol,
+            lVal30: nameFa,
+            insCode,
+            pl: item.pl,
+            pc: item.pc,
+            eps: item.eps,
+            pe: item.pe,
+            qTotTran5J: item.tvol,
+            assetHint: type === '1' ? undefined : `brs-${type}`,
+          });
+        }
+        this.logger.log(`BrsApi type=${type}: ${list.length} آیتم`);
+      } catch (e) {
+        this.logger.warn(`BrsApi type=${type} ناموفق: ${(e as Error).message}`);
+      }
+    }
+    return rows;
+  }
   private async fetchWebgwMarketWatch(): Promise<IngestRow[]> {
     const paths = [
       { url: 'https://webgw.tse.ir/InstrumentProvider/api/v1/MarketWatch/MarketWatchCash/fa', kind: 'cash' },
@@ -421,7 +485,7 @@ export class MarketService {
   private async fetchJson(url: string) {
     const res = await fetch(url, {
       headers: FETCH_HEADERS,
-      signal: AbortSignal.timeout(45_000),
+      signal: AbortSignal.timeout(15_000),
     });
     if (!res.ok) throw new Error(`${res.status} ${url}`);
     const text = await res.text();
