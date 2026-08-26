@@ -124,16 +124,16 @@ export default function SettingsPage() {
       <form onSubmit={saveLlm} className="card grid max-w-2xl gap-4">
         <h2 className="text-lg font-semibold">API مدل زبانی</h2>
         <p className="text-sm text-navy-800/60">
-          آدرس پایه سازگار با OpenAI. برای OpenRouter مقدار{' '}
+          برای OpenRouter آدرس{' '}
           <span dir="ltr" className="font-mono text-xs">
             https://openrouter.ai/api/v1
           </span>{' '}
-          و مدل مثل{' '}
-          <span dir="ltr" className="font-mono text-xs">
-            z-ai/glm-5.2:free
-          </span>{' '}
-          را وارد کنید.
-          {llm.hasToken ? ' توکن قبلاً ذخیره شده است.' : ''}
+          را بگذارید. مدل‌های <strong>رایگان</strong> اغلب خطای ۴۲۹ (شلوغی) می‌دهند؛ چند مدل را با ویرگول بنویسید تا یکی‌یکی امتحان شوند، مثلاً:
+          <br />
+          <span dir="ltr" className="mt-1 inline-block font-mono text-xs">
+            meta-llama/llama-3.3-70b-instruct:free, google/gemma-3-27b-it:free, qwen/qwen3-4b:free
+          </span>
+          {llm.hasToken ? ' — توکن قبلاً ذخیره شده است.' : ''}
         </p>
         <div>
           <label className="label">Base URL</label>
@@ -145,12 +145,13 @@ export default function SettingsPage() {
           />
         </div>
         <div>
-          <label className="label">مدل</label>
+          <label className="label">مدل (چندتایی با ویرگول = جایگزین خودکار)</label>
           <input
             className="input"
             value={llm.model}
             onChange={(e) => setLlm({ ...llm, model: e.target.value })}
             dir="ltr"
+            placeholder="model-a:free, model-b:free"
           />
         </div>
         <div>

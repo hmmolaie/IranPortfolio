@@ -3,7 +3,32 @@ import { Injectable, Logger } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import { PrismaService } from '../prisma/prisma.service';
 
-type LlmCreds = { baseUrl: string; model: string; apiKey: string };
+type LlmCreds = { baseUrl: string; model: string; apiKey: string; fallbackModels: string[] };
+
+class LlmHttpError extends Error {
+  constructor(
+    message: string,
+    readonly status: number,
+    readonly body: string,
+  ) {
+    super(message);
+  }
+
+  get isRateLimited() {
+    return this.status === 429 || /rate.?limit/i.test(this.body) || /rate.?limit/i.test(this.message);
+  }
+}
+
+function sleep(ms: number) {
+  return new Promise((r) => setTimeout(r, ms));
+}
+
+function parseModelList(raw: string): string[] {
+  return raw
+    .split(/[,|\n]/)
+    .map((s) => s.trim())
+    .filter(Boolean);
+}
 
 @Injectable()
 export class LlmService {
@@ -72,12 +97,16 @@ export class LlmService {
   }
 
   private async resolveCredentials(userId?: string): Promise<LlmCreds> {
+    const envFallbacks = parseModelList(this.config.get<string>('LLM_MODEL_FALLBACKS') ?? '');
+
     if (userId) {
       const s = await this.prisma.llmSetting.findUnique({ where: { userId } });
       if (s?.apiTokenEncrypted) {
+        const models = parseModelList(s.model);
         return {
           baseUrl: s.baseUrl.replace(/\/$/, ''),
-          model: s.model,
+          model: models[0] ?? s.model,
+          fallbackModels: [...models.slice(1), ...envFallbacks],
           apiKey: this.decryptToken(s.apiTokenEncrypted),
         };
       }
@@ -87,12 +116,15 @@ export class LlmService {
     }
     const apiKey = this.config.get<string>('PLATFORM_LLM_API_KEY');
     if (!apiKey) throw new Error('هیچ توکن LLM در دسترس نیست. در تنظیمات کلید خود را وارد کنید.');
+    const primary = this.config.get<string>('PLATFORM_LLM_MODEL') ?? 'gpt-4o-mini';
+    const models = parseModelList(primary);
     return {
       baseUrl: (this.config.get<string>('PLATFORM_LLM_BASE_URL') ?? 'https://api.openai.com/v1').replace(
         /\/$/,
         '',
       ),
-      model: this.config.get<string>('PLATFORM_LLM_MODEL') ?? 'gpt-4o-mini',
+      model: models[0] ?? primary,
+      fallbackModels: [...models.slice(1), ...envFallbacks],
       apiKey,
     };
   }
@@ -102,7 +134,6 @@ export class LlmService {
       Authorization: `Bearer ${creds.apiKey}`,
       'Content-Type': 'application/json',
     };
-    // OpenRouter: هدرهای توصیه‌شده برای شناسایی اپ
     if (creds.baseUrl.includes('openrouter.ai')) {
       headers['HTTP-Referer'] =
         this.config.get<string>('CORS_ORIGIN')?.split(',')[0]?.trim() || 'https://sabadyar.local';
@@ -119,7 +150,6 @@ export class LlmService {
     try {
       return JSON.parse(trimmed);
     } catch {
-      // بلوک ```json ... ```
       const fenced = trimmed.match(/```(?:json)?\s*([\s\S]*?)```/i);
       if (fenced?.[1]) {
         return JSON.parse(fenced[1].trim());
@@ -131,6 +161,15 @@ export class LlmService {
       }
       throw new Error('پاسخ مدل JSON معتبر نبود');
     }
+  }
+
+  private humanizeError(err: unknown): Error {
+    if (err instanceof LlmHttpError && err.isRateLimited) {
+      return new Error(
+        'محدودیت نرخ OpenRouter (۴۲۹): مدل‌های رایگان موقتاً شلوغ‌اند. چند دقیقه صبر کنید، مدل‌های جایگزین را با ویرگول در تنظیمات بنویسید، یا در openrouter.ai اعتبار بخرید.',
+      );
+    }
+    return err instanceof Error ? err : new Error(String(err));
   }
 
   private async callChatCompletions(
@@ -146,12 +185,12 @@ export class LlmService {
 
     const text = await res.text();
     if (!res.ok) {
-      throw new Error(`خطای LLM: ${res.status} ${text.slice(0, 800)}`);
+      throw new LlmHttpError(`خطای LLM: ${res.status} ${text.slice(0, 800)}`, res.status, text);
     }
 
     let json: {
       choices?: Array<{ message?: { content?: string | Array<{ type?: string; text?: string }> } }>;
-      error?: { message?: string };
+      error?: { message?: string; code?: number | string };
     };
     try {
       json = JSON.parse(text);
@@ -160,7 +199,8 @@ export class LlmService {
     }
 
     if (json.error?.message) {
-      throw new Error(`خطای LLM: ${json.error.message}`);
+      const code = Number(json.error.code) || 0;
+      throw new LlmHttpError(`خطای LLM: ${json.error.message}`, code || 500, json.error.message);
     }
 
     const raw = json.choices?.[0]?.message?.content;
@@ -169,6 +209,42 @@ export class LlmService {
       return raw.map((p) => (typeof p === 'string' ? p : p.text ?? '')).join('');
     }
     return '';
+  }
+
+  /** تلاش روی چند مدل + retry برای ۴۲۹ */
+  private async callWithModelFallback(
+    creds: LlmCreds,
+    makeBody: (model: string) => Record<string, unknown>,
+  ): Promise<{ content: string; model: string }> {
+    const models = [creds.model, ...creds.fallbackModels].filter(
+      (m, i, arr) => m && arr.indexOf(m) === i,
+    );
+    const maxAttemptsPerModel = 3;
+    let lastErr: unknown;
+
+    for (const model of models) {
+      for (let attempt = 1; attempt <= maxAttemptsPerModel; attempt++) {
+        try {
+          const content = await this.callChatCompletions(creds, makeBody(model));
+          return { content, model };
+        } catch (e) {
+          lastErr = e;
+          const rateLimited = e instanceof LlmHttpError && e.isRateLimited;
+          this.logger.warn(
+            `LLM مدل=${model} تلاش=${attempt}/${maxAttemptsPerModel}: ${(e as Error).message.slice(0, 180)}`,
+          );
+          if (rateLimited && attempt < maxAttemptsPerModel) {
+            await sleep(1500 * attempt * attempt);
+            continue;
+          }
+          // برای ۴۲۹ برو سراغ مدل بعدی؛ برای بقیه خطاها اگر json_object بود لایه بالا retry می‌کند
+          if (rateLimited) break;
+          throw e;
+        }
+      }
+    }
+
+    throw this.humanizeError(lastErr);
   }
 
   async chatJson<T>(
@@ -183,22 +259,34 @@ export class LlmService {
       { role: 'user', content: userPrompt },
     ];
 
-    const baseBody: Record<string, unknown> = {
-      model: creds.model,
-      temperature: 0.3,
-      messages,
-    };
-
+    let usedModel = creds.model;
     let content: string;
     try {
-      // بعضی مدل‌های رایگان OpenRouter از response_format پشتیبانی نمی‌کنند
-      content = await this.callChatCompletions(creds, {
-        ...baseBody,
+      const r = await this.callWithModelFallback(creds, (model) => ({
+        model,
+        temperature: 0.3,
+        messages,
         response_format: { type: 'json_object' },
-      });
+        ...(creds.baseUrl.includes('openrouter.ai') && creds.fallbackModels.length
+          ? { models: [model, ...creds.fallbackModels.filter((m) => m !== model)] }
+          : {}),
+      }));
+      content = r.content;
+      usedModel = r.model;
     } catch (e) {
+      if (e instanceof LlmHttpError && e.isRateLimited) throw this.humanizeError(e);
       this.logger.warn(`chatJson با json_object ناموفق، تلاش بدون آن: ${(e as Error).message}`);
-      content = await this.callChatCompletions(creds, baseBody);
+      try {
+        const r = await this.callWithModelFallback(creds, (model) => ({
+          model,
+          temperature: 0.3,
+          messages,
+        }));
+        content = r.content;
+        usedModel = r.model;
+      } catch (e2) {
+        throw this.humanizeError(e2);
+      }
     }
 
     await this.prisma.aiTrace.create({
@@ -207,7 +295,7 @@ export class LlmService {
         purpose,
         prompt: `${systemPrompt}\n---\n${userPrompt}`,
         response: content,
-        model: creds.model,
+        model: usedModel,
       },
     });
 
@@ -216,23 +304,27 @@ export class LlmService {
 
   async chatText(purpose: string, systemPrompt: string, userPrompt: string, userId?: string) {
     const creds = await this.resolveCredentials(userId);
-    const content = await this.callChatCompletions(creds, {
-      model: creds.model,
-      temperature: 0.4,
-      messages: [
-        { role: 'system', content: systemPrompt },
-        { role: 'user', content: userPrompt },
-      ],
-    });
-    await this.prisma.aiTrace.create({
-      data: {
-        userId,
-        purpose,
-        prompt: `${systemPrompt}\n---\n${userPrompt}`,
-        response: content,
-        model: creds.model,
-      },
-    });
-    return content;
+    try {
+      const { content, model } = await this.callWithModelFallback(creds, (m) => ({
+        model: m,
+        temperature: 0.4,
+        messages: [
+          { role: 'system', content: systemPrompt },
+          { role: 'user', content: userPrompt },
+        ],
+      }));
+      await this.prisma.aiTrace.create({
+        data: {
+          userId,
+          purpose,
+          prompt: `${systemPrompt}\n---\n${userPrompt}`,
+          response: content,
+          model,
+        },
+      });
+      return content;
+    } catch (e) {
+      throw this.humanizeError(e);
+    }
   }
 }

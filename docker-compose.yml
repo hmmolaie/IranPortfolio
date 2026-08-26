@@ -51,6 +51,7 @@ services:
       # کلید رایگان از https://brsapi.ir — برای اینجست بازار از سرور خارج ایران ضروری است
       BRS_API_KEY: ${BRS_API_KEY:-}
       BRS_API_TYPES: ${BRS_API_TYPES:-1}
+      LLM_MODEL_FALLBACKS: ${LLM_MODEL_FALLBACKS:-}
     volumes:
       - sabadyar_uploads:/app/apps/api/uploads
     ports:
