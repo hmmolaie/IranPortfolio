@@ -22,6 +22,7 @@ export default function FundsPage() {
   const [file, setFile] = useState<File | null>(null);
   const [msg, setMsg] = useState('');
   const [loading, setLoading] = useState(false);
+  const [deletingId, setDeletingId] = useState<string | null>(null);
 
   async function load() {
     const token = getToken();
@@ -63,6 +64,25 @@ export default function FundsPage() {
       setMsg((err as Error).message);
     } finally {
       setLoading(false);
+    }
+  }
+
+  async function onDelete(id: string, name: string) {
+    if (!confirm(`گزارش «${name}» حذف شود؟`)) return;
+    setDeletingId(id);
+    setMsg('');
+    try {
+      const res = await fetch(`${API_URL}/api/funds/${id}`, {
+        method: 'DELETE',
+        headers: { Authorization: `Bearer ${getToken()}` },
+      });
+      if (!res.ok) throw new Error(await res.text());
+      setFunds((prev) => prev.filter((f) => f.id !== id));
+      setMsg('گزارش حذف شد.');
+    } catch (err) {
+      setMsg((err as Error).message);
+    } finally {
+      setDeletingId(null);
     }
   }
 
@@ -112,13 +132,23 @@ export default function FundsPage() {
                 <h2 className="text-lg font-semibold">{f.fundName}</h2>
                 <p className="text-sm text-navy-800/50">گزارش {f.reportMonth}</p>
               </div>
-              <div className="text-sm">
-                امتیاز: <strong>{formatNum(f.rating)}</strong>
-                {f.useInSuggestions && (
-                  <span className="ms-2 rounded bg-gold-400/20 px-2 py-0.5 text-xs text-gold-500">
-                    قابل استفاده در پیشنهاد
-                  </span>
-                )}
+              <div className="flex flex-wrap items-center gap-3 text-sm">
+                <span>
+                  امتیاز: <strong>{formatNum(f.rating)}</strong>
+                  {f.useInSuggestions && (
+                    <span className="ms-2 rounded bg-gold-400/20 px-2 py-0.5 text-xs text-gold-500">
+                      قابل استفاده در پیشنهاد
+                    </span>
+                  )}
+                </span>
+                <button
+                  type="button"
+                  className="btn-secondary !px-3 !py-1.5 text-xs text-red-700 hover:bg-red-50"
+                  disabled={deletingId === f.id}
+                  onClick={() => onDelete(f.id, f.fundName)}
+                >
+                  {deletingId === f.id ? 'در حال حذف...' : 'حذف'}
+                </button>
               </div>
             </div>
             <p className="mt-3 leading-7 text-navy-800/80">{f.guessedStrategyFa}</p>

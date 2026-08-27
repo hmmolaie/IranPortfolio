@@ -2,6 +2,8 @@ import {
   Controller,
   Get,
   Post,
+  Delete,
+  Param,
   Req,
   UploadedFile,
   UseGuards,
@@ -39,5 +41,10 @@ export class FundsController {
     @Body() body: UploadMetaDto,
   ) {
     return this.funds.uploadAndAnalyze(req.user.userId, file, body.fundName, body.reportMonth);
+  }
+
+  @Delete(':id')
+  remove(@Req() req: { user: { userId: string } }, @Param('id') id: string) {
+    return this.funds.remove(req.user.userId, id);
   }
 }

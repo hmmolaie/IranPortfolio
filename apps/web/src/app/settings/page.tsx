@@ -4,12 +4,45 @@ import { FormEvent, useEffect, useState } from 'react';
 import { useRouter } from 'next/navigation';
 import { api, getToken } from '@/lib/api';
 
+type ProviderId = 'openrouter' | 'openai' | 'custom';
+
+const PROVIDERS: Record<
+  ProviderId,
+  { label: string; baseUrl: string; model: string; hint: string }
+> = {
+  openrouter: {
+    label: 'OpenRouter',
+    baseUrl: 'https://openrouter.ai/api/v1',
+    model: 'meta-llama/llama-3.3-70b-instruct:free, google/gemma-3-27b-it:free',
+    hint: 'کلید sk-or-v1-... از openrouter.ai — مدل‌های رایگان ممکن است ۴۲۹ بدهند.',
+  },
+  openai: {
+    label: 'OpenAI',
+    baseUrl: 'https://api.openai.com/v1',
+    model: 'gpt-4o-mini',
+    hint: 'کلید sk-... از platform.openai.com',
+  },
+  custom: {
+    label: 'سفارشی (سازگار با OpenAI)',
+    baseUrl: '',
+    model: '',
+    hint: 'هر endpoint سازگار با /chat/completions (مثلاً DeepSeek، Groq، Azure).',
+  },
+};
+
+function detectProvider(baseUrl: string): ProviderId {
+  if (baseUrl.includes('openrouter.ai')) return 'openrouter';
+  if (baseUrl.includes('api.openai.com')) return 'openai';
+  return 'custom';
+}
+
 export default function SettingsPage() {
   const router = useRouter();
   const [profile, setProfile] = useState({ name: '', riskTolerance: 5, horizonMonths: 12, notes: '' });
+  const [provider, setProvider] = useState<ProviderId>('openrouter');
   const [llm, setLlm] = useState({
-    baseUrl: 'https://api.openai.com/v1',
-    model: 'gpt-4o-mini',
+    baseUrl: 'https://openrouter.ai/api/v1',
+    model: 'meta-llama/llama-3.3-70b-instruct:free',
     apiToken: '',
     usePlatformFallback: true,
     hasToken: false,
@@ -39,6 +72,7 @@ export default function SettingsPage() {
       hasToken: boolean;
     } | null>('/llm/settings').then((s) => {
       if (s) {
+        setProvider(detectProvider(s.baseUrl));
         setLlm((prev) => ({
           ...prev,
           baseUrl: s.baseUrl,
@@ -49,6 +83,16 @@ export default function SettingsPage() {
       }
     });
   }, [router]);
+
+  function applyProvider(next: ProviderId) {
+    setProvider(next);
+    const p = PROVIDERS[next];
+    setLlm((prev) => ({
+      ...prev,
+      baseUrl: p.baseUrl || prev.baseUrl,
+      model: p.model || prev.model,
+    }));
+  }
 
   async function saveProfile(e: FormEvent) {
     e.preventDefault();
@@ -123,24 +167,37 @@ export default function SettingsPage() {
 
       <form onSubmit={saveLlm} className="card grid max-w-2xl gap-4">
         <h2 className="text-lg font-semibold">API مدل زبانی</h2>
-        <p className="text-sm text-navy-800/60">
-          برای OpenRouter آدرس{' '}
-          <span dir="ltr" className="font-mono text-xs">
-            https://openrouter.ai/api/v1
-          </span>{' '}
-          را بگذارید. مدل‌های <strong>رایگان</strong> اغلب خطای ۴۲۹ (شلوغی) می‌دهند؛ چند مدل را با ویرگول بنویسید تا یکی‌یکی امتحان شوند، مثلاً:
-          <br />
-          <span dir="ltr" className="mt-1 inline-block font-mono text-xs">
-            meta-llama/llama-3.3-70b-instruct:free, google/gemma-3-27b-it:free, qwen/qwen3-4b:free
-          </span>
-          {llm.hasToken ? ' — توکن قبلاً ذخیره شده است.' : ''}
+        <p className="rounded-lg bg-navy-50 px-3 py-2 text-sm text-navy-800/80">
+          اشتراک Cursor API عمومی برای اپلیکیشن‌های بیرونی ندارد؛ فقط داخل IDE کار می‌کند. برای سبدیار از
+          OpenRouter، OpenAI یا هر سرویس سازگار با OpenAI استفاده کنید.
         </p>
+
+        <div>
+          <label className="label">ارائه‌دهنده</label>
+          <select
+            className="input"
+            value={provider}
+            onChange={(e) => applyProvider(e.target.value as ProviderId)}
+          >
+            {(Object.keys(PROVIDERS) as ProviderId[]).map((id) => (
+              <option key={id} value={id}>
+                {PROVIDERS[id].label}
+              </option>
+            ))}
+          </select>
+          <p className="mt-1 text-xs text-navy-800/55">{PROVIDERS[provider].hint}</p>
+        </div>
+
         <div>
           <label className="label">Base URL</label>
           <input
             className="input"
             value={llm.baseUrl}
-            onChange={(e) => setLlm({ ...llm, baseUrl: e.target.value })}
+            onChange={(e) => {
+              const baseUrl = e.target.value;
+              setLlm({ ...llm, baseUrl });
+              setProvider(detectProvider(baseUrl));
+            }}
             dir="ltr"
           />
         </div>

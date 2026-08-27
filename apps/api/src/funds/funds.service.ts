@@ -1,4 +1,4 @@
-import { BadRequestException, Injectable } from '@nestjs/common';
+import { BadRequestException, Injectable, NotFoundException } from '@nestjs/common';
 import { PrismaService } from '../prisma/prisma.service';
 import { LlmService } from '../llm/llm.service';
 import * as fs from 'fs/promises';
@@ -18,6 +18,28 @@ export class FundsService {
       orderBy: { createdAt: 'desc' },
       include: { lessons: true },
     });
+  }
+
+  async remove(userId: string, id: string) {
+    const report = await this.prisma.fundReport.findFirst({ where: { id, userId } });
+    if (!report) {
+      throw new NotFoundException('گزارش پیدا نشد');
+    }
+
+    await this.prisma.$transaction([
+      this.prisma.lesson.deleteMany({ where: { fundReportId: id, userId } }),
+      this.prisma.fundReport.delete({ where: { id } }),
+    ]);
+
+    if (report.filePath) {
+      try {
+        await fs.unlink(report.filePath);
+      } catch {
+        // فایل ممکن است قبلاً حذف شده باشد
+      }
+    }
+
+    return { ok: true, id };
   }
 
   async uploadAndAnalyze(
