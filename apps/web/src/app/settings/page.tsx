@@ -13,6 +13,15 @@ type FundDefinition = {
   description?: string | null;
 };
 
+type LlmPrompt = {
+  purpose: string;
+  labelFa: string;
+  descriptionFa: string;
+  systemPrompt: string;
+  defaultSystemPrompt: string;
+  isCustom: boolean;
+};
+
 const PROVIDERS: Record<
   ProviderId,
   { label: string; baseUrl: string; model: string; hint: string }
@@ -63,7 +72,15 @@ export default function SettingsPage() {
   });
   const [fundDefs, setFundDefs] = useState<FundDefinition[]>([]);
   const [newFund, setNewFund] = useState({ nameFa: '', symbolCode: '', description: '' });
+  const [prompts, setPrompts] = useState<LlmPrompt[]>([]);
+  const [openPrompt, setOpenPrompt] = useState<string | null>(null);
+  const [promptBusy, setPromptBusy] = useState('');
   const [msg, setMsg] = useState('');
+
+  async function loadPrompts() {
+    const list = await api<LlmPrompt[]>('/llm/prompts');
+    setPrompts(list);
+  }
 
   async function loadFundDefs() {
     const defs = await api<FundDefinition[]>('/funds/definitions');
@@ -112,6 +129,7 @@ export default function SettingsPage() {
       }
     });
     loadFundDefs().catch(() => undefined);
+    loadPrompts().catch(() => undefined);
   }, [router]);
 
   function applyProvider(next: ProviderId) {
@@ -178,11 +196,44 @@ export default function SettingsPage() {
     setMsg('صندوق حذف شد.');
   }
 
+  function updatePromptText(purpose: string, systemPrompt: string) {
+    setPrompts((prev) => prev.map((p) => (p.purpose === purpose ? { ...p, systemPrompt } : p)));
+  }
+
+  async function savePrompt(purpose: string) {
+    const p = prompts.find((x) => x.purpose === purpose);
+    if (!p) return;
+    setPromptBusy(purpose);
+    try {
+      await api(`/llm/prompts/${purpose}`, {
+        method: 'PUT',
+        body: JSON.stringify({ systemPrompt: p.systemPrompt }),
+      });
+      await loadPrompts();
+      setMsg(`پرامپت «${p.labelFa}» ذخیره شد.`);
+    } finally {
+      setPromptBusy('');
+    }
+  }
+
+  async function resetPrompt(purpose: string) {
+    const p = prompts.find((x) => x.purpose === purpose);
+    if (!p || !confirm(`پرامپت «${p.labelFa}» به پیش‌فرض برگردد؟`)) return;
+    setPromptBusy(purpose);
+    try {
+      await api(`/llm/prompts/${purpose}`, { method: 'DELETE' });
+      await loadPrompts();
+      setMsg(`پرامپت «${p.labelFa}» بازنشانی شد.`);
+    } finally {
+      setPromptBusy('');
+    }
+  }
+
   return (
     <div className="space-y-8">
       <div>
         <h1 className="text-3xl font-bold">تنظیمات</h1>
-        <p className="mt-2 text-navy-800/70">پروفایل، صندوق‌ها و اتصال به مدل زبانی</p>
+        <p className="mt-2 text-navy-800/70">پروفایل، پرامپت‌ها، صندوق‌ها و اتصال به مدل زبانی</p>
       </div>
       {msg && <p className="text-sm text-navy-800">{msg}</p>}
 
@@ -290,6 +341,75 @@ export default function SettingsPage() {
             افزودن صندوق
           </button>
         </form>
+      </section>
+
+      <section className="card max-w-3xl space-y-4">
+        <div>
+          <h2 className="text-lg font-semibold">پرامپت‌های LLM</h2>
+          <p className="mt-1 text-sm text-navy-800/70">
+            متن system هر بخش نرم‌افزار را ویرایش کنید. پس از ذخیره، همان پرامپت به مدل ارسال می‌شود.
+          </p>
+        </div>
+        <div className="space-y-3">
+          {prompts.map((p) => {
+            const isOpen = openPrompt === p.purpose;
+            return (
+              <div key={p.purpose} className="rounded-lg border border-navy-900/10">
+                <button
+                  type="button"
+                  className="flex w-full items-center justify-between gap-3 px-4 py-3 text-start"
+                  onClick={() => setOpenPrompt(isOpen ? null : p.purpose)}
+                >
+                  <div>
+                    <div className="font-medium">{p.labelFa}</div>
+                    <div className="text-xs text-navy-800/55">{p.descriptionFa}</div>
+                  </div>
+                  <div className="flex shrink-0 items-center gap-2 text-xs">
+                    {p.isCustom && (
+                      <span className="rounded bg-gold-400/20 px-2 py-0.5 text-gold-600">سفارشی</span>
+                    )}
+                    <span className="text-navy-800/40">{isOpen ? '▲' : '▼'}</span>
+                  </div>
+                </button>
+                {isOpen && (
+                  <div className="space-y-3 border-t border-navy-900/10 px-4 py-3">
+                    <div>
+                      <label className="label">شناسه</label>
+                      <input className="input font-mono text-xs" value={p.purpose} readOnly dir="ltr" />
+                    </div>
+                    <div>
+                      <label className="label">پرامپت system</label>
+                      <textarea
+                        className="input min-h-[12rem] font-mono text-xs leading-6"
+                        value={p.systemPrompt}
+                        onChange={(e) => updatePromptText(p.purpose, e.target.value)}
+                        dir="auto"
+                      />
+                    </div>
+                    <div className="flex flex-wrap gap-2">
+                      <button
+                        type="button"
+                        className="btn-primary"
+                        disabled={promptBusy === p.purpose}
+                        onClick={() => savePrompt(p.purpose)}
+                      >
+                        {promptBusy === p.purpose ? '...' : 'ذخیره پرامپت'}
+                      </button>
+                      <button
+                        type="button"
+                        className="btn-secondary"
+                        disabled={promptBusy === p.purpose}
+                        onClick={() => resetPrompt(p.purpose)}
+                      >
+                        بازگشت به پیش‌فرض
+                      </button>
+                    </div>
+                  </div>
+                )}
+              </div>
+            );
+          })}
+        </div>
       </section>
 
       <form onSubmit={saveLlm} className="card grid max-w-2xl gap-4">

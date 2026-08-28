@@ -61,6 +61,7 @@ model User {
   portfolioChats PortfolioChatMessage[]
   lessons     Lesson[]
   aiTraces    AiTrace[]
+  llmPrompts  LlmPromptTemplate[]
 }
 
 model UserProfile {
@@ -82,6 +83,20 @@ model LlmSetting {
   apiTokenEncrypted    String?
   usePlatformFallback  Boolean @default(true)
   user                 User    @relation(fields: [userId], references: [id], onDelete: Cascade)
+}
+
+model LlmPromptTemplate {
+  id           String   @id @default(cuid())
+  userId       String
+  purpose      String
+  systemPrompt String
+  createdAt    DateTime @default(now())
+  updatedAt    DateTime @updatedAt
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([userId, purpose])
+  @@index([userId])
 }
 
 model Instrument {
@@ -217,9 +232,12 @@ model FundReport {
   filePath           String
   extractedText      String?
   extractedSheetsJson Json?
-  guessedStrategyFa  String?
-  rating             Float?
-  useInSuggestions   Boolean  @default(false)
+  guessedStrategyFa      String?
+  rating                 Float?
+  managerTechnicalScore  Float?
+  riskAppetiteScore      Float?
+  professionalismScore   Float?
+  useInSuggestions       Boolean  @default(false)
   analysisJson       Json?
   createdAt          DateTime @default(now())
 

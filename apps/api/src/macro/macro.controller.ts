@@ -61,9 +61,10 @@ export class MacroController {
   @UseGuards(JwtAuthGuard)
   async ask(@Req() req: { user: { userId: string } }, @Body() dto: AskDto) {
     const macro = await this.prisma.macroSnapshot.findFirst({ orderBy: { asOfDate: 'desc' } });
+    const macroSystem = await this.llm.getSystemPrompt(req.user.userId, 'macro_qa');
     const answer = await this.llm.chatText(
       'macro_qa',
-      'تو تحلیل‌گر اقتصاد ایران هستی. پاسخ کوتاه و فارسی بده. مشاوره سرمایه‌گذاری قطعی نده.',
+      macroSystem,
       `شرایط ثبت‌شده: ${JSON.stringify(macro)}\nسؤال کاربر: ${dto.question}`,
       req.user.userId,
     );

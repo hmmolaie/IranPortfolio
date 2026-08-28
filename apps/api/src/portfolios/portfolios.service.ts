@@ -94,20 +94,7 @@ export class PortfoliosService {
       take: 10,
     });
 
-    const system = `مشاور تخصیص دارایی بازار ایران. چند استراتژی متفاوت پیشنهاد بده.
-فقط JSON:
-{
-  "strategies": [
-    {
-      "labelFa": "نام کوتاه استراتژی",
-      "strategySummaryFa": "توضیح فارسی",
-      "items": [
-        { "symbol": "نماد", "assetType": "STOCK|GOLD_ETF|OPTION|DEPOSIT|FUND|CASH", "weightPct": 10, "reasonFa": "دلیل" }
-      ]
-    }
-  ]
-}
-حداقل ۲ و حداکثر ۴ استراتژی. مجموع weightPct هر استراتژی نزدیک ۱۰۰. از تحلیل صندوق‌ها و درس‌آموخته‌ها استفاده کن.`;
+    const system = await this.llm.getSystemPrompt(userId, 'portfolio_suggest_multi');
 
     const userPrompt = JSON.stringify(
       {
@@ -121,6 +108,9 @@ export class PortfoliosService {
           fundName: f.fundName,
           month: f.reportMonth,
           rating: f.rating,
+          managerTechnicalScore: f.managerTechnicalScore,
+          riskAppetiteScore: f.riskAppetiteScore,
+          professionalismScore: f.professionalismScore,
           guessedStrategyFa: f.guessedStrategyFa,
         })),
         fundTimelineInsights: fundInsights.map((i) => ({
@@ -265,12 +255,10 @@ export class PortfoliosService {
 
     let reply: string;
     try {
+      const chatSystem = await this.llm.getSystemPrompt(userId, 'portfolio_chat');
       reply = await this.llm.chatText(
         'portfolio_chat',
-        `تو مشاور سبد سرمایه‌گذاری ایران هستی. به فارسی و شفاف پاسخ بده.
-اگر کاربر علاقه‌مندی یا محدودیت جدید گفت، در پایان پاسخ یک بلوک JSON جدا بگذار:
-{"preferencesFa":"...","constraintsFa":"...","portfolioNoteFa":"..."}
-فقط فیلدهایی که تغییر کرده را پر کن.`,
+        chatSystem,
         `${context}\n\nگفتگو:\n${historyText}`,
         userId,
       );
@@ -344,12 +332,7 @@ export class PortfoliosService {
     const latest = portfolio.snapshots[0];
     if (!latest) throw new NotFoundException('ابتدا یک پیشنهاد سبد بسازید');
 
-    const system = `عملکرد ماهانه سبد سرمایه‌گذاری ایران را ارزیابی کن و JSON برگردان:
-{
-  "performancePct": 1.5,
-  "summaryFa": "خلاصه فارسی",
-  "lessons": [{"titleFa":"...","bodyFa":"..."}]
-}`;
+    const system = await this.llm.getSystemPrompt(userId, 'monthly_eval');
     const prompt = JSON.stringify({
       portfolio: { name: portfolio.name, strategy: portfolio.strategy },
       latestItems: latest.items,

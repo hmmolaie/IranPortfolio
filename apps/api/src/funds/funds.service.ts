@@ -12,12 +12,24 @@ import { extractFundReportText, safeUploadFileName } from './extract-report-text
 type FundAnalysis = {
   guessedStrategyFa: string;
   rating: number;
+  managerTechnicalScore?: number;
+  managerTechnicalReasonFa?: string;
+  riskAppetiteScore?: number;
+  riskAppetiteReasonFa?: string;
+  professionalismScore?: number;
+  professionalismReasonFa?: string;
   useInSuggestions: boolean;
   lessons: Array<{ titleFa: string; bodyFa: string }>;
   strengthsFa?: string;
   weaknessesFa?: string;
   allocationSummaryFa?: string;
 };
+
+function clampScore(n: unknown): number | null {
+  const v = Number(n);
+  if (Number.isNaN(v)) return null;
+  return Math.min(10, Math.max(1, Math.round(v * 10) / 10));
+}
 
 @Injectable()
 export class FundsService {
@@ -174,6 +186,9 @@ export class FundsService {
         extractedSheetsJson: sheetsPayload ?? undefined,
         guessedStrategyFa: analysis.guessedStrategyFa,
         rating: analysis.rating,
+        managerTechnicalScore: analysis.managerTechnicalScore,
+        riskAppetiteScore: analysis.riskAppetiteScore,
+        professionalismScore: analysis.professionalismScore,
         useInSuggestions: Boolean(analysis.useInSuggestions && (analysis.rating ?? 0) >= 7),
         analysisJson: analysis as object,
       },
@@ -220,16 +235,10 @@ export class FundsService {
 
     let out: TimelineOut;
     try {
+      const system = await this.llm.getSystemPrompt(userId, 'fund_timeline_analysis');
       out = await this.llm.chatJson<TimelineOut>(
         'fund_timeline_analysis',
-        `تحلیل‌گر صندوق‌های ایران هستی. دو گزارش ماهانه پشت‌سرهم را مقایسه کن.
-فقط JSON:
-{
-  "summaryFa": "خلاصه تغییرات",
-  "strategyChangeFa": "تغییر استراتژی مدیر",
-  "holdingsDiffFa": "تفاوت سبد/خرید و فروش",
-  "llmReasoningFa": "چرا مدیر احتمالاً این تصمیم را گرفته"
-}`,
+        system,
         JSON.stringify({
           fundName: curr.fundName,
           from: {
@@ -297,21 +306,10 @@ export class FundsService {
     }));
 
     try {
+      const system = await this.llm.getSystemPrompt(userId, 'fund_report_analysis');
       const analysis = await this.llm.chatJson<FundAnalysis>(
         'fund_report_analysis',
-        `تو تحلیل‌گر صندوق‌های سرمایه‌گذاری ایران هستی.
-ورودی می‌تواند متن PDF یا جدول استخراج‌شده از Excel صورت‌وضعیت پرتفوی باشد.
-فایل اکسل ممکن است چند شیت داشته باشد (سهام، اوراق، کالا، سپرده، درآمد و ...). همهٔ شیت‌ها را در تحلیل لحاظ کن.
-فقط JSON معتبر برگردان:
-{
-  "guessedStrategyFa": "...",
-  "allocationSummaryFa": "خلاصه تخصیص بین دارایی‌ها",
-  "rating": 7.5,
-  "useInSuggestions": true,
-  "strengthsFa": "...",
-  "weaknessesFa": "...",
-  "lessons": [{"titleFa":"...","bodyFa":"..."}]
-}`,
+        system,
         `نام صندوق: ${fundName}
 ماه گزارش: ${reportMonth}
 نوع فایل: ${kind}
@@ -324,9 +322,35 @@ ${extractedText || 'متن استخراج نشد'}`,
       );
       if (!analysis.guessedStrategyFa) throw new Error('فیلد guessedStrategyFa نبود');
       analysis.lessons = Array.isArray(analysis.lessons) ? analysis.lessons : [];
-      analysis.rating = Number(analysis.rating) || 5;
+      analysis.rating = clampScore(analysis.rating) ?? 5;
+      analysis.managerTechnicalScore = clampScore(analysis.managerTechnicalScore) ?? undefined;
+      analysis.riskAppetiteScore = clampScore(analysis.riskAppetiteScore) ?? undefined;
+      analysis.professionalismScore = clampScore(analysis.professionalismScore) ?? undefined;
+
+      const scoreParts: string[] = [];
+      if (analysis.managerTechnicalScore != null) {
+        scoreParts.push(
+          `نمره فنی مدیر: ${analysis.managerTechnicalScore}/10` +
+            (analysis.managerTechnicalReasonFa ? ` — ${analysis.managerTechnicalReasonFa}` : ''),
+        );
+      }
+      if (analysis.riskAppetiteScore != null) {
+        scoreParts.push(
+          `ریسک‌پذیری: ${analysis.riskAppetiteScore}/10` +
+            (analysis.riskAppetiteReasonFa ? ` — ${analysis.riskAppetiteReasonFa}` : ''),
+        );
+      }
+      if (analysis.professionalismScore != null) {
+        scoreParts.push(
+          `حرفه‌ای‌بودن مالی: ${analysis.professionalismScore}/10` +
+            (analysis.professionalismReasonFa ? ` — ${analysis.professionalismReasonFa}` : ''),
+        );
+      }
       if (analysis.allocationSummaryFa) {
         analysis.guessedStrategyFa = `${analysis.guessedStrategyFa}\n\nتخصیص: ${analysis.allocationSummaryFa}`;
+      }
+      if (scoreParts.length) {
+        analysis.guessedStrategyFa = `${analysis.guessedStrategyFa}\n\n${scoreParts.join('\n')}`;
       }
       return analysis;
     } catch (e) {
@@ -336,6 +360,9 @@ ${extractedText || 'متن استخراج نشد'}`,
         rating: 5,
         useInSuggestions: false,
         lessons: [],
+        managerTechnicalScore: undefined,
+        riskAppetiteScore: undefined,
+        professionalismScore: undefined,
       };
     }
   }

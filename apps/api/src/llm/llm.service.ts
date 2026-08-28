@@ -1,7 +1,8 @@
 import { createCipheriv, createDecipheriv, randomBytes, scryptSync } from 'crypto';
-import { Injectable, Logger } from '@nestjs/common';
+import { Injectable, Logger, BadRequestException } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import { PrismaService } from '../prisma/prisma.service';
+import { LLM_PROMPT_DEFAULTS, isValidPromptPurpose } from './prompt-defaults';
 
 type LlmCreds = { baseUrl: string; model: string; apiKey: string; fallbackModels: string[] };
 
@@ -94,6 +95,56 @@ export class LlmService {
       usePlatformFallback: s.usePlatformFallback,
       hasToken: Boolean(s.apiTokenEncrypted),
     };
+  }
+
+  async listPrompts(userId: string) {
+    const customs = await this.prisma.llmPromptTemplate.findMany({ where: { userId } });
+    const customMap = new Map(customs.map((c) => [c.purpose, c.systemPrompt]));
+
+    return Object.entries(LLM_PROMPT_DEFAULTS).map(([purpose, def]) => {
+      const isCustom = customMap.has(purpose);
+      return {
+        purpose,
+        labelFa: def.labelFa,
+        descriptionFa: def.descriptionFa,
+        systemPrompt: isCustom ? customMap.get(purpose)! : def.systemPrompt,
+        defaultSystemPrompt: def.systemPrompt,
+        isCustom,
+      };
+    });
+  }
+
+  async getSystemPrompt(userId: string | undefined, purpose: string): Promise<string> {
+    const fallback = LLM_PROMPT_DEFAULTS[purpose]?.systemPrompt ?? '';
+    if (!userId) return fallback;
+
+    const custom = await this.prisma.llmPromptTemplate.findUnique({
+      where: { userId_purpose: { userId, purpose } },
+    });
+    return custom?.systemPrompt ?? fallback;
+  }
+
+  async savePrompt(userId: string, purpose: string, systemPrompt: string) {
+    if (!isValidPromptPurpose(purpose)) {
+      throw new BadRequestException('شناسه پرامپت نامعتبر است');
+    }
+    const trimmed = systemPrompt.trim();
+    if (!trimmed) throw new BadRequestException('متن پرامپت خالی است');
+
+    await this.prisma.llmPromptTemplate.upsert({
+      where: { userId_purpose: { userId, purpose } },
+      create: { userId, purpose, systemPrompt: trimmed },
+      update: { systemPrompt: trimmed },
+    });
+    return { ok: true, purpose };
+  }
+
+  async resetPrompt(userId: string, purpose: string) {
+    if (!isValidPromptPurpose(purpose)) {
+      throw new BadRequestException('شناسه پرامپت نامعتبر است');
+    }
+    await this.prisma.llmPromptTemplate.deleteMany({ where: { userId, purpose } });
+    return { ok: true, purpose };
   }
 
   private async resolveCredentials(userId?: string): Promise<LlmCreds> {

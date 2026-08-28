@@ -21,6 +21,9 @@ type Fund = {
   fundDefinitionId?: string | null;
   guessedStrategyFa?: string | null;
   rating?: number | null;
+  managerTechnicalScore?: number | null;
+  riskAppetiteScore?: number | null;
+  professionalismScore?: number | null;
   useInSuggestions: boolean;
   extractedSheetsJson?: {
     sheetCount?: number;
@@ -28,6 +31,17 @@ type Fund = {
   } | null;
   lessons: Array<{ id: string; titleFa: string }>;
 };
+
+function ScoreChip({ label, value }: { label: string; value?: number | null }) {
+  if (value == null) return null;
+  return (
+    <div className="rounded-lg bg-navy-50 px-3 py-2 text-center">
+      <div className="text-xs text-navy-800/55">{label}</div>
+      <div className="text-lg font-semibold">{formatNum(value)}</div>
+      <div className="text-[10px] text-navy-800/40">از ۱۰</div>
+    </div>
+  );
+}
 
 type TimelineInsight = {
   id: string;
@@ -377,14 +391,11 @@ export default function FundsPage() {
                 </p>
               </div>
               <div className="flex flex-wrap items-center gap-3 text-sm">
-                <span>
-                  امتیاز: <strong>{formatNum(f.rating)}</strong>
-                  {f.useInSuggestions && (
-                    <span className="ms-2 rounded bg-gold-400/20 px-2 py-0.5 text-xs text-gold-500">
-                      قابل استفاده در پیشنهاد
-                    </span>
-                  )}
-                </span>
+                {f.useInSuggestions && (
+                  <span className="rounded bg-gold-400/20 px-2 py-0.5 text-xs text-gold-500">
+                    قابل استفاده در پیشنهاد
+                  </span>
+                )}
                 <button
                   type="button"
                   className="btn-secondary !px-3 !py-1.5 text-xs text-red-700 hover:bg-red-50"
@@ -395,6 +406,17 @@ export default function FundsPage() {
                 </button>
               </div>
             </div>
+            {(f.rating != null ||
+              f.managerTechnicalScore != null ||
+              f.riskAppetiteScore != null ||
+              f.professionalismScore != null) && (
+              <div className="mt-4 grid grid-cols-2 gap-2 sm:grid-cols-4">
+                <ScoreChip label="امتیاز کلی" value={f.rating} />
+                <ScoreChip label="نمره فنی مدیر" value={f.managerTechnicalScore} />
+                <ScoreChip label="ریسک‌پذیری" value={f.riskAppetiteScore} />
+                <ScoreChip label="حرفه‌ای‌بودن مالی" value={f.professionalismScore} />
+              </div>
+            )}
             <p className="mt-3 leading-7 text-navy-800/80">{f.guessedStrategyFa}</p>
           </article>
         ))}
