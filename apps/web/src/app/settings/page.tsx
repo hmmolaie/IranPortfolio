@@ -6,6 +6,13 @@ import { api, getToken } from '@/lib/api';
 
 type ProviderId = 'openrouter' | 'openai' | 'custom';
 
+type FundDefinition = {
+  id: string;
+  nameFa: string;
+  symbolCode?: string | null;
+  description?: string | null;
+};
+
 const PROVIDERS: Record<
   ProviderId,
   { label: string; baseUrl: string; model: string; hint: string }
@@ -38,7 +45,14 @@ function detectProvider(baseUrl: string): ProviderId {
 
 export default function SettingsPage() {
   const router = useRouter();
-  const [profile, setProfile] = useState({ name: '', riskTolerance: 5, horizonMonths: 12, notes: '' });
+  const [profile, setProfile] = useState({
+    name: '',
+    riskTolerance: 5,
+    horizonMonths: 12,
+    notes: '',
+    investmentPreferencesFa: '',
+    constraintsFa: '',
+  });
   const [provider, setProvider] = useState<ProviderId>('openrouter');
   const [llm, setLlm] = useState({
     baseUrl: 'https://openrouter.ai/api/v1',
@@ -47,7 +61,14 @@ export default function SettingsPage() {
     usePlatformFallback: true,
     hasToken: false,
   });
+  const [fundDefs, setFundDefs] = useState<FundDefinition[]>([]);
+  const [newFund, setNewFund] = useState({ nameFa: '', symbolCode: '', description: '' });
   const [msg, setMsg] = useState('');
+
+  async function loadFundDefs() {
+    const defs = await api<FundDefinition[]>('/funds/definitions');
+    setFundDefs(defs);
+  }
 
   useEffect(() => {
     if (!getToken()) {
@@ -56,13 +77,21 @@ export default function SettingsPage() {
     }
     api<{
       name?: string;
-      profile?: { riskTolerance: number; horizonMonths: number; notes?: string | null };
+      profile?: {
+        riskTolerance: number;
+        horizonMonths: number;
+        notes?: string | null;
+        investmentPreferencesFa?: string | null;
+        constraintsFa?: string | null;
+      };
     }>('/users/me').then((u) => {
       setProfile({
         name: u.name ?? '',
         riskTolerance: u.profile?.riskTolerance ?? 5,
         horizonMonths: u.profile?.horizonMonths ?? 12,
         notes: u.profile?.notes ?? '',
+        investmentPreferencesFa: u.profile?.investmentPreferencesFa ?? '',
+        constraintsFa: u.profile?.constraintsFa ?? '',
       });
     });
     api<{
@@ -82,6 +111,7 @@ export default function SettingsPage() {
         }));
       }
     });
+    loadFundDefs().catch(() => undefined);
   }, [router]);
 
   function applyProvider(next: ProviderId) {
@@ -103,6 +133,8 @@ export default function SettingsPage() {
         riskTolerance: Number(profile.riskTolerance),
         horizonMonths: Number(profile.horizonMonths),
         notes: profile.notes,
+        investmentPreferencesFa: profile.investmentPreferencesFa,
+        constraintsFa: profile.constraintsFa,
       }),
     });
     setMsg('پروفایل ذخیره شد.');
@@ -123,11 +155,34 @@ export default function SettingsPage() {
     setLlm((prev) => ({ ...prev, apiToken: '', hasToken: prev.hasToken || Boolean(llm.apiToken) }));
   }
 
+  async function addFund(e: FormEvent) {
+    e.preventDefault();
+    if (!newFund.nameFa.trim()) return;
+    await api('/funds/definitions', {
+      method: 'POST',
+      body: JSON.stringify({
+        nameFa: newFund.nameFa.trim(),
+        symbolCode: newFund.symbolCode.trim() || undefined,
+        description: newFund.description.trim() || undefined,
+      }),
+    });
+    setNewFund({ nameFa: '', symbolCode: '', description: '' });
+    await loadFundDefs();
+    setMsg('صندوق اضافه شد.');
+  }
+
+  async function removeFund(id: string, name: string) {
+    if (!confirm(`صندوق «${name}» غیرفعال شود؟`)) return;
+    await api(`/funds/definitions/${id}`, { method: 'DELETE' });
+    await loadFundDefs();
+    setMsg('صندوق حذف شد.');
+  }
+
   return (
     <div className="space-y-8">
       <div>
         <h1 className="text-3xl font-bold">تنظیمات</h1>
-        <p className="mt-2 text-navy-800/70">پروفایل و اتصال به مدل زبانی سازگار با ChatGPT</p>
+        <p className="mt-2 text-navy-800/70">پروفایل، صندوق‌ها و اتصال به مدل زبانی</p>
       </div>
       {msg && <p className="text-sm text-navy-800">{msg}</p>}
 
@@ -162,8 +217,80 @@ export default function SettingsPage() {
             onChange={(e) => setProfile({ ...profile, horizonMonths: Number(e.target.value) })}
           />
         </div>
+        <div>
+          <label className="label">علاقه‌مندی‌های سرمایه‌گذاری</label>
+          <textarea
+            className="input min-h-[5rem]"
+            value={profile.investmentPreferencesFa}
+            onChange={(e) => setProfile({ ...profile, investmentPreferencesFa: e.target.value })}
+            placeholder="مثلاً تمایل به سهام صنعتی، اجتناب از نمادهای پرنوسان..."
+          />
+        </div>
+        <div>
+          <label className="label">محدودیت‌ها</label>
+          <textarea
+            className="input min-h-[5rem]"
+            value={profile.constraintsFa}
+            onChange={(e) => setProfile({ ...profile, constraintsFa: e.target.value })}
+            placeholder="مثلاً بدون اهرم، حداکثر ۲۰٪ طلا، عدم سرمایه‌گذاری در بانک‌ها..."
+          />
+        </div>
         <button className="btn-primary w-fit">ذخیره پروفایل</button>
       </form>
+
+      <section className="card max-w-2xl space-y-4">
+        <h2 className="text-lg font-semibold">صندوق‌های سرمایه‌گذاری</h2>
+        <p className="text-sm text-navy-800/70">
+          یک‌بار نام صندوق‌ها را اینجا تعریف کنید؛ در صفحه صندوق‌ها از لیست انتخاب می‌شوند.
+        </p>
+        <ul className="space-y-2">
+          {fundDefs.map((f) => (
+            <li
+              key={f.id}
+              className="flex flex-wrap items-center justify-between gap-2 rounded-lg border border-navy-900/10 px-3 py-2"
+            >
+              <div>
+                <span className="font-medium">{f.nameFa}</span>
+                {f.symbolCode && (
+                  <span className="ms-2 text-xs text-navy-800/50">{f.symbolCode}</span>
+                )}
+              </div>
+              <button
+                type="button"
+                className="text-xs text-red-700 hover:underline"
+                onClick={() => removeFund(f.id, f.nameFa)}
+              >
+                حذف
+              </button>
+            </li>
+          ))}
+          {fundDefs.length === 0 && (
+            <li className="text-sm text-navy-800/50">هنوز صندوقی تعریف نشده.</li>
+          )}
+        </ul>
+        <form onSubmit={addFund} className="grid gap-3 border-t border-navy-900/10 pt-4">
+          <div>
+            <label className="label">نام صندوق</label>
+            <input
+              className="input"
+              value={newFund.nameFa}
+              onChange={(e) => setNewFund({ ...newFund, nameFa: e.target.value })}
+              required
+            />
+          </div>
+          <div>
+            <label className="label">کد / نماد (اختیاری)</label>
+            <input
+              className="input"
+              value={newFund.symbolCode}
+              onChange={(e) => setNewFund({ ...newFund, symbolCode: e.target.value })}
+            />
+          </div>
+          <button type="submit" className="btn-secondary w-fit">
+            افزودن صندوق
+          </button>
+        </form>
+      </section>
 
       <form onSubmit={saveLlm} className="card grid max-w-2xl gap-4">
         <h2 className="text-lg font-semibold">API مدل زبانی</h2>

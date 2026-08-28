@@ -22,6 +22,14 @@ class UpdateProfileDto {
   @IsOptional()
   @IsString()
   notes?: string;
+
+  @IsOptional()
+  @IsString()
+  investmentPreferencesFa?: string;
+
+  @IsOptional()
+  @IsString()
+  constraintsFa?: string;
 }
 
 @Controller('users')

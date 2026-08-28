@@ -75,7 +75,7 @@ export default function MarketPage() {
     <div className="space-y-6">
       <div className="flex flex-wrap items-end justify-between gap-4">
         <div>
-          <h1 className="text-3xl font-bold">بازار امروز</h1>
+          <h1 className="text-3xl font-bold">بازار سهام تهران</h1>
           <p className="mt-2 text-navy-800/70">قیمت، EPS و P/E ذخیره‌شده به تاریخ روز</p>
         </div>
         <button className="btn-primary" onClick={ingest} disabled={loading}>
@@ -119,8 +119,14 @@ export default function MarketPage() {
           </thead>
           <tbody>
             {quotes.map((row) => (
-              <tr key={row.id} className="border-b border-navy-900/5 odd:bg-white even:bg-navy-50/40">
-                <td className="px-4 py-2.5 font-medium">{row.symbol}</td>
+              <tr
+                key={row.id}
+                className="cursor-pointer border-b border-navy-900/5 odd:bg-white even:bg-navy-50/40 hover:bg-gold-400/10"
+                onClick={() => router.push(`/market/${row.id}`)}
+              >
+                <td className="px-4 py-2.5 font-medium text-navy-900 underline-offset-2 hover:underline">
+                  {row.symbol}
+                </td>
                 <td className="px-4 py-2.5">{row.nameFa}</td>
                 <td className="px-4 py-2.5">{ASSET_FA[row.assetType] ?? row.assetType}</td>
                 <td className="px-4 py-2.5">{formatNum(row.last?.lastPrice)}</td>

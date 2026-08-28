@@ -8,7 +8,7 @@ import clsx from 'clsx';
 
 const links = [
   { href: '/dashboard', label: 'داشبورد' },
-  { href: '/market', label: 'بازار امروز' },
+  { href: '/market', label: 'بازار سهام تهران' },
   { href: '/portfolios', label: 'سبدها' },
   { href: '/funds', label: 'صندوق‌ها' },
   { href: '/lessons', label: 'درس‌آموخته‌ها' },

@@ -3,10 +3,16 @@ name: Deploy to test server
 on:
   push:
     branches: [main]
+  workflow_dispatch:
+
+concurrency:
+  group: deploy-test
+  cancel-in-progress: true
 
 jobs:
   deploy:
-    runs-on: debian-latest
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
     steps:
       - name: Deploy over SSH
         uses: appleboy/ssh-action@v1.2.0
@@ -14,12 +20,71 @@ jobs:
           host: ${{ secrets.SSH_HOST }}
           username: ${{ secrets.SSH_USER }}
           key: ${{ secrets.SSH_PRIVATE_KEY }}
-          port: ${{ secrets.SSH_PORT || 22 }}
+          port: ${{ secrets.SSH_PORT != '' && secrets.SSH_PORT || 22 }}
+          command_timeout: 25m
           script: |
-            set -e
-            cd "${{ secrets.DEPLOY_PATH }}"
+            set -euo pipefail
+
+            DEPLOY_PATH="${{ secrets.DEPLOY_PATH }}"
+            if [ -z "$DEPLOY_PATH" ]; then
+              echo "DEPLOY_PATH secret is not set"
+              exit 1
+            fi
+            if [ ! -d "$DEPLOY_PATH/.git" ]; then
+              echo "Not a git repo: $DEPLOY_PATH"
+              exit 1
+            fi
+
+            cd "$DEPLOY_PATH"
+            if [ -f .env ]; then
+              set -a
+              # shellcheck disable=SC1091
+              . ./.env
+              set +a
+            fi
+
+            echo "==> Pull latest main"
             git fetch origin main
             git reset --hard origin/main
-            docker compose pull || true
-            docker compose up -d --build
-            docker image prune -f
+
+            if docker info >/dev/null 2>&1; then
+              DC="docker compose"
+            else
+              DC="sudo docker compose"
+            fi
+
+            echo "==> Build and start stack ($DC)"
+            $DC pull || true
+            $DC up -d --build
+            $DC ps
+
+            echo "==> Wait for API health"
+            for i in $(seq 1 40); do
+              if curl -fsS "http://127.0.0.1:${API_HOST_PORT:-3001}/api/market/quotes?take=1" >/dev/null 2>&1; then
+                echo "API is healthy"
+                break
+              fi
+              if [ "$i" -eq 40 ]; then
+                echo "API health check timed out"
+                $DC logs --tail=80 api || true
+                exit 1
+              fi
+              sleep 5
+            done
+
+            echo "==> Wait for Web health"
+            for i in $(seq 1 20); do
+              if curl -fsS "http://127.0.0.1:${WEB_HOST_PORT:-3000}" >/dev/null 2>&1; then
+                echo "Web is healthy"
+                break
+              fi
+              if [ "$i" -eq 20 ]; then
+                echo "Web health check timed out"
+                $DC logs --tail=80 web || true
+                exit 1
+              fi
+              sleep 3
+            done
+
+            docker image prune -f || sudo docker image prune -f || true
+            echo "==> Deploy finished"

@@ -96,6 +96,41 @@ export class MarketService {
     }));
   }
 
+  async getInstrument(id: string) {
+    const i = await this.prisma.instrument.findUnique({
+      where: { id },
+      include: {
+        priceBars: { orderBy: { tradeDate: 'desc' }, take: 1 },
+      },
+    });
+    if (!i) return null;
+    return {
+      id: i.id,
+      symbol: i.symbol,
+      nameFa: i.nameFa,
+      assetType: i.assetType,
+      insCode: i.insCode,
+      meta: i.meta,
+      last: i.priceBars[0] ?? null,
+    };
+  }
+
+  async getPriceHistory(id: string, limit = 90) {
+    const bars = await this.prisma.priceBar.findMany({
+      where: { instrumentId: id },
+      orderBy: { tradeDate: 'asc' },
+      take: Math.min(limit, 365),
+    });
+    return bars.map((b) => ({
+      tradeDate: b.tradeDate,
+      lastPrice: b.lastPrice,
+      closePrice: b.closePrice,
+      eps: b.eps,
+      pe: b.pe,
+      volume: b.volume,
+    }));
+  }
+
   async ingestToday() {
     const tradeDate = todayDateOnly();
     const dEven = toDEven();

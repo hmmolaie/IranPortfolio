@@ -36,7 +36,14 @@ export class UsersService {
 
   async updateProfile(
     userId: string,
-    data: { name?: string; riskTolerance?: number; horizonMonths?: number; notes?: string },
+    data: {
+      name?: string;
+      riskTolerance?: number;
+      horizonMonths?: number;
+      notes?: string;
+      investmentPreferencesFa?: string;
+      constraintsFa?: string;
+    },
   ) {
     const { name, ...profile } = data;
     if (name !== undefined) {

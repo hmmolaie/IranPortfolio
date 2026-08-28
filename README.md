@@ -38,6 +38,12 @@ docker compose logs -f web api
 
 همان استک با مسیر قدیمی هم در دسترس است: `docker compose -f docker/docker-compose.yml up -d --build`
 
+### استقرار خودکار با GitHub Actions
+
+با push به `main`، workflow `.github/workflows/deploy-test.yml` روی سرور تست pull و `docker compose up -d --build` می‌زند.
+
+راه‌اندازی secrets و آماده‌سازی سرور: [`CONTRIBUTING.md`](./CONTRIBUTING.md#استقرار-خودکار-github-actions).
+
 ## راه‌اندازی بدون Docker (توسعه)
 
 ```bash

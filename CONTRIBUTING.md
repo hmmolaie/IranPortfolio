@@ -40,6 +40,46 @@ npm run dev:web   # ترمینال ۲
 - در توضیح PR: خلاصهٔ تغییر + نحوهٔ تست.
 - اگر رفتار مالی/پیشنهاد LLM عوض می‌شود، نمونه ورودی/خروجی یا اسکرین را ذکر کنید.
 
+## استقرار خودکار (GitHub Actions)
+
+با هر push به `main`، workflow زیر روی سرور تست اجرا می‌شود:
+
+`.github/workflows/deploy-test.yml`
+
+### Secrets در GitHub
+
+در مخزن:
+
+```
+Settings → Secrets and variables → Actions → New repository secret
+```
+
+| Secret | توضیح |
+|--------|--------|
+| `SSH_HOST` | IP یا دامنه سرور (مثلاً `46.249.100.230`) |
+| `SSH_USER` | کاربر SSH |
+| `SSH_PRIVATE_KEY` | کلید خصوصی SSH (بدون passphrase ترجیحاً) |
+| `DEPLOY_PATH` | مسیر clone پروژه روی سرور (مثلاً `/home/ubuntu/IranPortfolio`) |
+| `SSH_PORT` | اختیاری؛ پیش‌فرض `22` |
+
+### آماده‌سازی یک‌بار روی سرور
+
+```bash
+git clone <repo-url> ~/IranPortfolio
+cd ~/IranPortfolio
+cp docker/env.production.example .env
+# ویرایش .env (JWT، Postgres، LLM، BRS_API_KEY)
+docker compose up -d --build
+```
+
+اگر کاربر deploy عضو گروه `docker` نیست، workflow خودکار `sudo docker compose` را امتحان می‌کند.
+
+استقرار دستی (بدون Actions):
+
+```bash
+bash scripts/deploy-test-server.sh
+```
+
 ## مستندات مرتبط
 
 - [`AGENTS.md`](./AGENTS.md) — راهنمای ایجنت‌ها

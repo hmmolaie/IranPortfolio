@@ -1,5 +1,5 @@
 import { Body, Controller, Get, Param, Post, Req, UseGuards } from '@nestjs/common';
-import { PortfolioStrategy } from '@prisma/client';
+import { AssetType, PortfolioStrategy } from '@prisma/client';
 import {
   IsArray,
   IsEnum,
@@ -62,6 +62,39 @@ class CashDto {
   symbol?: string;
 }
 
+class ChatDto {
+  @IsString()
+  message!: string;
+}
+
+class StrategyItemDto {
+  @IsString()
+  symbol!: string;
+
+  @IsEnum(AssetType)
+  assetType!: AssetType;
+
+  @IsNumber()
+  weightPct!: number;
+
+  @IsString()
+  reasonFa!: string;
+}
+
+class ApplyStrategyDto {
+  @IsOptional()
+  @IsString()
+  labelFa?: string;
+
+  @IsString()
+  strategySummaryFa!: string;
+
+  @IsArray()
+  @ValidateNested({ each: true })
+  @Type(() => StrategyItemDto)
+  items!: StrategyItemDto[];
+}
+
 @Controller('portfolios')
 @UseGuards(JwtAuthGuard)
 export class PortfoliosController {
@@ -80,6 +113,34 @@ export class PortfoliosController {
   @Get(':id')
   get(@Req() req: { user: { userId: string } }, @Param('id') id: string) {
     return this.portfolios.get(req.user.userId, id);
+  }
+
+  @Get(':id/chat')
+  getChat(@Req() req: { user: { userId: string } }, @Param('id') id: string) {
+    return this.portfolios.getChat(req.user.userId, id);
+  }
+
+  @Post(':id/chat')
+  postChat(
+    @Req() req: { user: { userId: string } },
+    @Param('id') id: string,
+    @Body() dto: ChatDto,
+  ) {
+    return this.portfolios.postChat(req.user.userId, id, dto.message);
+  }
+
+  @Post(':id/suggest-strategies')
+  suggestStrategies(@Req() req: { user: { userId: string } }, @Param('id') id: string) {
+    return this.portfolios.suggestStrategies(req.user.userId, id);
+  }
+
+  @Post(':id/apply-strategy')
+  applyStrategy(
+    @Req() req: { user: { userId: string } },
+    @Param('id') id: string,
+    @Body() dto: ApplyStrategyDto,
+  ) {
+    return this.portfolios.applyStrategy(req.user.userId, id, dto);
   }
 
   @Post(':id/suggest')

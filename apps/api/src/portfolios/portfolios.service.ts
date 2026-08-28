@@ -62,13 +62,31 @@ export class PortfoliosService {
   }
 
   async suggest(userId: string, portfolioId: string) {
+    const strategies = await this.suggestStrategies(userId, portfolioId);
+    const first = strategies.strategies[0];
+    if (!first) {
+      return this.createSnapshotFromItems(userId, portfolioId, {
+        strategySummaryFa: 'پیشنهاد خالی',
+        items: [],
+      });
+    }
+    return this.createSnapshotFromItems(userId, portfolioId, first);
+  }
+
+  async suggestStrategies(userId: string, portfolioId: string) {
     const portfolio = await this.get(userId, portfolioId);
+    const profile = await this.prisma.userProfile.findUnique({ where: { userId } });
     const universe = await this.buildUniverse();
     const macro = await this.prisma.macroSnapshot.findFirst({ orderBy: { asOfDate: 'desc' } });
     const funds = await this.prisma.fundReport.findMany({
       where: { userId, useInSuggestions: true },
       orderBy: { rating: 'desc' },
-      take: 5,
+      take: 8,
+    });
+    const fundInsights = await this.prisma.fundTimelineInsight.findMany({
+      where: { userId },
+      orderBy: { createdAt: 'desc' },
+      take: 10,
     });
     const lessons = await this.prisma.lesson.findMany({
       where: { userId },
@@ -76,35 +94,39 @@ export class PortfoliosService {
       take: 10,
     });
 
-    const system = `تو یک مشاور تخصیص دارایی برای بازار سرمایه ایران هستی.
-پاسخ را فقط JSON معتبر برگردان.
-خروجی دقیقاً این ساختار را داشته باشد:
+    const system = `مشاور تخصیص دارایی بازار ایران. چند استراتژی متفاوت پیشنهاد بده.
+فقط JSON:
 {
-  "strategySummaryFa": "متن فارسی خلاصه استراتژی",
-  "items": [
+  "strategies": [
     {
-      "symbol": "نماد",
-      "assetType": "STOCK|GOLD_ETF|OPTION|DEPOSIT|FUND|CASH",
-      "weightPct": 10,
-      "reasonFa": "دلیل فارسی انتخاب"
+      "labelFa": "نام کوتاه استراتژی",
+      "strategySummaryFa": "توضیح فارسی",
+      "items": [
+        { "symbol": "نماد", "assetType": "STOCK|GOLD_ETF|OPTION|DEPOSIT|FUND|CASH", "weightPct": 10, "reasonFa": "دلیل" }
+      ]
     }
   ]
 }
-قوانین: مجموع weightPct نزدیک ۱۰۰ باشد. از نمادهای موجود در جهان سرمایه‌گذاری استفاده کن.
-سبد می‌تواند سهام، طلا، سپرده و اختیار فعال داشته باشد. شرایط اقتصاد ایران را در نظر بگیر.
-این مشاوره رسمی نیست.`;
+حداقل ۲ و حداکثر ۴ استراتژی. مجموع weightPct هر استراتژی نزدیک ۱۰۰. از تحلیل صندوق‌ها و درس‌آموخته‌ها استفاده کن.`;
 
     const userPrompt = JSON.stringify(
       {
         capitalRial: portfolio.capitalRial,
         strategy: portfolio.strategy,
-        cashRial: portfolio.cashRial,
+        preferencesNoteFa: portfolio.preferencesNoteFa,
+        userProfile: profile,
         universe: universe.slice(0, 80),
         macro,
         topFunds: funds.map((f) => ({
           fundName: f.fundName,
+          month: f.reportMonth,
           rating: f.rating,
           guessedStrategyFa: f.guessedStrategyFa,
+        })),
+        fundTimelineInsights: fundInsights.map((i) => ({
+          summaryFa: i.summaryFa,
+          strategyChangeFa: i.strategyChangeFa,
+          llmReasoningFa: i.llmReasoningFa,
         })),
         lessons: lessons.map((l) => ({ title: l.titleFa, body: l.bodyFa })),
       },
@@ -112,7 +134,52 @@ export class PortfoliosService {
       2,
     );
 
-    type LlmOut = {
+    type Out = {
+      strategies: Array<{
+        labelFa: string;
+        strategySummaryFa: string;
+        items: Array<{
+          symbol: string;
+          assetType: AssetType;
+          weightPct: number;
+          reasonFa: string;
+        }>;
+      }>;
+    };
+
+    try {
+      const out = await this.llm.chatJson<Out>('portfolio_suggest_multi', system, userPrompt, userId);
+      if (out.strategies?.length) return out;
+    } catch {
+      /* fallback */
+    }
+
+    const single = this.fallbackSuggest(universe, portfolio.strategy);
+    return {
+      strategies: [
+        {
+          labelFa: 'پیشنهاد قاعده‌محور',
+          strategySummaryFa: single.strategySummaryFa,
+          items: single.items,
+        },
+        {
+          labelFa: 'محافظه‌کار با سپرده بیشتر',
+          strategySummaryFa: 'کاهش ریسک سهام و افزایش سپرده/طلا',
+          items: single.items.map((i) =>
+            i.assetType === AssetType.STOCK
+              ? { ...i, weightPct: i.weightPct * 0.7, reasonFa: i.reasonFa + ' (کاهش ریسک)' }
+              : i,
+          ),
+        },
+      ],
+    };
+  }
+
+  async applyStrategy(
+    userId: string,
+    portfolioId: string,
+    data: {
+      labelFa?: string;
       strategySummaryFa: string;
       items: Array<{
         symbol: string;
@@ -120,30 +187,139 @@ export class PortfoliosService {
         weightPct: number;
         reasonFa: string;
       }>;
-    };
+    },
+  ) {
+    const summary = data.labelFa
+      ? `${data.labelFa}: ${data.strategySummaryFa}`
+      : data.strategySummaryFa;
+    return this.createSnapshotFromItems(userId, portfolioId, {
+      strategySummaryFa: summary,
+      items: data.items,
+    });
+  }
 
-    let out: LlmOut;
-    try {
-      out = await this.llm.chatJson<LlmOut>('portfolio_suggest', system, userPrompt, userId);
-    } catch {
-      out = this.fallbackSuggest(universe, portfolio.strategy);
-    }
-
+  private async createSnapshotFromItems(
+    userId: string,
+    portfolioId: string,
+    out: {
+      strategySummaryFa: string;
+      items: Array<{
+        symbol: string;
+        assetType: AssetType;
+        weightPct: number;
+        reasonFa: string;
+      }>;
+    },
+  ) {
+    const portfolio = await this.get(userId, portfolioId);
+    const universe = await this.buildUniverse();
     const items = this.materializeItems(out.items ?? [], portfolio.capitalRial, universe);
-    const snapshot = await this.prisma.portfolioSnapshot.create({
+    return this.prisma.portfolioSnapshot.create({
       data: {
         portfolioId,
         kind: SnapshotKind.SUGGESTION,
         strategySummaryFa: out.strategySummaryFa ?? 'پیشنهاد سبد',
         totalValueRial: portfolio.capitalRial,
-        items: {
-          create: items,
-        },
+        items: { create: items },
       },
       include: { items: true },
     });
+  }
 
-    return snapshot;
+  async getChat(userId: string, portfolioId: string) {
+    await this.get(userId, portfolioId);
+    return this.prisma.portfolioChatMessage.findMany({
+      where: { portfolioId, userId },
+      orderBy: { createdAt: 'asc' },
+      take: 100,
+    });
+  }
+
+  async postChat(userId: string, portfolioId: string, message: string) {
+    const portfolio = await this.get(userId, portfolioId);
+    const latest = portfolio.snapshots[0];
+    const profile = await this.prisma.userProfile.findUnique({ where: { userId } });
+
+    await this.prisma.portfolioChatMessage.create({
+      data: { portfolioId, userId, role: 'user', contentFa: message },
+    });
+
+    const history = await this.prisma.portfolioChatMessage.findMany({
+      where: { portfolioId, userId },
+      orderBy: { createdAt: 'asc' },
+      take: 30,
+    });
+
+    const context = `سبد: ${portfolio.name}
+استراتژی: ${portfolio.strategy}
+سرمایه: ${portfolio.capitalRial}
+آخرین پیشنهاد: ${latest?.strategySummaryFa ?? 'ندارد'}
+نمادها: ${latest?.items.map((i) => `${i.symbol}(${i.weightPct}%)`).join('، ') ?? ''}
+علاقه‌مندی کاربر: ${profile?.investmentPreferencesFa ?? ''}
+محدودیت‌ها: ${profile?.constraintsFa ?? ''}
+یادداشت سبد: ${portfolio.preferencesNoteFa ?? ''}`;
+
+    const historyText = history
+      .map((m) => `${m.role === 'user' ? 'کاربر' : 'دستیار'}: ${m.contentFa}`)
+      .join('\n');
+
+    let reply: string;
+    try {
+      reply = await this.llm.chatText(
+        'portfolio_chat',
+        `تو مشاور سبد سرمایه‌گذاری ایران هستی. به فارسی و شفاف پاسخ بده.
+اگر کاربر علاقه‌مندی یا محدودیت جدید گفت، در پایان پاسخ یک بلوک JSON جدا بگذار:
+{"preferencesFa":"...","constraintsFa":"...","portfolioNoteFa":"..."}
+فقط فیلدهایی که تغییر کرده را پر کن.`,
+        `${context}\n\nگفتگو:\n${historyText}`,
+        userId,
+      );
+    } catch (e) {
+      reply = `متأسفانه LLM در دسترس نیست. (${(e as Error).message.slice(0, 120)})`;
+    }
+
+    let cleanReply = reply;
+    const jsonMatch = reply.match(/\{[\s\S]*"preferencesFa"[\s\S]*\}/);
+    if (jsonMatch) {
+      try {
+        const extracted = JSON.parse(jsonMatch[0]) as {
+          preferencesFa?: string;
+          constraintsFa?: string;
+          portfolioNoteFa?: string;
+        };
+        cleanReply = reply.replace(jsonMatch[0], '').trim();
+        if (extracted.preferencesFa || extracted.constraintsFa) {
+          await this.prisma.userProfile.upsert({
+            where: { userId },
+            create: {
+              userId,
+              investmentPreferencesFa: extracted.preferencesFa,
+              constraintsFa: extracted.constraintsFa,
+            },
+            update: {
+              ...(extracted.preferencesFa
+                ? { investmentPreferencesFa: extracted.preferencesFa }
+                : {}),
+              ...(extracted.constraintsFa ? { constraintsFa: extracted.constraintsFa } : {}),
+            },
+          });
+        }
+        if (extracted.portfolioNoteFa) {
+          await this.prisma.portfolio.update({
+            where: { id: portfolioId },
+            data: { preferencesNoteFa: extracted.portfolioNoteFa },
+          });
+        }
+      } catch {
+        /* ignore parse */
+      }
+    }
+
+    const assistantMsg = await this.prisma.portfolioChatMessage.create({
+      data: { portfolioId, userId, role: 'assistant', contentFa: cleanReply },
+    });
+
+    return assistantMsg;
   }
 
   async rebalance(userId: string, portfolioId: string, noteFa?: string) {

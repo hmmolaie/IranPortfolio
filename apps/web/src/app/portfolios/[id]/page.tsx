@@ -1,6 +1,6 @@
 'use client';
 
-import { useEffect, useState } from 'react';
+import { FormEvent, useEffect, useRef, useState } from 'react';
 import { useParams, useRouter } from 'next/navigation';
 import { api, formatNum, formatRial, getToken } from '@/lib/api';
 
@@ -33,6 +33,24 @@ type Portfolio = {
   events: Array<{ id: string; type: string; noteFa?: string | null; createdAt: string }>;
 };
 
+type ChatMessage = {
+  id: string;
+  role: string;
+  contentFa: string;
+  createdAt: string;
+};
+
+type StrategyOption = {
+  labelFa: string;
+  strategySummaryFa: string;
+  items: Array<{
+    symbol: string;
+    assetType: string;
+    weightPct: number;
+    reasonFa: string;
+  }>;
+};
+
 export default function PortfolioDetailPage() {
   const { id } = useParams<{ id: string }>();
   const router = useRouter();
@@ -41,6 +59,14 @@ export default function PortfolioDetailPage() {
   const [editWeights, setEditWeights] = useState<Record<string, string>>({});
   const [cashAmount, setCashAmount] = useState('100000000');
   const [msg, setMsg] = useState('');
+
+  const [chat, setChat] = useState<ChatMessage[]>([]);
+  const [chatInput, setChatInput] = useState('');
+  const [chatBusy, setChatBusy] = useState(false);
+  const chatEndRef = useRef<HTMLDivElement>(null);
+
+  const [strategies, setStrategies] = useState<StrategyOption[] | null>(null);
+  const [strategiesBusy, setStrategiesBusy] = useState(false);
 
   async function load() {
     const data = await api<Portfolio>(`/portfolios/${id}`);
@@ -55,13 +81,22 @@ export default function PortfolioDetailPage() {
     }
   }
 
+  async function loadChat() {
+    const messages = await api<ChatMessage[]>(`/portfolios/${id}/chat`);
+    setChat(messages);
+  }
+
   useEffect(() => {
     if (!getToken()) {
       router.replace('/login');
       return;
     }
-    load().catch(() => router.replace('/portfolios'));
+    Promise.all([load(), loadChat()]).catch(() => router.replace('/portfolios'));
   }, [id, router]);
+
+  useEffect(() => {
+    chatEndRef.current?.scrollIntoView({ behavior: 'smooth' });
+  }, [chat]);
 
   async function run(action: string, path: string, body?: unknown) {
     setBusy(action);
@@ -89,6 +124,59 @@ export default function PortfolioDetailPage() {
     await run('adjust', `/portfolios/${id}/adjust`, { items });
   }
 
+  async function loadStrategies() {
+    setStrategiesBusy(true);
+    setMsg('');
+    try {
+      const out = await api<{ strategies: StrategyOption[] }>(
+        `/portfolios/${id}/suggest-strategies`,
+        { method: 'POST' },
+      );
+      setStrategies(out.strategies ?? []);
+    } catch (e) {
+      setMsg((e as Error).message);
+    } finally {
+      setStrategiesBusy(false);
+    }
+  }
+
+  async function applyStrategy(s: StrategyOption) {
+    setBusy('apply');
+    setMsg('');
+    try {
+      await api(`/portfolios/${id}/apply-strategy`, {
+        method: 'POST',
+        body: JSON.stringify(s),
+      });
+      setStrategies(null);
+      await load();
+      setMsg('استراتژی انتخاب‌شده اعمال شد.');
+    } catch (e) {
+      setMsg((e as Error).message);
+    } finally {
+      setBusy('');
+    }
+  }
+
+  async function sendChat(e: FormEvent) {
+    e.preventDefault();
+    const text = chatInput.trim();
+    if (!text) return;
+    setChatInput('');
+    setChatBusy(true);
+    try {
+      await api<ChatMessage>(`/portfolios/${id}/chat`, {
+        method: 'POST',
+        body: JSON.stringify({ message: text }),
+      });
+      await loadChat();
+    } catch (err) {
+      setMsg((err as Error).message);
+    } finally {
+      setChatBusy(false);
+    }
+  }
+
   if (!p) return <p className="text-navy-800/60">در حال بارگذاری...</p>;
   const latest = p.snapshots[0];
 
@@ -104,10 +192,17 @@ export default function PortfolioDetailPage() {
         <div className="flex flex-wrap gap-2">
           <button
             className="btn-primary"
+            disabled={!!busy || strategiesBusy}
+            onClick={loadStrategies}
+          >
+            {strategiesBusy ? '...' : 'پیشنهاد چند استراتژی AI'}
+          </button>
+          <button
+            className="btn-secondary"
             disabled={!!busy}
             onClick={() => run('suggest', `/portfolios/${id}/suggest`)}
           >
-            {busy === 'suggest' ? '...' : 'پیشنهاد AI'}
+            {busy === 'suggest' ? '...' : 'پیشنهاد سریع'}
           </button>
           <button
             className="btn-secondary"
@@ -127,6 +222,42 @@ export default function PortfolioDetailPage() {
       </div>
 
       {msg && <p className="text-sm">{msg}</p>}
+
+      {strategies && strategies.length > 0 && (
+        <section className="space-y-4">
+          <h2 className="text-lg font-semibold">استراتژی‌های پیشنهادی</h2>
+          <div className="grid gap-4 lg:grid-cols-2">
+            {strategies.map((s, idx) => (
+              <article key={idx} className="card flex flex-col gap-3">
+                <div>
+                  <h3 className="font-semibold text-navy-900">{s.labelFa}</h3>
+                  <p className="mt-2 text-sm leading-7 text-navy-800/80">{s.strategySummaryFa}</p>
+                </div>
+                <ul className="text-xs text-navy-800/70 space-y-1">
+                  {s.items.slice(0, 6).map((i) => (
+                    <li key={i.symbol}>
+                      {i.symbol} — {formatNum(i.weightPct)}٪
+                    </li>
+                  ))}
+                  {s.items.length > 6 && (
+                    <li className="text-navy-800/50">+ {s.items.length - 6} نماد دیگر</li>
+                  )}
+                </ul>
+                <button
+                  className="btn-primary mt-auto w-fit"
+                  disabled={!!busy}
+                  onClick={() => applyStrategy(s)}
+                >
+                  انتخاب این استراتژی
+                </button>
+              </article>
+            ))}
+          </div>
+          <button className="text-sm text-navy-800/60 hover:underline" onClick={() => setStrategies(null)}>
+            بستن
+          </button>
+        </section>
+      )}
 
       {latest && (
         <section className="card space-y-4">
@@ -176,6 +307,48 @@ export default function PortfolioDetailPage() {
           </button>
         </section>
       )}
+
+      <section className="card flex flex-col gap-4">
+        <div>
+          <h2 className="text-lg font-semibold">گفتگو دربارهٔ سبد</h2>
+          <p className="mt-1 text-sm text-navy-800/60">
+            دربارهٔ چرایی انتخاب سهام، محدودیت‌ها و علاقه‌مندی‌ها بپرسید؛ پاسخ‌ها و ترجیحات شما ذخیره
+            می‌شود.
+          </p>
+        </div>
+        <div className="max-h-80 space-y-3 overflow-y-auto rounded-lg bg-navy-50/60 p-4">
+          {chat.length === 0 && (
+            <p className="text-sm text-navy-800/50">
+              هنوز پیامی نیست. مثلاً بپرسید: «چرا این نمادها انتخاب شده‌اند؟»
+            </p>
+          )}
+          {chat.map((m) => (
+            <div
+              key={m.id}
+              className={`rounded-lg px-3 py-2 text-sm leading-7 ${
+                m.role === 'user'
+                  ? 'ms-8 bg-white text-navy-900'
+                  : 'me-8 bg-navy-900/90 text-white'
+              }`}
+            >
+              {m.contentFa}
+            </div>
+          ))}
+          <div ref={chatEndRef} />
+        </div>
+        <form onSubmit={sendChat} className="flex gap-2">
+          <input
+            className="input flex-1"
+            value={chatInput}
+            onChange={(e) => setChatInput(e.target.value)}
+            placeholder="سؤال خود را بنویسید..."
+            disabled={chatBusy}
+          />
+          <button type="submit" className="btn-primary" disabled={chatBusy || !chatInput.trim()}>
+            {chatBusy ? '...' : 'ارسال'}
+          </button>
+        </form>
+      </section>
 
       <section className="card grid gap-4 sm:grid-cols-3">
         <div className="sm:col-span-1">

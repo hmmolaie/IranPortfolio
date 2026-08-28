@@ -56,17 +56,22 @@ model User {
   llmSetting  LlmSetting?
   portfolios  Portfolio[]
   fundReports FundReport[]
+  fundDefinitions FundDefinition[]
+  fundTimelineInsights FundTimelineInsight[]
+  portfolioChats PortfolioChatMessage[]
   lessons     Lesson[]
   aiTraces    AiTrace[]
 }
 
 model UserProfile {
-  id              String  @id @default(cuid())
-  userId          String  @unique
-  riskTolerance   Int     @default(5)
-  horizonMonths   Int     @default(12)
-  notes           String?
-  user            User    @relation(fields: [userId], references: [id], onDelete: Cascade)
+  id                      String  @id @default(cuid())
+  userId                  String  @unique
+  riskTolerance           Int     @default(5)
+  horizonMonths           Int     @default(12)
+  notes                   String?
+  investmentPreferencesFa String?
+  constraintsFa           String?
+  user                    User    @relation(fields: [userId], references: [id], onDelete: Cascade)
 }
 
 model LlmSetting {
@@ -122,13 +127,15 @@ model Portfolio {
   strategy     PortfolioStrategy
   capitalRial  Float
   cashRial     Float             @default(0)
-  description  String?
+  description       String?
+  preferencesNoteFa String?
   createdAt    DateTime          @default(now())
   updatedAt    DateTime          @updatedAt
 
-  user      User                @relation(fields: [userId], references: [id], onDelete: Cascade)
-  snapshots PortfolioSnapshot[]
-  events    PortfolioEvent[]
+  user         User                @relation(fields: [userId], references: [id], onDelete: Cascade)
+  snapshots    PortfolioSnapshot[]
+  events       PortfolioEvent[]
+  chatMessages PortfolioChatMessage[]
 
   @@index([userId])
 }
@@ -181,11 +188,32 @@ model PortfolioEvent {
   @@index([portfolioId])
 }
 
+model FundDefinition {
+  id          String   @id @default(cuid())
+  userId      String
+  nameFa      String
+  symbolCode  String?
+  description String?
+  isActive    Boolean  @default(true)
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  user     User                  @relation(fields: [userId], references: [id], onDelete: Cascade)
+  reports  FundReport[]
+  insights FundTimelineInsight[]
+
+  @@unique([userId, nameFa])
+  @@index([userId])
+}
+
 model FundReport {
   id                 String   @id @default(cuid())
   userId             String
+  fundDefinitionId   String?
   fundName           String
   reportMonth        String
+  reportYear         Int?
+  reportMonthNum     Int?
   filePath           String
   extractedText      String?
   guessedStrategyFa  String?
@@ -194,9 +222,45 @@ model FundReport {
   analysisJson       Json?
   createdAt          DateTime @default(now())
 
-  user    User     @relation(fields: [userId], references: [id], onDelete: Cascade)
-  lessons Lesson[]
+  user           User            @relation(fields: [userId], references: [id], onDelete: Cascade)
+  fundDefinition FundDefinition? @relation(fields: [fundDefinitionId], references: [id], onDelete: SetNull)
+  lessons        Lesson[]
 
+  @@index([userId])
+  @@index([fundDefinitionId])
+}
+
+model FundTimelineInsight {
+  id               String   @id @default(cuid())
+  userId           String
+  fundDefinitionId String
+  fromReportId     String?
+  toReportId       String?
+  summaryFa        String
+  strategyChangeFa String?
+  holdingsDiffFa   String?
+  llmReasoningFa   String?
+  createdAt        DateTime @default(now())
+
+  user           User           @relation(fields: [userId], references: [id], onDelete: Cascade)
+  fundDefinition FundDefinition @relation(fields: [fundDefinitionId], references: [id], onDelete: Cascade)
+
+  @@index([fundDefinitionId])
+  @@index([userId])
+}
+
+model PortfolioChatMessage {
+  id          String   @id @default(cuid())
+  portfolioId String
+  userId      String
+  role        String
+  contentFa   String
+  createdAt   DateTime @default(now())
+
+  portfolio Portfolio @relation(fields: [portfolioId], references: [id], onDelete: Cascade)
+  user      User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([portfolioId])
   @@index([userId])
 }
 

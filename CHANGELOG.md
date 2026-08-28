@@ -7,6 +7,7 @@
 
 ### Added
 
+- GitHub Actions: استقرار خودکار سرور تست (`.github/workflows/deploy-test.yml`) + اسکریپت `scripts/deploy-test-server.sh`
 - استک کامل Docker (`docker-compose.yml` + `Dockerfile.api` / `Dockerfile.web`) برای دسترسی از راه دور
 - نمونه env سرور: `docker/env.production.example` (IP پیش‌فرض `46.249.100.230`)
 - مستندات استاندارد مخزن: `AGENTS.md`، `ARCHITECTURE.md`، `CONTRIBUTING.md`، `SECURITY.md`
