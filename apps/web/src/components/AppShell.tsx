@@ -13,6 +13,7 @@ const links = [
   { href: '/funds', label: 'صندوق‌ها' },
   { href: '/lessons', label: 'درس‌آموخته‌ها' },
   { href: '/macro', label: 'اقتصاد ایران' },
+  { href: '/news', label: 'اخبار اقتصادی ایران' },
   { href: '/settings', label: 'تنظیمات' },
 ];
 

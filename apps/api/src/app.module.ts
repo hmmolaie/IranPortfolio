@@ -10,6 +10,7 @@ import { LlmModule } from './llm/llm.module';
 import { FundsModule } from './funds/funds.module';
 import { MacroModule } from './macro/macro.module';
 import { LessonsModule } from './lessons/lessons.module';
+import { NewsModule } from './news/news.module';
 
 @Module({
   imports: [
@@ -24,6 +25,7 @@ import { LessonsModule } from './lessons/lessons.module';
     FundsModule,
     MacroModule,
     LessonsModule,
+    NewsModule,
   ],
 })
 export class AppModule {}

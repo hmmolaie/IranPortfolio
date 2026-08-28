@@ -7,12 +7,14 @@ import {
 } from '@prisma/client';
 import { PrismaService } from '../prisma/prisma.service';
 import { LlmService } from '../llm/llm.service';
+import { NewsService } from '../news/news.service';
 
 @Injectable()
 export class PortfoliosService {
   constructor(
     private readonly prisma: PrismaService,
     private readonly llm: LlmService,
+    private readonly news: NewsService,
   ) {}
 
   list(userId: string) {
@@ -93,6 +95,7 @@ export class PortfoliosService {
       orderBy: { createdAt: 'desc' },
       take: 10,
     });
+    const economicNews = await this.news.getForPortfolioContext(userId, 12);
 
     const system = await this.llm.getSystemPrompt(userId, 'portfolio_suggest_multi');
 
@@ -104,6 +107,15 @@ export class PortfoliosService {
         userProfile: profile,
         universe: universe.slice(0, 80),
         macro,
+        economicNews: economicNews.map((n) => ({
+          date: n.batch.newsDateKey,
+          title: n.titleFa,
+          summary: n.summaryFa,
+          marketImpact: n.marketImpactFa,
+          direction: n.impactDirection,
+          relevance: n.relevanceScore,
+          sectors: n.sectorsFa,
+        })),
         topFunds: funds.map((f) => ({
           fundName: f.fundName,
           month: f.reportMonth,
