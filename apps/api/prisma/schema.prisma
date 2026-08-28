@@ -216,6 +216,7 @@ model FundReport {
   reportMonthNum     Int?
   filePath           String
   extractedText      String?
+  extractedSheetsJson Json?
   guessedStrategyFa  String?
   rating             Float?
   useInSuggestions   Boolean  @default(false)

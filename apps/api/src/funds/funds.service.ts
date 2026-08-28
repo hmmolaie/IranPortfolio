@@ -126,10 +126,26 @@ export class FundsService {
     const reportMonth = `${reportYear}-${String(reportMonthNum).padStart(2, '0')}`;
     const fundName = def.nameFa;
 
-    const { kind, text: extractedText } = await extractFundReportText(file);
+    const { kind, text: extractedText, excel } = await extractFundReportText(file);
     if (kind === 'unknown' && !extractedText) {
       throw new BadRequestException('فرمت فایل پشتیبانی نمی‌شود. PDF یا Excel (xlsx/xls) بفرستید.');
     }
+
+    const sheetsPayload = excel
+      ? {
+          sheetCount: excel.sheetCount,
+          sheetNames: excel.sheetNames,
+          sheets: excel.sheets.map((s) => ({
+            name: s.name,
+            category: s.category,
+            priority: s.priority,
+            rowCount: s.rowCount,
+            sectionTitles: s.sectionTitles,
+            headers: s.headers,
+            rows: s.rows,
+          })),
+        }
+      : null;
 
     const dir = path.join(process.cwd(), 'uploads', 'funds');
     await fs.mkdir(dir, { recursive: true });
@@ -142,6 +158,7 @@ export class FundsService {
       reportMonth,
       kind,
       extractedText,
+      excel,
     );
 
     const report = await this.prisma.fundReport.create({
@@ -154,6 +171,7 @@ export class FundsService {
         reportMonthNum,
         filePath,
         extractedText,
+        extractedSheetsJson: sheetsPayload ?? undefined,
         guessedStrategyFa: analysis.guessedStrategyFa,
         rating: analysis.rating,
         useInSuggestions: Boolean(analysis.useInSuggestions && (analysis.rating ?? 0) >= 7),
@@ -217,11 +235,13 @@ export class FundsService {
           from: {
             month: prev.reportMonth,
             strategy: prev.guessedStrategyFa,
+            sheets: this.sheetNamesFromJson(prev.extractedSheetsJson),
             excerpt: (prev.extractedText ?? '').slice(0, 8000),
           },
           to: {
             month: curr.reportMonth,
             strategy: curr.guessedStrategyFa,
+            sheets: this.sheetNamesFromJson(curr.extractedSheetsJson),
             excerpt: (curr.extractedText ?? '').slice(0, 8000),
           },
         }),
@@ -252,22 +272,40 @@ export class FundsService {
     return { ok: true, insight };
   }
 
+  private sheetNamesFromJson(json: unknown): string[] {
+    if (!json || typeof json !== 'object') return [];
+    const o = json as { sheetNames?: string[]; sheets?: Array<{ name: string }> };
+    if (Array.isArray(o.sheetNames) && o.sheetNames.length) return o.sheetNames;
+    if (Array.isArray(o.sheets)) return o.sheets.map((s) => s.name).filter(Boolean);
+    return [];
+  }
+
   private async runFundAnalysis(
     userId: string,
     fundName: string,
     reportMonth: string,
     kind: string,
     extractedText: string,
+    excel?: import('./extract-report-text').ExcelExtractionResult,
   ): Promise<FundAnalysis> {
+    const sheetOverview = excel?.sheets.map((s) => ({
+      name: s.name,
+      category: s.category,
+      rowCount: s.rowCount,
+      dataRows: s.rows.length,
+      sectionTitles: s.sectionTitles.slice(0, 5),
+    }));
+
     try {
       const analysis = await this.llm.chatJson<FundAnalysis>(
         'fund_report_analysis',
         `تو تحلیل‌گر صندوق‌های سرمایه‌گذاری ایران هستی.
 ورودی می‌تواند متن PDF یا جدول استخراج‌شده از Excel صورت‌وضعیت پرتفوی باشد.
+فایل اکسل ممکن است چند شیت داشته باشد (سهام، اوراق، کالا، سپرده، درآمد و ...). همهٔ شیت‌ها را در تحلیل لحاظ کن.
 فقط JSON معتبر برگردان:
 {
   "guessedStrategyFa": "...",
-  "allocationSummaryFa": "خلاصه تخصیص",
+  "allocationSummaryFa": "خلاصه تخصیص بین دارایی‌ها",
   "rating": 7.5,
   "useInSuggestions": true,
   "strengthsFa": "...",
@@ -277,7 +315,10 @@ export class FundsService {
         `نام صندوق: ${fundName}
 ماه گزارش: ${reportMonth}
 نوع فایل: ${kind}
-متن:
+${excel ? `تعداد شیت اکسل: ${excel.sheetCount}\nشیت‌ها: ${excel.sheetNames.join('، ')}` : ''}
+${sheetOverview ? `خلاصه شیت‌ها:\n${JSON.stringify(sheetOverview, null, 2)}` : ''}
+
+متن استخراج‌شده (همهٔ شیت‌ها):
 ${extractedText || 'متن استخراج نشد'}`,
         userId,
       );

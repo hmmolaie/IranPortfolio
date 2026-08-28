@@ -22,6 +22,10 @@ type Fund = {
   guessedStrategyFa?: string | null;
   rating?: number | null;
   useInSuggestions: boolean;
+  extractedSheetsJson?: {
+    sheetCount?: number;
+    sheetNames?: string[];
+  } | null;
   lessons: Array<{ id: string; titleFa: string }>;
 };
 
@@ -132,7 +136,11 @@ export default function FundsPage() {
         body: fd,
       });
       if (!res.ok) throw new Error(await res.text());
-      setMsg('گزارش تحلیل شد و ذخیره گردید.');
+      const uploaded = (await res.json()) as Fund;
+      const sheetInfo = uploaded.extractedSheetsJson?.sheetCount
+        ? ` (${uploaded.extractedSheetsJson.sheetCount.toLocaleString('fa-IR')} شیت خوانده شد)`
+        : '';
+      setMsg(`گزارش تحلیل شد و ذخیره گردید${sheetInfo}.`);
       setFile(null);
       await load();
       if (timelineFundId === fundDefinitionId) await loadTimeline(fundDefinitionId);
@@ -359,7 +367,14 @@ export default function FundsPage() {
             <div className="flex flex-wrap items-start justify-between gap-2">
               <div>
                 <h3 className="text-lg font-semibold">{f.fundName}</h3>
-                <p className="text-sm text-navy-800/50">گزارش {monthLabel(f)}</p>
+                <p className="text-sm text-navy-800/50">
+                  گزارش {monthLabel(f)}
+                  {f.extractedSheetsJson?.sheetCount != null && (
+                    <span className="ms-2 rounded bg-navy-50 px-2 py-0.5 text-xs">
+                      {f.extractedSheetsJson.sheetCount.toLocaleString('fa-IR')} شیت
+                    </span>
+                  )}
+                </p>
               </div>
               <div className="flex flex-wrap items-center gap-3 text-sm">
                 <span>
