@@ -4,14 +4,16 @@ import {
   Delete,
   Get,
   Param,
+  Patch,
   Post,
+  Query,
   Req,
   UploadedFile,
   UseGuards,
   UseInterceptors,
 } from '@nestjs/common';
 import { FileInterceptor } from '@nestjs/platform-express';
-import { IsInt, IsOptional, IsString, Max, Min } from 'class-validator';
+import { IsBoolean, IsInt, IsOptional, IsString, Max, Min } from 'class-validator';
 import { Type } from 'class-transformer';
 import { FundsService } from './funds.service';
 import { JwtAuthGuard } from '../auth/jwt-auth.guard';
@@ -28,6 +30,25 @@ class CreateFundDefinitionDto {
   @IsOptional()
   @IsString()
   description?: string;
+}
+
+class UpdateFundDefinitionDto {
+  @IsOptional()
+  @IsString()
+  nameFa?: string;
+
+  @IsOptional()
+  @IsString()
+  symbolCode?: string;
+
+  @IsOptional()
+  @IsString()
+  description?: string;
+}
+
+class SetFundDefinitionActiveDto {
+  @IsBoolean()
+  isActive!: boolean;
 }
 
 class UploadMetaDto {
@@ -53,8 +74,11 @@ export class FundsController {
   constructor(private readonly funds: FundsService) {}
 
   @Get('definitions')
-  listDefinitions(@Req() req: { user: { userId: string } }) {
-    return this.funds.listDefinitions(req.user.userId);
+  listDefinitions(
+    @Req() req: { user: { userId: string } },
+    @Query('includeInactive') includeInactive?: string,
+  ) {
+    return this.funds.listDefinitions(req.user.userId, includeInactive === 'true');
   }
 
   @Post('definitions')
@@ -63,6 +87,24 @@ export class FundsController {
     @Body() body: CreateFundDefinitionDto,
   ) {
     return this.funds.createDefinition(req.user.userId, body);
+  }
+
+  @Patch('definitions/:id')
+  updateDefinition(
+    @Req() req: { user: { userId: string } },
+    @Param('id') id: string,
+    @Body() body: UpdateFundDefinitionDto,
+  ) {
+    return this.funds.updateDefinition(req.user.userId, id, body);
+  }
+
+  @Patch('definitions/:id/status')
+  setDefinitionStatus(
+    @Req() req: { user: { userId: string } },
+    @Param('id') id: string,
+    @Body() body: SetFundDefinitionActiveDto,
+  ) {
+    return this.funds.setDefinitionActive(req.user.userId, id, body.isActive);
   }
 
   @Delete('definitions/:id')

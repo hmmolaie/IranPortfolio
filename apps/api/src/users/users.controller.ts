@@ -68,6 +68,15 @@ class SetActiveByAdminDto {
   isActive!: boolean;
 }
 
+class ChangeOwnPasswordDto {
+  @IsString()
+  currentPassword!: string;
+
+  @IsString()
+  @MinLength(6)
+  newPassword!: string;
+}
+
 @Controller('users')
 @UseGuards(JwtAuthGuard)
 export class UsersController {
@@ -99,6 +108,18 @@ export class UsersController {
   @Patch('me')
   updateMe(@Req() req: { user: { userId: string } }, @Body() dto: UpdateProfileDto) {
     return this.users.updateProfile(req.user.userId, dto);
+  }
+
+  @Patch('me/password')
+  changeOwnPassword(
+    @Req() req: { user: { userId: string } },
+    @Body() dto: ChangeOwnPasswordDto,
+  ) {
+    return this.users.changeOwnPassword(
+      req.user.userId,
+      dto.currentPassword,
+      dto.newPassword,
+    );
   }
 
   @Patch(':id')

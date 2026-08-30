@@ -15,7 +15,7 @@ const allLinks = [
   { href: '/macro', label: 'اقتصاد ایران', adminOnly: true },
   { href: '/news', label: 'اخبار اقتصادی ایران', adminOnly: false },
   { href: '/admin/users', label: 'مدیریت کاربران', adminOnly: true },
-  { href: '/settings', label: 'تنظیمات', adminOnly: true },
+  { href: '/settings', label: 'تنظیمات', adminOnly: false },
 ];
 
 export function AppShell({ children }: { children: React.ReactNode }) {
@@ -23,6 +23,7 @@ export function AppShell({ children }: { children: React.ReactNode }) {
   const router = useRouter();
   const [authed, setAuthed] = useState(false);
   const [role, setRole] = useState<UserRole | null>(null);
+  const [userLabel, setUserLabel] = useState('');
   const isAuthPage = pathname === '/login' || pathname === '/register' || pathname === '/';
 
   useEffect(() => {
@@ -34,12 +35,13 @@ export function AppShell({ children }: { children: React.ReactNode }) {
     }
     const cached = getUserRole();
     if (cached) setRole(cached);
-    api<{ role?: UserRole }>('/users/me')
+    api<{ role?: UserRole; email?: string; name?: string | null }>('/users/me')
       .then((u) => {
         if (u.role) {
           setUserRole(u.role);
           setRole(u.role);
         }
+        setUserLabel(u.name?.trim() || u.email || '');
       })
       .catch(() => undefined);
   }, [pathname]);
@@ -83,6 +85,11 @@ export function AppShell({ children }: { children: React.ReactNode }) {
         </nav>
         {authed && (
           <div className="hidden px-6 pb-6 lg:block">
+            {userLabel && (
+              <p className="mb-3 truncate text-xs text-white/60" title={userLabel}>
+                {userLabel}
+              </p>
+            )}
             <button onClick={logout} className="text-sm text-white/50 hover:text-white">
               خروج
             </button>
@@ -92,9 +99,12 @@ export function AppShell({ children }: { children: React.ReactNode }) {
       <div className="min-w-0">
         <header className="flex items-center justify-between border-b border-navy-900/8 bg-white/70 px-6 py-4 backdrop-blur">
           <p className="text-sm text-navy-800/70">خروجی سایت مشاوره سرمایه‌گذاری رسمی نیست.</p>
-          <button onClick={logout} className="text-sm text-navy-800/60 hover:text-navy-900 lg:hidden">
-            خروج
-          </button>
+          <div className="flex items-center gap-4 lg:hidden">
+            {userLabel && <span className="text-sm text-navy-800/70">{userLabel}</span>}
+            <button onClick={logout} className="text-sm text-navy-800/60 hover:text-navy-900">
+              خروج
+            </button>
+          </div>
         </header>
         <main className="px-4 py-8 sm:px-8">{children}</main>
       </div>

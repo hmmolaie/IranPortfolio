@@ -4,6 +4,7 @@ import { FormEvent, useEffect, useState } from 'react';
 import { useRouter } from 'next/navigation';
 import Link from 'next/link';
 import { API_URL, api, formatNum, getToken } from '@/lib/api';
+import { getCurrentShamsiParts } from '@/lib/shamsi-date';
 
 type FundDefinition = {
   id: string;
@@ -73,8 +74,8 @@ export default function FundsPage() {
   const [definitions, setDefinitions] = useState<FundDefinition[]>([]);
   const [funds, setFunds] = useState<Fund[]>([]);
   const [fundDefinitionId, setFundDefinitionId] = useState('');
-  const [reportYear, setReportYear] = useState('1404');
-  const [reportMonthNum, setReportMonthNum] = useState('1');
+  const [reportYear, setReportYear] = useState(() => String(getCurrentShamsiParts().year));
+  const [reportMonthNum, setReportMonthNum] = useState(() => String(getCurrentShamsiParts().month));
   const [file, setFile] = useState<File | null>(null);
   const [msg, setMsg] = useState('');
   const [loading, setLoading] = useState(false);

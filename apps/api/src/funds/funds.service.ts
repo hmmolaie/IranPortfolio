@@ -38,10 +38,10 @@ export class FundsService {
     private readonly llm: LlmService,
   ) {}
 
-  listDefinitions(userId: string) {
+  listDefinitions(userId: string, includeInactive = false) {
     return this.prisma.fundDefinition.findMany({
-      where: { userId, isActive: true },
-      orderBy: { nameFa: 'asc' },
+      where: { userId, ...(includeInactive ? {} : { isActive: true }) },
+      orderBy: [{ isActive: 'desc' }, { nameFa: 'asc' }],
     });
   }
 
@@ -64,6 +64,32 @@ export class FundsService {
       data: { isActive: false },
     });
     return { ok: true };
+  }
+
+  async updateDefinition(
+    userId: string,
+    id: string,
+    data: { nameFa?: string; symbolCode?: string; description?: string },
+  ) {
+    const def = await this.prisma.fundDefinition.findFirst({ where: { id, userId } });
+    if (!def) throw new NotFoundException('صندوق تعریف‌شده یافت نشد');
+    return this.prisma.fundDefinition.update({
+      where: { id },
+      data: {
+        ...(data.nameFa !== undefined ? { nameFa: data.nameFa.trim() } : {}),
+        ...(data.symbolCode !== undefined ? { symbolCode: data.symbolCode.trim() || null } : {}),
+        ...(data.description !== undefined ? { description: data.description.trim() || null } : {}),
+      },
+    });
+  }
+
+  async setDefinitionActive(userId: string, id: string, isActive: boolean) {
+    const def = await this.prisma.fundDefinition.findFirst({ where: { id, userId } });
+    if (!def) throw new NotFoundException('صندوق تعریف‌شده یافت نشد');
+    return this.prisma.fundDefinition.update({
+      where: { id },
+      data: { isActive },
+    });
   }
 
   list(userId: string) {

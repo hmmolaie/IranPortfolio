@@ -12,6 +12,7 @@ type FundDefinition = {
   nameFa: string;
   symbolCode?: string | null;
   description?: string | null;
+  isActive: boolean;
 };
 
 type LlmPrompt = {
@@ -65,6 +66,8 @@ function detectProvider(baseUrl: string): ProviderId {
 export default function SettingsPage() {
   const router = useRouter();
   const [tab, setTab] = useState<SettingsTab>('profile');
+  const [isAdmin, setIsAdmin] = useState(false);
+  const [email, setEmail] = useState('');
   const [profile, setProfile] = useState({
     name: '',
     riskTolerance: 5,
@@ -83,10 +86,21 @@ export default function SettingsPage() {
   });
   const [fundDefs, setFundDefs] = useState<FundDefinition[]>([]);
   const [newFund, setNewFund] = useState({ nameFa: '', symbolCode: '', description: '' });
+  const [editingFund, setEditingFund] = useState<FundDefinition | null>(null);
+  const [editFundForm, setEditFundForm] = useState({ nameFa: '', symbolCode: '', description: '' });
+  const [fundBusy, setFundBusy] = useState(false);
   const [prompts, setPrompts] = useState<LlmPrompt[]>([]);
   const [openPrompt, setOpenPrompt] = useState<string | null>(null);
   const [promptBusy, setPromptBusy] = useState('');
   const [msg, setMsg] = useState('');
+  const [passwordForm, setPasswordForm] = useState({
+    currentPassword: '',
+    newPassword: '',
+    confirmPassword: '',
+  });
+  const [passwordBusy, setPasswordBusy] = useState(false);
+
+  const visibleTabs = TABS.filter((t) => t.id === 'profile' || isAdmin);
 
   async function loadPrompts() {
     const list = await api<LlmPrompt[]>('/llm/prompts');
@@ -94,7 +108,7 @@ export default function SettingsPage() {
   }
 
   async function loadFundDefs() {
-    const defs = await api<FundDefinition[]>('/funds/definitions');
+    const defs = await api<FundDefinition[]>('/funds/definitions?includeInactive=true');
     setFundDefs(defs);
   }
 
@@ -104,6 +118,7 @@ export default function SettingsPage() {
       return;
     }
     api<{
+      email?: string;
       name?: string;
       role?: string;
       profile?: {
@@ -114,10 +129,9 @@ export default function SettingsPage() {
         constraintsFa?: string | null;
       };
     }>('/users/me').then((u) => {
-      if (u.role !== 'ADMIN') {
-        router.replace('/dashboard');
-        return;
-      }
+      const admin = u.role === 'ADMIN';
+      setIsAdmin(admin);
+      setEmail(u.email ?? '');
       setProfile({
         name: u.name ?? '',
         riskTolerance: u.profile?.riskTolerance ?? 5,
@@ -132,8 +146,9 @@ export default function SettingsPage() {
       model: string;
       usePlatformFallback: boolean;
       hasToken: boolean;
-    } | null>('/llm/settings').then((s) => {
-      if (s) {
+    } | null>('/llm/settings')
+      .then((s) => {
+        if (!s) return;
         setProvider(detectProvider(s.baseUrl));
         setLlm((prev) => ({
           ...prev,
@@ -142,11 +157,15 @@ export default function SettingsPage() {
           usePlatformFallback: s.usePlatformFallback,
           hasToken: s.hasToken,
         }));
-      }
-    });
+      })
+      .catch(() => undefined);
     loadFundDefs().catch(() => undefined);
     loadPrompts().catch(() => undefined);
   }, [router]);
+
+  useEffect(() => {
+    if (!isAdmin && tab !== 'profile') setTab('profile');
+  }, [isAdmin, tab]);
 
   function applyProvider(next: ProviderId) {
     setProvider(next);
@@ -172,6 +191,31 @@ export default function SettingsPage() {
       }),
     });
     setMsg('پروفایل ذخیره شد.');
+  }
+
+  async function savePassword(e: FormEvent) {
+    e.preventDefault();
+    if (passwordForm.newPassword !== passwordForm.confirmPassword) {
+      setMsg('رمز عبور جدید و تکرار آن یکسان نیستند.');
+      return;
+    }
+    setPasswordBusy(true);
+    setMsg('');
+    try {
+      await api('/users/me/password', {
+        method: 'PATCH',
+        body: JSON.stringify({
+          currentPassword: passwordForm.currentPassword,
+          newPassword: passwordForm.newPassword,
+        }),
+      });
+      setPasswordForm({ currentPassword: '', newPassword: '', confirmPassword: '' });
+      setMsg('رمز عبور با موفقیت تغییر کرد.');
+    } catch (err) {
+      setMsg((err as Error).message);
+    } finally {
+      setPasswordBusy(false);
+    }
   }
 
   async function saveLlm(e: FormEvent) {
@@ -205,11 +249,66 @@ export default function SettingsPage() {
     setMsg('صندوق اضافه شد.');
   }
 
-  async function removeFund(id: string, name: string) {
+  async function deactivateFund(id: string, name: string) {
     if (!confirm(`صندوق «${name}» غیرفعال شود؟`)) return;
-    await api(`/funds/definitions/${id}`, { method: 'DELETE' });
-    await loadFundDefs();
-    setMsg('صندوق حذف شد.');
+    setFundBusy(true);
+    try {
+      await api(`/funds/definitions/${id}/status`, {
+        method: 'PATCH',
+        body: JSON.stringify({ isActive: false }),
+      });
+      await loadFundDefs();
+      if (editingFund?.id === id) setEditingFund(null);
+      setMsg('صندوق غیرفعال شد.');
+    } finally {
+      setFundBusy(false);
+    }
+  }
+
+  async function activateFund(id: string, name: string) {
+    if (!confirm(`صندوق «${name}» فعال شود؟`)) return;
+    setFundBusy(true);
+    try {
+      await api(`/funds/definitions/${id}/status`, {
+        method: 'PATCH',
+        body: JSON.stringify({ isActive: true }),
+      });
+      await loadFundDefs();
+      setMsg('صندوق فعال شد.');
+    } finally {
+      setFundBusy(false);
+    }
+  }
+
+  function openEditFund(fund: FundDefinition) {
+    setEditingFund(fund);
+    setEditFundForm({
+      nameFa: fund.nameFa,
+      symbolCode: fund.symbolCode ?? '',
+      description: fund.description ?? '',
+    });
+    setMsg('');
+  }
+
+  async function saveEditFund(e: FormEvent) {
+    e.preventDefault();
+    if (!editingFund) return;
+    setFundBusy(true);
+    try {
+      await api(`/funds/definitions/${editingFund.id}`, {
+        method: 'PATCH',
+        body: JSON.stringify({
+          nameFa: editFundForm.nameFa.trim(),
+          symbolCode: editFundForm.symbolCode.trim() || undefined,
+          description: editFundForm.description.trim() || undefined,
+        }),
+      });
+      await loadFundDefs();
+      setEditingFund(null);
+      setMsg('صندوق به‌روز شد.');
+    } finally {
+      setFundBusy(false);
+    }
   }
 
   function updatePromptText(purpose: string, systemPrompt: string) {
@@ -254,7 +353,7 @@ export default function SettingsPage() {
 
       <div className="border-b border-navy-900/10">
         <nav className="-mb-px flex gap-1 overflow-x-auto">
-          {TABS.map((t) => (
+          {visibleTabs.map((t) => (
             <button
               key={t.id}
               type="button"
@@ -278,89 +377,238 @@ export default function SettingsPage() {
       {msg && <p className="text-sm text-navy-800">{msg}</p>}
 
       {tab === 'profile' && (
-        <form onSubmit={saveProfile} className="card grid max-w-2xl gap-4">
-          <div>
-            <label className="label">نام</label>
-            <input
-              className="input"
-              value={profile.name}
-              onChange={(e) => setProfile({ ...profile, name: e.target.value })}
-            />
-          </div>
-          <div>
-            <label className="label">تحمل ریسک (۱–۱۰)</label>
-            <input
-              className="input"
-              type="number"
-              min={1}
-              max={10}
-              value={profile.riskTolerance}
-              onChange={(e) => setProfile({ ...profile, riskTolerance: Number(e.target.value) })}
-            />
-          </div>
-          <div>
-            <label className="label">افق سرمایه‌گذاری (ماه)</label>
-            <input
-              className="input"
-              type="number"
-              min={1}
-              value={profile.horizonMonths}
-              onChange={(e) => setProfile({ ...profile, horizonMonths: Number(e.target.value) })}
-            />
-          </div>
-          <div>
-            <label className="label">علاقه‌مندی‌های سرمایه‌گذاری</label>
-            <textarea
-              className="input min-h-[5rem]"
-              value={profile.investmentPreferencesFa}
-              onChange={(e) => setProfile({ ...profile, investmentPreferencesFa: e.target.value })}
-              placeholder="مثلاً تمایل به سهام صنعتی، اجتناب از نمادهای پرنوسان..."
-            />
-          </div>
-          <div>
-            <label className="label">محدودیت‌ها</label>
-            <textarea
-              className="input min-h-[5rem]"
-              value={profile.constraintsFa}
-              onChange={(e) => setProfile({ ...profile, constraintsFa: e.target.value })}
-              placeholder="مثلاً بدون اهرم، حداکثر ۲۰٪ طلا، عدم سرمایه‌گذاری در بانک‌ها..."
-            />
-          </div>
-          <button className="btn-primary w-fit">ذخیره پروفایل</button>
-        </form>
+        <div className="space-y-6">
+          <section className="card max-w-2xl space-y-4">
+            <h2 className="text-lg font-semibold">حساب کاربری</h2>
+            <div>
+              <label className="label">نام کاربری</label>
+              <input className="input bg-navy-50/80" value={email} readOnly dir="ltr" />
+            </div>
+          </section>
+
+          <form onSubmit={savePassword} className="card grid max-w-2xl gap-4">
+            <h2 className="text-lg font-semibold">تغییر رمز عبور</h2>
+            <div>
+              <label className="label">رمز عبور فعلی</label>
+              <input
+                className="input"
+                type="password"
+                value={passwordForm.currentPassword}
+                onChange={(e) =>
+                  setPasswordForm({ ...passwordForm, currentPassword: e.target.value })
+                }
+                required
+                autoComplete="current-password"
+              />
+            </div>
+            <div>
+              <label className="label">رمز عبور جدید</label>
+              <input
+                className="input"
+                type="password"
+                minLength={6}
+                value={passwordForm.newPassword}
+                onChange={(e) => setPasswordForm({ ...passwordForm, newPassword: e.target.value })}
+                required
+                autoComplete="new-password"
+              />
+            </div>
+            <div>
+              <label className="label">تکرار رمز عبور جدید</label>
+              <input
+                className="input"
+                type="password"
+                minLength={6}
+                value={passwordForm.confirmPassword}
+                onChange={(e) =>
+                  setPasswordForm({ ...passwordForm, confirmPassword: e.target.value })
+                }
+                required
+                autoComplete="new-password"
+              />
+            </div>
+            <button type="submit" className="btn-primary w-fit" disabled={passwordBusy}>
+              {passwordBusy ? 'در حال ذخیره...' : 'تغییر رمز عبور'}
+            </button>
+          </form>
+
+          <form onSubmit={saveProfile} className="card grid max-w-2xl gap-4">
+            <h2 className="text-lg font-semibold">پروفایل سرمایه‌گذاری</h2>
+            <div>
+              <label className="label">نام نمایشی</label>
+              <input
+                className="input"
+                value={profile.name}
+                onChange={(e) => setProfile({ ...profile, name: e.target.value })}
+              />
+            </div>
+            <div>
+              <label className="label">تحمل ریسک (۱–۱۰)</label>
+              <input
+                className="input"
+                type="number"
+                min={1}
+                max={10}
+                value={profile.riskTolerance}
+                onChange={(e) => setProfile({ ...profile, riskTolerance: Number(e.target.value) })}
+              />
+            </div>
+            <div>
+              <label className="label">افق سرمایه‌گذاری (ماه)</label>
+              <input
+                className="input"
+                type="number"
+                min={1}
+                value={profile.horizonMonths}
+                onChange={(e) => setProfile({ ...profile, horizonMonths: Number(e.target.value) })}
+              />
+            </div>
+            <div>
+              <label className="label">علاقه‌مندی‌های سرمایه‌گذاری</label>
+              <textarea
+                className="input min-h-[5rem]"
+                value={profile.investmentPreferencesFa}
+                onChange={(e) => setProfile({ ...profile, investmentPreferencesFa: e.target.value })}
+                placeholder="مثلاً تمایل به سهام صنعتی، اجتناب از نمادهای پرنوسان..."
+              />
+            </div>
+            <div>
+              <label className="label">محدودیت‌ها</label>
+              <textarea
+                className="input min-h-[5rem]"
+                value={profile.constraintsFa}
+                onChange={(e) => setProfile({ ...profile, constraintsFa: e.target.value })}
+                placeholder="مثلاً بدون اهرم، حداکثر ۲۰٪ طلا، عدم سرمایه‌گذاری در بانک‌ها..."
+              />
+            </div>
+            <button className="btn-primary w-fit">ذخیره پروفایل</button>
+          </form>
+        </div>
       )}
 
-      {tab === 'funds' && (
-        <section className="card max-w-2xl space-y-4">
+      {tab === 'funds' && isAdmin && (
+        <section className="space-y-4">
           <p className="text-sm text-navy-800/70">
-            یک‌بار نام صندوق‌ها را اینجا تعریف کنید؛ در صفحه صندوق‌ها از لیست انتخاب می‌شوند.
+            نام صندوق‌ها را اینجا تعریف و مدیریت کنید؛ در صفحه صندوق‌ها فقط موارد فعال در لیست انتخاب
+            می‌شوند.
           </p>
-          <ul className="space-y-2">
-            {fundDefs.map((f) => (
-              <li
-                key={f.id}
-                className="flex flex-wrap items-center justify-between gap-2 rounded-lg border border-navy-900/10 px-3 py-2"
-              >
-                <div>
-                  <span className="font-medium">{f.nameFa}</span>
-                  {f.symbolCode && (
-                    <span className="ms-2 text-xs text-navy-800/50">{f.symbolCode}</span>
-                  )}
-                </div>
+
+          <div className="card overflow-x-auto p-0">
+            <table className="min-w-full text-sm">
+              <thead className="bg-navy-900 text-white">
+                <tr>
+                  <th className="px-4 py-3 text-start font-medium">نام صندوق</th>
+                  <th className="px-4 py-3 text-start font-medium">کد / نماد</th>
+                  <th className="px-4 py-3 text-start font-medium">وضعیت</th>
+                  <th className="px-4 py-3 text-start font-medium">عملیات</th>
+                </tr>
+              </thead>
+              <tbody>
+                {fundDefs.map((f) => (
+                  <tr
+                    key={f.id}
+                    className={clsx(
+                      'border-b border-navy-900/5 odd:bg-white even:bg-navy-50/40',
+                      !f.isActive && 'opacity-60',
+                    )}
+                  >
+                    <td className="px-4 py-3 font-medium">{f.nameFa}</td>
+                    <td className="px-4 py-3 text-navy-800/70">{f.symbolCode || '—'}</td>
+                    <td className="px-4 py-3">
+                      <span
+                        className={clsx(
+                          'rounded-full px-2.5 py-0.5 text-xs font-medium',
+                          f.isActive ? 'bg-emerald-100 text-emerald-800' : 'bg-red-100 text-red-800',
+                        )}
+                      >
+                        {f.isActive ? 'فعال' : 'غیرفعال'}
+                      </span>
+                    </td>
+                    <td className="px-4 py-3">
+                      <div className="flex flex-wrap gap-2">
+                        <button
+                          type="button"
+                          className="text-xs text-navy-800 hover:underline"
+                          onClick={() => openEditFund(f)}
+                          disabled={fundBusy}
+                        >
+                          ویرایش
+                        </button>
+                        {f.isActive ? (
+                          <button
+                            type="button"
+                            className="text-xs text-red-700 hover:underline"
+                            onClick={() => deactivateFund(f.id, f.nameFa)}
+                            disabled={fundBusy}
+                          >
+                            غیرفعال
+                          </button>
+                        ) : (
+                          <button
+                            type="button"
+                            className="text-xs text-emerald-700 hover:underline"
+                            onClick={() => activateFund(f.id, f.nameFa)}
+                            disabled={fundBusy}
+                          >
+                            فعال‌سازی
+                          </button>
+                        )}
+                      </div>
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+            {fundDefs.length === 0 && (
+              <p className="p-6 text-sm text-navy-800/60">هنوز صندوقی تعریف نشده.</p>
+            )}
+          </div>
+
+          {editingFund && (
+            <form onSubmit={saveEditFund} className="card grid max-w-2xl gap-4">
+              <h2 className="text-lg font-semibold">ویرایش صندوق</h2>
+              <div>
+                <label className="label">نام صندوق</label>
+                <input
+                  className="input"
+                  value={editFundForm.nameFa}
+                  onChange={(e) => setEditFundForm({ ...editFundForm, nameFa: e.target.value })}
+                  required
+                />
+              </div>
+              <div>
+                <label className="label">کد / نماد (اختیاری)</label>
+                <input
+                  className="input"
+                  value={editFundForm.symbolCode}
+                  onChange={(e) => setEditFundForm({ ...editFundForm, symbolCode: e.target.value })}
+                />
+              </div>
+              <div>
+                <label className="label">توضیحات (اختیاری)</label>
+                <textarea
+                  className="input min-h-[4rem]"
+                  value={editFundForm.description}
+                  onChange={(e) => setEditFundForm({ ...editFundForm, description: e.target.value })}
+                />
+              </div>
+              <div className="flex gap-2">
+                <button type="submit" className="btn-primary" disabled={fundBusy}>
+                  {fundBusy ? '...' : 'ذخیره'}
+                </button>
                 <button
                   type="button"
-                  className="text-xs text-red-700 hover:underline"
-                  onClick={() => removeFund(f.id, f.nameFa)}
+                  className="btn-secondary"
+                  onClick={() => setEditingFund(null)}
                 >
-                  حذف
+                  انصراف
                 </button>
-              </li>
-            ))}
-            {fundDefs.length === 0 && (
-              <li className="text-sm text-navy-800/50">هنوز صندوقی تعریف نشده.</li>
-            )}
-          </ul>
-          <form onSubmit={addFund} className="grid gap-3 border-t border-navy-900/10 pt-4">
+              </div>
+            </form>
+          )}
+
+          <form onSubmit={addFund} className="card grid max-w-2xl gap-4">
+            <h2 className="text-lg font-semibold">افزودن صندوق</h2>
             <div>
               <label className="label">نام صندوق</label>
               <input
@@ -378,14 +626,22 @@ export default function SettingsPage() {
                 onChange={(e) => setNewFund({ ...newFund, symbolCode: e.target.value })}
               />
             </div>
-            <button type="submit" className="btn-secondary w-fit">
+            <div>
+              <label className="label">توضیحات (اختیاری)</label>
+              <textarea
+                className="input min-h-[4rem]"
+                value={newFund.description}
+                onChange={(e) => setNewFund({ ...newFund, description: e.target.value })}
+              />
+            </div>
+            <button type="submit" className="btn-secondary w-fit" disabled={fundBusy}>
               افزودن صندوق
             </button>
           </form>
         </section>
       )}
 
-      {tab === 'prompts' && (
+      {tab === 'prompts' && isAdmin && (
         <section className="card max-w-3xl space-y-4">
           <p className="text-sm text-navy-800/70">
             متن system هر بخش نرم‌افزار را ویرایش کنید. پس از ذخیره، همان پرامپت به مدل ارسال می‌شود.
@@ -453,7 +709,7 @@ export default function SettingsPage() {
         </section>
       )}
 
-      {tab === 'llm' && (
+      {tab === 'llm' && isAdmin && (
         <form onSubmit={saveLlm} className="card grid max-w-2xl gap-4">
           <p className="rounded-lg bg-navy-50 px-3 py-2 text-sm text-navy-800/80">
             اشتراک Cursor API عمومی برای اپلیکیشن‌های بیرونی ندارد؛ فقط داخل IDE کار می‌کند. برای سبدیار از
