@@ -1,7 +1,9 @@
-import { Body, Controller, Get, Patch, Req, UseGuards } from '@nestjs/common';
-import { IsInt, IsOptional, IsString, Max, Min } from 'class-validator';
+import { Body, Controller, Get, Patch, Post, Req, UseGuards } from '@nestjs/common';
+import { IsInt, IsOptional, IsString, Max, Min, MinLength } from 'class-validator';
+import { UserRole } from '@prisma/client';
 import { UsersService } from './users.service';
 import { JwtAuthGuard } from '../auth/jwt-auth.guard';
+import { AdminGuard } from '../auth/admin.guard';
 
 class UpdateProfileDto {
   @IsOptional()
@@ -32,6 +34,19 @@ class UpdateProfileDto {
   constraintsFa?: string;
 }
 
+class CreateUserDto {
+  @IsString()
+  email!: string;
+
+  @IsString()
+  @MinLength(6)
+  password!: string;
+
+  @IsOptional()
+  @IsString()
+  name?: string;
+}
+
 @Controller('users')
 @UseGuards(JwtAuthGuard)
 export class UsersController {
@@ -46,6 +61,18 @@ export class UsersController {
       ...rest,
       llmConfigured: Boolean(llmSetting?.apiTokenEncrypted),
     };
+  }
+
+  @Get()
+  @UseGuards(AdminGuard)
+  listUsers() {
+    return this.users.listForAdmin();
+  }
+
+  @Post()
+  @UseGuards(AdminGuard)
+  createUser(@Body() dto: CreateUserDto) {
+    return this.users.createUser(dto);
   }
 
   @Patch('me')

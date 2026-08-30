@@ -1,6 +1,7 @@
 import { createCipheriv, createDecipheriv, randomBytes, scryptSync } from 'crypto';
 import { Injectable, Logger, BadRequestException } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
+import { UserRole } from '@prisma/client';
 import { PrismaService } from '../prisma/prisma.service';
 import { LLM_PROMPT_DEFAULTS, isValidPromptPurpose } from './prompt-defaults';
 
@@ -116,10 +117,11 @@ export class LlmService {
 
   async getSystemPrompt(userId: string | undefined, purpose: string): Promise<string> {
     const fallback = LLM_PROMPT_DEFAULTS[purpose]?.systemPrompt ?? '';
-    if (!userId) return fallback;
+    const promptUserId = (await this.adminUserId()) ?? userId;
+    if (!promptUserId) return fallback;
 
     const custom = await this.prisma.llmPromptTemplate.findUnique({
-      where: { userId_purpose: { userId, purpose } },
+      where: { userId_purpose: { userId: promptUserId, purpose } },
     });
     return custom?.systemPrompt ?? fallback;
   }
@@ -147,11 +149,20 @@ export class LlmService {
     return { ok: true, purpose };
   }
 
+  private async adminUserId(): Promise<string | null> {
+    const admin = await this.prisma.user.findFirst({
+      where: { role: UserRole.ADMIN },
+      select: { id: true },
+    });
+    return admin?.id ?? null;
+  }
+
   private async resolveCredentials(userId?: string): Promise<LlmCreds> {
     const envFallbacks = parseModelList(this.config.get<string>('LLM_MODEL_FALLBACKS') ?? '');
+    const settingsUserId = (await this.adminUserId()) ?? userId;
 
-    if (userId) {
-      const s = await this.prisma.llmSetting.findUnique({ where: { userId } });
+    if (settingsUserId) {
+      const s = await this.prisma.llmSetting.findUnique({ where: { userId: settingsUserId } });
       if (s?.apiTokenEncrypted) {
         const models = parseModelList(s.model);
         return {

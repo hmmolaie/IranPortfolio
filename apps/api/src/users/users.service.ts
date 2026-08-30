@@ -1,4 +1,5 @@
 import { Injectable } from '@nestjs/common';
+import { UserRole } from '@prisma/client';
 import { PrismaService } from '../prisma/prisma.service';
 import * as bcrypt from 'bcryptjs';
 
@@ -20,18 +21,44 @@ export class UsersService {
     });
   }
 
-  async create(email: string, password: string, name?: string) {
-    const passwordHash = await bcrypt.hash(password, 10);
+  listForAdmin() {
+    return this.prisma.user.findMany({
+      where: { role: UserRole.USER },
+      orderBy: { createdAt: 'desc' },
+      select: { id: true, email: true, name: true, createdAt: true },
+    });
+  }
+
+  async getAdminUserId(): Promise<string | null> {
+    const admin = await this.prisma.user.findFirst({
+      where: { role: UserRole.ADMIN },
+      select: { id: true },
+    });
+    return admin?.id ?? null;
+  }
+
+  async createUser(data: {
+    email: string;
+    password: string;
+    name?: string;
+    role?: UserRole;
+  }) {
+    const passwordHash = await bcrypt.hash(data.password, 10);
     return this.prisma.user.create({
       data: {
-        email,
+        email: data.email.trim(),
         passwordHash,
-        name,
+        name: data.name?.trim(),
+        role: data.role ?? UserRole.USER,
         profile: { create: {} },
         llmSetting: { create: {} },
       },
-      include: { profile: true },
+      select: { id: true, email: true, name: true, role: true, createdAt: true },
     });
+  }
+
+  async create(email: string, password: string, name?: string) {
+    return this.createUser({ email, password, name });
   }
 
   async updateProfile(

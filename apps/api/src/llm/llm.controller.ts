@@ -2,6 +2,7 @@ import { Body, Controller, Delete, Get, Param, Put, Req, UseGuards } from '@nest
 import { IsBoolean, IsOptional, IsString } from 'class-validator';
 import { LlmService } from './llm.service';
 import { JwtAuthGuard } from '../auth/jwt-auth.guard';
+import { AdminGuard } from '../auth/admin.guard';
 
 class UpdateLlmDto {
   @IsOptional()
@@ -27,7 +28,7 @@ class UpdatePromptDto {
 }
 
 @Controller('llm')
-@UseGuards(JwtAuthGuard)
+@UseGuards(JwtAuthGuard, AdminGuard)
 export class LlmController {
   constructor(private readonly llm: LlmService) {}
 

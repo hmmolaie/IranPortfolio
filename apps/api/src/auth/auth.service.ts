@@ -14,19 +14,19 @@ export class AuthService {
     const existing = await this.users.findByEmail(email);
     if (existing) throw new ConflictException('این ایمیل قبلاً ثبت شده است');
     const user = await this.users.create(email, password, name);
-    return this.tokenFor(user.id, user.email);
+    return this.tokenFor(user.id, user.email, user.role ?? 'USER');
   }
 
   async login(email: string, password: string) {
     const user = await this.users.findByEmail(email);
-    if (!user) throw new UnauthorizedException('ایمیل یا رمز عبور نادرست است');
+    if (!user) throw new UnauthorizedException('نام کاربری یا رمز عبور نادرست است');
     const ok = await bcrypt.compare(password, user.passwordHash);
-    if (!ok) throw new UnauthorizedException('ایمیل یا رمز عبور نادرست است');
-    return this.tokenFor(user.id, user.email);
+    if (!ok) throw new UnauthorizedException('نام کاربری یا رمز عبور نادرست است');
+    return this.tokenFor(user.id, user.email, user.role);
   }
 
-  private tokenFor(userId: string, email: string) {
-    const accessToken = this.jwt.sign({ sub: userId, email });
-    return { accessToken, user: { id: userId, email } };
+  private tokenFor(userId: string, email: string, role: string) {
+    const accessToken = this.jwt.sign({ sub: userId, email, role });
+    return { accessToken, user: { id: userId, email, role } };
   }
 }

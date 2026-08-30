@@ -76,6 +76,15 @@ export default function SettingsPage() {
   const [openPrompt, setOpenPrompt] = useState<string | null>(null);
   const [promptBusy, setPromptBusy] = useState('');
   const [msg, setMsg] = useState('');
+  const [appUsers, setAppUsers] = useState<
+    Array<{ id: string; email: string; name?: string | null }>
+  >([]);
+  const [newUser, setNewUser] = useState({ email: '', password: '', name: '' });
+
+  async function loadAppUsers() {
+    const list = await api<Array<{ id: string; email: string; name?: string | null }>>('/users');
+    setAppUsers(list);
+  }
 
   async function loadPrompts() {
     const list = await api<LlmPrompt[]>('/llm/prompts');
@@ -94,6 +103,7 @@ export default function SettingsPage() {
     }
     api<{
       name?: string;
+      role?: string;
       profile?: {
         riskTolerance: number;
         horizonMonths: number;
@@ -102,6 +112,10 @@ export default function SettingsPage() {
         constraintsFa?: string | null;
       };
     }>('/users/me').then((u) => {
+      if (u.role !== 'ADMIN') {
+        router.replace('/dashboard');
+        return;
+      }
       setProfile({
         name: u.name ?? '',
         riskTolerance: u.profile?.riskTolerance ?? 5,
@@ -130,6 +144,7 @@ export default function SettingsPage() {
     });
     loadFundDefs().catch(() => undefined);
     loadPrompts().catch(() => undefined);
+    loadAppUsers().catch(() => undefined);
   }, [router]);
 
   function applyProvider(next: ProviderId) {
@@ -140,6 +155,21 @@ export default function SettingsPage() {
       baseUrl: p.baseUrl || prev.baseUrl,
       model: p.model || prev.model,
     }));
+  }
+
+  async function addAppUser(e: FormEvent) {
+    e.preventDefault();
+    await api('/users', {
+      method: 'POST',
+      body: JSON.stringify({
+        email: newUser.email.trim(),
+        password: newUser.password,
+        name: newUser.name.trim() || undefined,
+      }),
+    });
+    setNewUser({ email: '', password: '', name: '' });
+    await loadAppUsers();
+    setMsg('کاربر جدید ایجاد شد.');
   }
 
   async function saveProfile(e: FormEvent) {
@@ -236,6 +266,58 @@ export default function SettingsPage() {
         <p className="mt-2 text-navy-800/70">پروفایل، پرامپت‌ها، صندوق‌ها و اتصال به مدل زبانی</p>
       </div>
       {msg && <p className="text-sm text-navy-800">{msg}</p>}
+
+      <section className="card max-w-2xl space-y-4">
+        <h2 className="text-lg font-semibold">مدیریت کاربران</h2>
+        <p className="text-sm text-navy-800/70">کاربران فقط توسط مدیر ایجاد می‌شوند.</p>
+        <ul className="space-y-2">
+          {appUsers.map((u) => (
+            <li
+              key={u.id}
+              className="rounded-lg border border-navy-900/10 px-3 py-2 text-sm"
+            >
+              <span className="font-medium">{u.name || u.email}</span>
+              <span className="ms-2 text-navy-800/50">{u.email}</span>
+            </li>
+          ))}
+          {appUsers.length === 0 && (
+            <li className="text-sm text-navy-800/50">کاربری ثبت نشده.</li>
+          )}
+        </ul>
+        <form onSubmit={addAppUser} className="grid gap-3 border-t border-navy-900/10 pt-4">
+          <div>
+            <label className="label">نام کاربری</label>
+            <input
+              className="input"
+              value={newUser.email}
+              onChange={(e) => setNewUser({ ...newUser, email: e.target.value })}
+              required
+            />
+          </div>
+          <div>
+            <label className="label">رمز عبور</label>
+            <input
+              className="input"
+              type="password"
+              minLength={6}
+              value={newUser.password}
+              onChange={(e) => setNewUser({ ...newUser, password: e.target.value })}
+              required
+            />
+          </div>
+          <div>
+            <label className="label">نام نمایشی (اختیاری)</label>
+            <input
+              className="input"
+              value={newUser.name}
+              onChange={(e) => setNewUser({ ...newUser, name: e.target.value })}
+            />
+          </div>
+          <button type="submit" className="btn-primary w-fit">
+            افزودن کاربر
+          </button>
+        </form>
+      </section>
 
       <form onSubmit={saveProfile} className="card grid max-w-2xl gap-4">
         <h2 className="text-lg font-semibold">پروفایل</h2>

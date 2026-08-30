@@ -2,33 +2,51 @@
 
 import Link from 'next/link';
 import { usePathname, useRouter } from 'next/navigation';
-import { getToken, setToken } from '@/lib/api';
+import { getToken, clearSession, api, getUserRole, setUserRole, UserRole } from '@/lib/api';
 import { useEffect, useState } from 'react';
 import clsx from 'clsx';
 
-const links = [
-  { href: '/dashboard', label: 'داشبورد' },
-  { href: '/market', label: 'بازار سهام تهران' },
-  { href: '/portfolios', label: 'سبدها' },
-  { href: '/funds', label: 'صندوق‌ها' },
-  { href: '/lessons', label: 'درس‌آموخته‌ها' },
-  { href: '/macro', label: 'اقتصاد ایران' },
-  { href: '/news', label: 'اخبار اقتصادی ایران' },
-  { href: '/settings', label: 'تنظیمات' },
+const allLinks = [
+  { href: '/dashboard', label: 'داشبورد', adminOnly: false },
+  { href: '/market', label: 'بازار سهام تهران', adminOnly: false },
+  { href: '/portfolios', label: 'سبدها', adminOnly: false },
+  { href: '/funds', label: 'صندوق‌ها', adminOnly: true },
+  { href: '/lessons', label: 'درس‌آموخته‌ها', adminOnly: true },
+  { href: '/macro', label: 'اقتصاد ایران', adminOnly: false },
+  { href: '/news', label: 'اخبار اقتصادی ایران', adminOnly: false },
+  { href: '/settings', label: 'تنظیمات', adminOnly: true },
 ];
 
 export function AppShell({ children }: { children: React.ReactNode }) {
   const pathname = usePathname();
   const router = useRouter();
   const [authed, setAuthed] = useState(false);
+  const [role, setRole] = useState<UserRole | null>(null);
   const isAuthPage = pathname === '/login' || pathname === '/register' || pathname === '/';
 
   useEffect(() => {
-    setAuthed(Boolean(getToken()));
+    const token = getToken();
+    setAuthed(Boolean(token));
+    if (!token) {
+      setRole(null);
+      return;
+    }
+    const cached = getUserRole();
+    if (cached) setRole(cached);
+    api<{ role?: UserRole }>('/users/me')
+      .then((u) => {
+        if (u.role) {
+          setUserRole(u.role);
+          setRole(u.role);
+        }
+      })
+      .catch(() => undefined);
   }, [pathname]);
 
+  const links = allLinks.filter((l) => !l.adminOnly || role === 'ADMIN');
+
   function logout() {
-    setToken(null);
+    clearSession();
     setAuthed(false);
     router.push('/login');
   }

@@ -11,6 +11,25 @@ export function setToken(token: string | null) {
   else localStorage.removeItem('sabadyar_token');
 }
 
+export type UserRole = 'ADMIN' | 'USER';
+
+export function setUserRole(role: UserRole | null) {
+  if (typeof window === 'undefined') return;
+  if (role) localStorage.setItem('sabadyar_role', role);
+  else localStorage.removeItem('sabadyar_role');
+}
+
+export function getUserRole(): UserRole | null {
+  if (typeof window === 'undefined') return null;
+  const r = localStorage.getItem('sabadyar_role');
+  return r === 'ADMIN' || r === 'USER' ? r : null;
+}
+
+export function clearSession() {
+  setToken(null);
+  setUserRole(null);
+}
+
 export async function api<T>(
   path: string,
   options: RequestInit & { auth?: boolean } = {},

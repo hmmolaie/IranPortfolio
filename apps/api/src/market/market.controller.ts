@@ -1,7 +1,8 @@
-import { Controller, Get, NotFoundException, Param, Post, Query, UseGuards } from '@nestjs/common';
+import { Controller, Get, NotFoundException, Param, Post, Query, Req, UseGuards } from '@nestjs/common';
 import { AssetType } from '@prisma/client';
 import { MarketService } from './market.service';
 import { JwtAuthGuard } from '../auth/jwt-auth.guard';
+import { AdminGuard } from '../auth/admin.guard';
 
 @Controller('market')
 export class MarketController {
@@ -33,8 +34,8 @@ export class MarketController {
   }
 
   @Post('ingest')
-  @UseGuards(JwtAuthGuard)
+  @UseGuards(JwtAuthGuard, AdminGuard)
   ingest() {
-    return this.market.ingestToday();
+    return this.market.ingestCatchUp();
   }
 }

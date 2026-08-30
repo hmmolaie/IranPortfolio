@@ -1,7 +1,7 @@
 'use client';
 
 import { useEffect, useState } from 'react';
-import { api, formatNum, getToken } from '@/lib/api';
+import { api, formatNum, getToken, getUserRole, setUserRole, UserRole } from '@/lib/api';
 import { useRouter } from 'next/navigation';
 
 type Quote = {
@@ -16,6 +16,14 @@ type Quote = {
     pe?: number | null;
     tradeDate?: string;
   } | null;
+};
+
+type IngestResult = {
+  upserted: number;
+  tradeDate: string;
+  source?: string;
+  dayCount?: number;
+  days?: Array<{ tradeDate: string; upserted: number }>;
 };
 
 const ASSET_FA: Record<string, string> = {
@@ -34,6 +42,7 @@ export default function MarketPage() {
   const [assetType, setAssetType] = useState('');
   const [msg, setMsg] = useState('');
   const [loading, setLoading] = useState(false);
+  const [isAdmin, setIsAdmin] = useState(false);
 
   async function load() {
     const params = new URLSearchParams();
@@ -49,6 +58,13 @@ export default function MarketPage() {
       router.replace('/login');
       return;
     }
+    api<{ role?: UserRole }>('/users/me')
+      .then((u) => {
+        const admin = u.role === 'ADMIN' || getUserRole() === 'ADMIN';
+        if (u.role) setUserRole(u.role);
+        setIsAdmin(admin);
+      })
+      .catch(() => undefined);
     load().catch(() => undefined);
   }, [router]);
 
@@ -56,12 +72,14 @@ export default function MarketPage() {
     setLoading(true);
     setMsg('');
     try {
-      const res = await api<{ upserted: number; tradeDate: string; source?: string }>('/market/ingest', {
-        method: 'POST',
-      });
+      const res = await api<IngestResult>('/market/ingest', { method: 'POST' });
       const src = res.source ? ` (منبع: ${res.source})` : '';
+      const days =
+        res.dayCount && res.dayCount > 1
+          ? ` — ${res.dayCount.toLocaleString('fa-IR')} روز به‌روزرسانی شد`
+          : '';
       setMsg(
-        `به‌روزرسانی انجام شد: ${res.upserted.toLocaleString('fa-IR')} نماد برای ${res.tradeDate}${src}`,
+        `به‌روزرسانی انجام شد: ${res.upserted.toLocaleString('fa-IR')} ردیف${days}${src}`,
       );
       await load();
     } catch (e) {
@@ -76,11 +94,13 @@ export default function MarketPage() {
       <div className="flex flex-wrap items-end justify-between gap-4">
         <div>
           <h1 className="text-3xl font-bold">بازار سهام تهران</h1>
-          <p className="mt-2 text-navy-800/70">قیمت، EPS و P/E ذخیره‌شده به تاریخ روز</p>
+          <p className="mt-2 text-navy-800/70">قیمت، EPS و P/E ذخیره‌شده</p>
         </div>
-        <button className="btn-primary" onClick={ingest} disabled={loading}>
-          {loading ? 'در حال دریافت...' : 'به‌روزرسانی از TSETMC'}
-        </button>
+        {isAdmin && (
+          <button className="btn-primary" onClick={ingest} disabled={loading}>
+            {loading ? 'در حال دریافت...' : 'به‌روزرسانی از TSETMC'}
+          </button>
+        )}
       </div>
 
       {msg && <p className="text-sm text-navy-800/80">{msg}</p>}
@@ -138,7 +158,11 @@ export default function MarketPage() {
           </tbody>
         </table>
         {quotes.length === 0 && (
-          <p className="p-6 text-sm text-navy-800/60">داده‌ای نیست. دکمه به‌روزرسانی را بزنید.</p>
+          <p className="p-6 text-sm text-navy-800/60">
+            {isAdmin
+              ? 'داده‌ای نیست. دکمه به‌روزرسانی را بزنید.'
+              : 'داده‌ای نیست. مدیر سیستم باید بازار را به‌روزرسانی کند.'}
+          </p>
         )}
       </div>
     </div>

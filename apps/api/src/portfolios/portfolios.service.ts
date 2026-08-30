@@ -8,6 +8,7 @@ import {
 import { PrismaService } from '../prisma/prisma.service';
 import { LlmService } from '../llm/llm.service';
 import { NewsService } from '../news/news.service';
+import { UsersService } from '../users/users.service';
 
 @Injectable()
 export class PortfoliosService {
@@ -15,6 +16,7 @@ export class PortfoliosService {
     private readonly prisma: PrismaService,
     private readonly llm: LlmService,
     private readonly news: NewsService,
+    private readonly users: UsersService,
   ) {}
 
   list(userId: string) {
@@ -31,7 +33,7 @@ export class PortfoliosService {
     });
   }
 
-  async get(userId: string, id: string) {
+  async get(userId: string, id: string, isAdmin = false) {
     const p = await this.prisma.portfolio.findUnique({
       where: { id },
       include: {
@@ -43,7 +45,7 @@ export class PortfoliosService {
       },
     });
     if (!p) throw new NotFoundException('سبد یافت نشد');
-    if (p.userId !== userId) throw new ForbiddenException();
+    if (!isAdmin && p.userId !== userId) throw new ForbiddenException();
     return p;
   }
 
@@ -78,20 +80,21 @@ export class PortfoliosService {
   async suggestStrategies(userId: string, portfolioId: string) {
     const portfolio = await this.get(userId, portfolioId);
     const profile = await this.prisma.userProfile.findUnique({ where: { userId } });
+    const platformUserId = (await this.users.getAdminUserId()) ?? userId;
     const universe = await this.buildUniverse();
     const macro = await this.prisma.macroSnapshot.findFirst({ orderBy: { asOfDate: 'desc' } });
     const funds = await this.prisma.fundReport.findMany({
-      where: { userId, useInSuggestions: true },
+      where: { userId: platformUserId, useInSuggestions: true },
       orderBy: { rating: 'desc' },
       take: 8,
     });
     const fundInsights = await this.prisma.fundTimelineInsight.findMany({
-      where: { userId },
+      where: { userId: platformUserId },
       orderBy: { createdAt: 'desc' },
       take: 10,
     });
     const lessons = await this.prisma.lesson.findMany({
-      where: { userId },
+      where: { userId: platformUserId },
       orderBy: { createdAt: 'desc' },
       take: 10,
     });

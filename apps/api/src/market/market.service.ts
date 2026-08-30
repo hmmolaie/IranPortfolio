@@ -44,6 +44,26 @@ function shiftDEven(dEven: string, daysBack: number): string {
   return `${yy}${mm}${dd}`;
 }
 
+function dEvenToDate(dEven: string): Date {
+  const y = Number(dEven.slice(0, 4));
+  const m = Number(dEven.slice(4, 6)) - 1;
+  const day = Number(dEven.slice(6, 8));
+  return new Date(Date.UTC(y, m, day));
+}
+
+function addDaysUtc(d: Date, days: number): Date {
+  const x = new Date(d);
+  x.setUTCDate(x.getUTCDate() + days);
+  return x;
+}
+
+function toDEvenFromDate(d: Date): string {
+  const y = d.getUTCFullYear();
+  const m = String(d.getUTCMonth() + 1).padStart(2, '0');
+  const day = String(d.getUTCDate()).padStart(2, '0');
+  return `${y}${m}${day}`;
+}
+
 type IngestRow = Record<string, unknown>;
 
 @Injectable()
@@ -55,7 +75,7 @@ export class MarketService {
   @Cron('0 30 15 * * 0-4') // تقریبی پایان بازار ایران (سرور ممکن است UTC باشد)
   async scheduledIngest() {
     try {
-      await this.ingestToday();
+      await this.ingestCatchUp();
     } catch (e) {
       this.logger.error('کرون اینجست بازار ناموفق', e as Error);
     }
@@ -132,17 +152,71 @@ export class MarketService {
   }
 
   async ingestToday() {
-    const tradeDate = todayDateOnly();
-    const dEven = toDEven();
-    this.logger.log(`شروع اینجست بازار برای ${dEven} (تهران)`);
+    return this.ingestCatchUp();
+  }
 
-    const { rows, source } = await this.fetchMarketRows(dEven);
-    this.logger.log(`منبع داده: ${source} — ${rows.length} ردیف خام`);
+  async ingestCatchUp() {
+    const today = todayDateOnly();
+    const todayDEven = toDEven();
 
-    if (!rows.length) {
+    const lastBar = await this.prisma.priceBar.findFirst({
+      orderBy: { tradeDate: 'desc' },
+      select: { tradeDate: true },
+    });
+
+    const datesToIngest: string[] = [];
+    if (!lastBar) {
+      datesToIngest.push(todayDEven);
+    } else {
+      let cursor = addDaysUtc(lastBar.tradeDate, 1);
+      while (cursor.getTime() <= today.getTime()) {
+        datesToIngest.push(toDEvenFromDate(cursor));
+        cursor = addDaysUtc(cursor, 1);
+      }
+      if (!datesToIngest.length) {
+        datesToIngest.push(todayDEven);
+      }
+    }
+
+    this.logger.log(`اینجست بازار برای ${datesToIngest.length} روز: ${datesToIngest.join(', ')}`);
+
+    const days: Array<{ tradeDate: string; upserted: number; source: string }> = [];
+    let totalUpserted = 0;
+
+    for (let i = 0; i < datesToIngest.length; i++) {
+      const dEven = datesToIngest[i];
+      const isLatest = i === datesToIngest.length - 1;
+      const result = await this.ingestForDate(dEven, isLatest);
+      days.push(result);
+      totalUpserted += result.upserted;
+    }
+
+    if (!totalUpserted && days.every((d) => d.upserted === 0)) {
       throw new ServiceUnavailableException(
         'هیچ داده‌ای از بازار دریافت نشد. سرور شما IP خارج ایران دارد؛ در .env مقدار BRS_API_KEY را از https://brsapi.ir تنظیم کنید و کانتینر api را دوباره بالا بیاورید.',
       );
+    }
+
+    const last = days[days.length - 1];
+    return {
+      tradeDate: last?.tradeDate ?? todayDEven,
+      upserted: totalUpserted,
+      source: last?.source ?? 'multi-day',
+      days,
+      dayCount: days.length,
+    };
+  }
+
+  private async ingestForDate(dEven: string, runExtras: boolean) {
+    const tradeDate = dEvenToDate(dEven);
+    const isToday = dEven === toDEven();
+    this.logger.log(`اینجست روز ${dEven} (تهران)`);
+
+    const { rows, source } = await this.fetchRowsForDate(dEven, isToday);
+    this.logger.log(`منبع ${dEven}: ${source} — ${rows.length} ردیف خام`);
+
+    if (!rows.length) {
+      return { tradeDate: dEven, upserted: 0, source };
     }
 
     let upserted = 0;
@@ -150,7 +224,6 @@ export class MarketService {
       const symbol = String(row.lVal18AFC ?? row.symbol ?? '').trim();
       const nameFa = String(row.lVal30 ?? row.name ?? symbol).trim();
       const insCodeRaw = row.insCode != null ? String(row.insCode).trim() : '';
-      // InsCode عددی tsetmc؛ ISINهای webgw را در insCode نگذار
       const insCode = /^\d+$/.test(insCodeRaw) ? insCodeRaw : undefined;
       if (!symbol) continue;
 
@@ -199,15 +272,27 @@ export class MarketService {
       upserted += 1;
     }
 
-    await this.ensureDepositInstrument(tradeDate);
-    await this.ingestOptions(tradeDate);
-
-    // EPS/PE از CDN فقط وقتی منبع ایرانی در دسترس باشد (از VPS خارجی timeout می‌شود)
-    if (source.startsWith('cdn.') || source.startsWith('webgw.')) {
-      await this.enrichEpsPe(80);
+    if (runExtras) {
+      await this.ensureDepositInstrument(tradeDate);
+      await this.ingestOptions(tradeDate);
+      if (source.startsWith('cdn.') || source.startsWith('webgw.') || source.startsWith('brsapi.')) {
+        await this.enrichEpsPe(80);
+      }
     }
 
     return { tradeDate: dEven, upserted, source };
+  }
+
+  private async fetchRowsForDate(
+    dEven: string,
+    isToday: boolean,
+  ): Promise<{ rows: IngestRow[]; source: string }> {
+    if (!isToday) {
+      const hist = await this.fetchHistoryInDay(dEven);
+      if (hist.length) return { rows: hist, source: `cdn.HistoryInDay:${dEven}` };
+      return { rows: [], source: 'none' };
+    }
+    return this.fetchMarketRows(dEven);
   }
 
   private async fetchMarketRows(

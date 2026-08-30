@@ -3,7 +3,7 @@
 import Link from 'next/link';
 import { FormEvent, useState } from 'react';
 import { useRouter } from 'next/navigation';
-import { api, setToken } from '@/lib/api';
+import { api, setToken, setUserRole } from '@/lib/api';
 
 export default function LoginPage() {
   const router = useRouter();
@@ -17,12 +17,13 @@ export default function LoginPage() {
     setLoading(true);
     setError('');
     try {
-      const res = await api<{ accessToken: string }>('/auth/login', {
+      const res = await api<{ accessToken: string; user: { role: 'ADMIN' | 'USER' } }>('/auth/login', {
         method: 'POST',
         auth: false,
         body: JSON.stringify({ email, password }),
       });
       setToken(res.accessToken);
+      setUserRole(res.user.role);
       router.push('/dashboard');
     } catch (err) {
       setError((err as Error).message);
@@ -40,8 +41,8 @@ export default function LoginPage() {
         <h1 className="text-xl font-semibold">ورود</h1>
         <form onSubmit={onSubmit} className="mt-6 space-y-4">
           <div>
-            <label className="label">ایمیل</label>
-            <input className="input" type="email" value={email} onChange={(e) => setEmail(e.target.value)} required />
+            <label className="label">نام کاربری</label>
+            <input className="input" value={email} onChange={(e) => setEmail(e.target.value)} required autoComplete="username" />
           </div>
           <div>
             <label className="label">رمز عبور</label>

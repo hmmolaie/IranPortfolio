@@ -1,4 +1,5 @@
-import { Body, Controller, Get, Param, Post, Req, UseGuards } from '@nestjs/common';
+import { Body, Controller, Get, Param, Post, Query, Req, UseGuards } from '@nestjs/common';
+import { UserRole } from '@prisma/client';
 import { AssetType, PortfolioStrategy } from '@prisma/client';
 import {
   IsArray,
@@ -101,8 +102,13 @@ export class PortfoliosController {
   constructor(private readonly portfolios: PortfoliosService) {}
 
   @Get()
-  list(@Req() req: { user: { userId: string } }) {
-    return this.portfolios.list(req.user.userId);
+  list(
+    @Req() req: { user: { userId: string; role?: UserRole } },
+    @Query('userId') userId?: string,
+  ) {
+    const targetUserId =
+      req.user.role === UserRole.ADMIN && userId ? userId : req.user.userId;
+    return this.portfolios.list(targetUserId);
   }
 
   @Post()
@@ -111,8 +117,9 @@ export class PortfoliosController {
   }
 
   @Get(':id')
-  get(@Req() req: { user: { userId: string } }, @Param('id') id: string) {
-    return this.portfolios.get(req.user.userId, id);
+  get(@Req() req: { user: { userId: string; role?: UserRole } }, @Param('id') id: string) {
+    const isAdmin = req.user.role === UserRole.ADMIN;
+    return this.portfolios.get(req.user.userId, id, isAdmin);
   }
 
   @Get(':id/chat')

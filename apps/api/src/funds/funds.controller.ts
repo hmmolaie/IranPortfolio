@@ -15,6 +15,7 @@ import { IsInt, IsOptional, IsString, Max, Min } from 'class-validator';
 import { Type } from 'class-transformer';
 import { FundsService } from './funds.service';
 import { JwtAuthGuard } from '../auth/jwt-auth.guard';
+import { AdminGuard } from '../auth/admin.guard';
 
 class CreateFundDefinitionDto {
   @IsString()
@@ -47,7 +48,7 @@ class UploadMetaDto {
 }
 
 @Controller('funds')
-@UseGuards(JwtAuthGuard)
+@UseGuards(JwtAuthGuard, AdminGuard)
 export class FundsController {
   constructor(private readonly funds: FundsService) {}
 
