@@ -2,6 +2,7 @@
 
 import { FormEvent, useEffect, useState } from 'react';
 import { useRouter } from 'next/navigation';
+import clsx from 'clsx';
 import { api, getToken } from '@/lib/api';
 
 type ProviderId = 'openrouter' | 'openai' | 'custom';
@@ -21,6 +22,15 @@ type LlmPrompt = {
   defaultSystemPrompt: string;
   isCustom: boolean;
 };
+
+type SettingsTab = 'profile' | 'funds' | 'prompts' | 'llm';
+
+const TABS: { id: SettingsTab; label: string }[] = [
+  { id: 'profile', label: 'پروفایل' },
+  { id: 'funds', label: 'صندوق‌ها' },
+  { id: 'prompts', label: 'پرامپت‌ها' },
+  { id: 'llm', label: 'API مدل زبانی' },
+];
 
 const PROVIDERS: Record<
   ProviderId,
@@ -54,6 +64,7 @@ function detectProvider(baseUrl: string): ProviderId {
 
 export default function SettingsPage() {
   const router = useRouter();
+  const [tab, setTab] = useState<SettingsTab>('profile');
   const [profile, setProfile] = useState({
     name: '',
     riskTolerance: 5,
@@ -76,15 +87,6 @@ export default function SettingsPage() {
   const [openPrompt, setOpenPrompt] = useState<string | null>(null);
   const [promptBusy, setPromptBusy] = useState('');
   const [msg, setMsg] = useState('');
-  const [appUsers, setAppUsers] = useState<
-    Array<{ id: string; email: string; name?: string | null }>
-  >([]);
-  const [newUser, setNewUser] = useState({ email: '', password: '', name: '' });
-
-  async function loadAppUsers() {
-    const list = await api<Array<{ id: string; email: string; name?: string | null }>>('/users');
-    setAppUsers(list);
-  }
 
   async function loadPrompts() {
     const list = await api<LlmPrompt[]>('/llm/prompts');
@@ -144,7 +146,6 @@ export default function SettingsPage() {
     });
     loadFundDefs().catch(() => undefined);
     loadPrompts().catch(() => undefined);
-    loadAppUsers().catch(() => undefined);
   }, [router]);
 
   function applyProvider(next: ProviderId) {
@@ -155,21 +156,6 @@ export default function SettingsPage() {
       baseUrl: p.baseUrl || prev.baseUrl,
       model: p.model || prev.model,
     }));
-  }
-
-  async function addAppUser(e: FormEvent) {
-    e.preventDefault();
-    await api('/users', {
-      method: 'POST',
-      body: JSON.stringify({
-        email: newUser.email.trim(),
-        password: newUser.password,
-        name: newUser.name.trim() || undefined,
-      }),
-    });
-    setNewUser({ email: '', password: '', name: '' });
-    await loadAppUsers();
-    setMsg('کاربر جدید ایجاد شد.');
   }
 
   async function saveProfile(e: FormEvent) {
@@ -260,307 +246,281 @@ export default function SettingsPage() {
   }
 
   return (
-    <div className="space-y-8">
+    <div className="space-y-6">
       <div>
         <h1 className="text-3xl font-bold">تنظیمات</h1>
         <p className="mt-2 text-navy-800/70">پروفایل، پرامپت‌ها، صندوق‌ها و اتصال به مدل زبانی</p>
       </div>
+
+      <div className="border-b border-navy-900/10">
+        <nav className="-mb-px flex gap-1 overflow-x-auto">
+          {TABS.map((t) => (
+            <button
+              key={t.id}
+              type="button"
+              onClick={() => {
+                setTab(t.id);
+                setMsg('');
+              }}
+              className={clsx(
+                'whitespace-nowrap border-b-2 px-4 py-3 text-sm font-medium transition',
+                tab === t.id
+                  ? 'border-navy-900 text-navy-900'
+                  : 'border-transparent text-navy-800/55 hover:border-navy-900/20 hover:text-navy-800',
+              )}
+            >
+              {t.label}
+            </button>
+          ))}
+        </nav>
+      </div>
+
       {msg && <p className="text-sm text-navy-800">{msg}</p>}
 
-      <section className="card max-w-2xl space-y-4">
-        <h2 className="text-lg font-semibold">مدیریت کاربران</h2>
-        <p className="text-sm text-navy-800/70">کاربران فقط توسط مدیر ایجاد می‌شوند.</p>
-        <ul className="space-y-2">
-          {appUsers.map((u) => (
-            <li
-              key={u.id}
-              className="rounded-lg border border-navy-900/10 px-3 py-2 text-sm"
-            >
-              <span className="font-medium">{u.name || u.email}</span>
-              <span className="ms-2 text-navy-800/50">{u.email}</span>
-            </li>
-          ))}
-          {appUsers.length === 0 && (
-            <li className="text-sm text-navy-800/50">کاربری ثبت نشده.</li>
-          )}
-        </ul>
-        <form onSubmit={addAppUser} className="grid gap-3 border-t border-navy-900/10 pt-4">
+      {tab === 'profile' && (
+        <form onSubmit={saveProfile} className="card grid max-w-2xl gap-4">
           <div>
-            <label className="label">نام کاربری</label>
+            <label className="label">نام</label>
             <input
               className="input"
-              value={newUser.email}
-              onChange={(e) => setNewUser({ ...newUser, email: e.target.value })}
-              required
+              value={profile.name}
+              onChange={(e) => setProfile({ ...profile, name: e.target.value })}
             />
           </div>
           <div>
-            <label className="label">رمز عبور</label>
+            <label className="label">تحمل ریسک (۱–۱۰)</label>
+            <input
+              className="input"
+              type="number"
+              min={1}
+              max={10}
+              value={profile.riskTolerance}
+              onChange={(e) => setProfile({ ...profile, riskTolerance: Number(e.target.value) })}
+            />
+          </div>
+          <div>
+            <label className="label">افق سرمایه‌گذاری (ماه)</label>
+            <input
+              className="input"
+              type="number"
+              min={1}
+              value={profile.horizonMonths}
+              onChange={(e) => setProfile({ ...profile, horizonMonths: Number(e.target.value) })}
+            />
+          </div>
+          <div>
+            <label className="label">علاقه‌مندی‌های سرمایه‌گذاری</label>
+            <textarea
+              className="input min-h-[5rem]"
+              value={profile.investmentPreferencesFa}
+              onChange={(e) => setProfile({ ...profile, investmentPreferencesFa: e.target.value })}
+              placeholder="مثلاً تمایل به سهام صنعتی، اجتناب از نمادهای پرنوسان..."
+            />
+          </div>
+          <div>
+            <label className="label">محدودیت‌ها</label>
+            <textarea
+              className="input min-h-[5rem]"
+              value={profile.constraintsFa}
+              onChange={(e) => setProfile({ ...profile, constraintsFa: e.target.value })}
+              placeholder="مثلاً بدون اهرم، حداکثر ۲۰٪ طلا، عدم سرمایه‌گذاری در بانک‌ها..."
+            />
+          </div>
+          <button className="btn-primary w-fit">ذخیره پروفایل</button>
+        </form>
+      )}
+
+      {tab === 'funds' && (
+        <section className="card max-w-2xl space-y-4">
+          <p className="text-sm text-navy-800/70">
+            یک‌بار نام صندوق‌ها را اینجا تعریف کنید؛ در صفحه صندوق‌ها از لیست انتخاب می‌شوند.
+          </p>
+          <ul className="space-y-2">
+            {fundDefs.map((f) => (
+              <li
+                key={f.id}
+                className="flex flex-wrap items-center justify-between gap-2 rounded-lg border border-navy-900/10 px-3 py-2"
+              >
+                <div>
+                  <span className="font-medium">{f.nameFa}</span>
+                  {f.symbolCode && (
+                    <span className="ms-2 text-xs text-navy-800/50">{f.symbolCode}</span>
+                  )}
+                </div>
+                <button
+                  type="button"
+                  className="text-xs text-red-700 hover:underline"
+                  onClick={() => removeFund(f.id, f.nameFa)}
+                >
+                  حذف
+                </button>
+              </li>
+            ))}
+            {fundDefs.length === 0 && (
+              <li className="text-sm text-navy-800/50">هنوز صندوقی تعریف نشده.</li>
+            )}
+          </ul>
+          <form onSubmit={addFund} className="grid gap-3 border-t border-navy-900/10 pt-4">
+            <div>
+              <label className="label">نام صندوق</label>
+              <input
+                className="input"
+                value={newFund.nameFa}
+                onChange={(e) => setNewFund({ ...newFund, nameFa: e.target.value })}
+                required
+              />
+            </div>
+            <div>
+              <label className="label">کد / نماد (اختیاری)</label>
+              <input
+                className="input"
+                value={newFund.symbolCode}
+                onChange={(e) => setNewFund({ ...newFund, symbolCode: e.target.value })}
+              />
+            </div>
+            <button type="submit" className="btn-secondary w-fit">
+              افزودن صندوق
+            </button>
+          </form>
+        </section>
+      )}
+
+      {tab === 'prompts' && (
+        <section className="card max-w-3xl space-y-4">
+          <p className="text-sm text-navy-800/70">
+            متن system هر بخش نرم‌افزار را ویرایش کنید. پس از ذخیره، همان پرامپت به مدل ارسال می‌شود.
+          </p>
+          <div className="space-y-3">
+            {prompts.map((p) => {
+              const isOpen = openPrompt === p.purpose;
+              return (
+                <div key={p.purpose} className="rounded-lg border border-navy-900/10">
+                  <button
+                    type="button"
+                    className="flex w-full items-center justify-between gap-3 px-4 py-3 text-start"
+                    onClick={() => setOpenPrompt(isOpen ? null : p.purpose)}
+                  >
+                    <div>
+                      <div className="font-medium">{p.labelFa}</div>
+                      <div className="text-xs text-navy-800/55">{p.descriptionFa}</div>
+                    </div>
+                    <div className="flex shrink-0 items-center gap-2 text-xs">
+                      {p.isCustom && (
+                        <span className="rounded bg-gold-400/20 px-2 py-0.5 text-gold-600">سفارشی</span>
+                      )}
+                      <span className="text-navy-800/40">{isOpen ? '▲' : '▼'}</span>
+                    </div>
+                  </button>
+                  {isOpen && (
+                    <div className="space-y-3 border-t border-navy-900/10 px-4 py-3">
+                      <div>
+                        <label className="label">شناسه</label>
+                        <input className="input font-mono text-xs" value={p.purpose} readOnly dir="ltr" />
+                      </div>
+                      <div>
+                        <label className="label">پرامپت system</label>
+                        <textarea
+                          className="input min-h-[12rem] font-mono text-xs leading-6"
+                          value={p.systemPrompt}
+                          onChange={(e) => updatePromptText(p.purpose, e.target.value)}
+                          dir="auto"
+                        />
+                      </div>
+                      <div className="flex flex-wrap gap-2">
+                        <button
+                          type="button"
+                          className="btn-primary"
+                          disabled={promptBusy === p.purpose}
+                          onClick={() => savePrompt(p.purpose)}
+                        >
+                          {promptBusy === p.purpose ? '...' : 'ذخیره پرامپت'}
+                        </button>
+                        <button
+                          type="button"
+                          className="btn-secondary"
+                          disabled={promptBusy === p.purpose}
+                          onClick={() => resetPrompt(p.purpose)}
+                        >
+                          بازگشت به پیش‌فرض
+                        </button>
+                      </div>
+                    </div>
+                  )}
+                </div>
+              );
+            })}
+          </div>
+        </section>
+      )}
+
+      {tab === 'llm' && (
+        <form onSubmit={saveLlm} className="card grid max-w-2xl gap-4">
+          <p className="rounded-lg bg-navy-50 px-3 py-2 text-sm text-navy-800/80">
+            اشتراک Cursor API عمومی برای اپلیکیشن‌های بیرونی ندارد؛ فقط داخل IDE کار می‌کند. برای سبدیار از
+            OpenRouter، OpenAI یا هر سرویس سازگار با OpenAI استفاده کنید.
+          </p>
+
+          <div>
+            <label className="label">ارائه‌دهنده</label>
+            <select
+              className="input"
+              value={provider}
+              onChange={(e) => applyProvider(e.target.value as ProviderId)}
+            >
+              {(Object.keys(PROVIDERS) as ProviderId[]).map((id) => (
+                <option key={id} value={id}>
+                  {PROVIDERS[id].label}
+                </option>
+              ))}
+            </select>
+            <p className="mt-1 text-xs text-navy-800/55">{PROVIDERS[provider].hint}</p>
+          </div>
+
+          <div>
+            <label className="label">Base URL</label>
+            <input
+              className="input"
+              value={llm.baseUrl}
+              onChange={(e) => {
+                const baseUrl = e.target.value;
+                setLlm({ ...llm, baseUrl });
+                setProvider(detectProvider(baseUrl));
+              }}
+              dir="ltr"
+            />
+          </div>
+          <div>
+            <label className="label">مدل (چندتایی با ویرگول = جایگزین خودکار)</label>
+            <input
+              className="input"
+              value={llm.model}
+              onChange={(e) => setLlm({ ...llm, model: e.target.value })}
+              dir="ltr"
+              placeholder="model-a:free, model-b:free"
+            />
+          </div>
+          <div>
+            <label className="label">API Token</label>
             <input
               className="input"
               type="password"
-              minLength={6}
-              value={newUser.password}
-              onChange={(e) => setNewUser({ ...newUser, password: e.target.value })}
-              required
+              value={llm.apiToken}
+              onChange={(e) => setLlm({ ...llm, apiToken: e.target.value })}
+              placeholder={llm.hasToken ? 'برای جایگزینی توکن جدید وارد کنید' : 'sk-...'}
+              dir="ltr"
             />
           </div>
-          <div>
-            <label className="label">نام نمایشی (اختیاری)</label>
+          <label className="flex items-center gap-2 text-sm">
             <input
-              className="input"
-              value={newUser.name}
-              onChange={(e) => setNewUser({ ...newUser, name: e.target.value })}
+              type="checkbox"
+              checked={llm.usePlatformFallback}
+              onChange={(e) => setLlm({ ...llm, usePlatformFallback: e.target.checked })}
             />
-          </div>
-          <button type="submit" className="btn-primary w-fit">
-            افزودن کاربر
-          </button>
+            در صورت نبود توکن شخصی، از کلید پلتفرم استفاده شود
+          </label>
+          <button className="btn-primary w-fit">ذخیره LLM</button>
         </form>
-      </section>
-
-      <form onSubmit={saveProfile} className="card grid max-w-2xl gap-4">
-        <h2 className="text-lg font-semibold">پروفایل</h2>
-        <div>
-          <label className="label">نام</label>
-          <input
-            className="input"
-            value={profile.name}
-            onChange={(e) => setProfile({ ...profile, name: e.target.value })}
-          />
-        </div>
-        <div>
-          <label className="label">تحمل ریسک (۱–۱۰)</label>
-          <input
-            className="input"
-            type="number"
-            min={1}
-            max={10}
-            value={profile.riskTolerance}
-            onChange={(e) => setProfile({ ...profile, riskTolerance: Number(e.target.value) })}
-          />
-        </div>
-        <div>
-          <label className="label">افق سرمایه‌گذاری (ماه)</label>
-          <input
-            className="input"
-            type="number"
-            min={1}
-            value={profile.horizonMonths}
-            onChange={(e) => setProfile({ ...profile, horizonMonths: Number(e.target.value) })}
-          />
-        </div>
-        <div>
-          <label className="label">علاقه‌مندی‌های سرمایه‌گذاری</label>
-          <textarea
-            className="input min-h-[5rem]"
-            value={profile.investmentPreferencesFa}
-            onChange={(e) => setProfile({ ...profile, investmentPreferencesFa: e.target.value })}
-            placeholder="مثلاً تمایل به سهام صنعتی، اجتناب از نمادهای پرنوسان..."
-          />
-        </div>
-        <div>
-          <label className="label">محدودیت‌ها</label>
-          <textarea
-            className="input min-h-[5rem]"
-            value={profile.constraintsFa}
-            onChange={(e) => setProfile({ ...profile, constraintsFa: e.target.value })}
-            placeholder="مثلاً بدون اهرم، حداکثر ۲۰٪ طلا، عدم سرمایه‌گذاری در بانک‌ها..."
-          />
-        </div>
-        <button className="btn-primary w-fit">ذخیره پروفایل</button>
-      </form>
-
-      <section className="card max-w-2xl space-y-4">
-        <h2 className="text-lg font-semibold">صندوق‌های سرمایه‌گذاری</h2>
-        <p className="text-sm text-navy-800/70">
-          یک‌بار نام صندوق‌ها را اینجا تعریف کنید؛ در صفحه صندوق‌ها از لیست انتخاب می‌شوند.
-        </p>
-        <ul className="space-y-2">
-          {fundDefs.map((f) => (
-            <li
-              key={f.id}
-              className="flex flex-wrap items-center justify-between gap-2 rounded-lg border border-navy-900/10 px-3 py-2"
-            >
-              <div>
-                <span className="font-medium">{f.nameFa}</span>
-                {f.symbolCode && (
-                  <span className="ms-2 text-xs text-navy-800/50">{f.symbolCode}</span>
-                )}
-              </div>
-              <button
-                type="button"
-                className="text-xs text-red-700 hover:underline"
-                onClick={() => removeFund(f.id, f.nameFa)}
-              >
-                حذف
-              </button>
-            </li>
-          ))}
-          {fundDefs.length === 0 && (
-            <li className="text-sm text-navy-800/50">هنوز صندوقی تعریف نشده.</li>
-          )}
-        </ul>
-        <form onSubmit={addFund} className="grid gap-3 border-t border-navy-900/10 pt-4">
-          <div>
-            <label className="label">نام صندوق</label>
-            <input
-              className="input"
-              value={newFund.nameFa}
-              onChange={(e) => setNewFund({ ...newFund, nameFa: e.target.value })}
-              required
-            />
-          </div>
-          <div>
-            <label className="label">کد / نماد (اختیاری)</label>
-            <input
-              className="input"
-              value={newFund.symbolCode}
-              onChange={(e) => setNewFund({ ...newFund, symbolCode: e.target.value })}
-            />
-          </div>
-          <button type="submit" className="btn-secondary w-fit">
-            افزودن صندوق
-          </button>
-        </form>
-      </section>
-
-      <section className="card max-w-3xl space-y-4">
-        <div>
-          <h2 className="text-lg font-semibold">پرامپت‌های LLM</h2>
-          <p className="mt-1 text-sm text-navy-800/70">
-            متن system هر بخش نرم‌افزار را ویرایش کنید. پس از ذخیره، همان پرامپت به مدل ارسال می‌شود.
-          </p>
-        </div>
-        <div className="space-y-3">
-          {prompts.map((p) => {
-            const isOpen = openPrompt === p.purpose;
-            return (
-              <div key={p.purpose} className="rounded-lg border border-navy-900/10">
-                <button
-                  type="button"
-                  className="flex w-full items-center justify-between gap-3 px-4 py-3 text-start"
-                  onClick={() => setOpenPrompt(isOpen ? null : p.purpose)}
-                >
-                  <div>
-                    <div className="font-medium">{p.labelFa}</div>
-                    <div className="text-xs text-navy-800/55">{p.descriptionFa}</div>
-                  </div>
-                  <div className="flex shrink-0 items-center gap-2 text-xs">
-                    {p.isCustom && (
-                      <span className="rounded bg-gold-400/20 px-2 py-0.5 text-gold-600">سفارشی</span>
-                    )}
-                    <span className="text-navy-800/40">{isOpen ? '▲' : '▼'}</span>
-                  </div>
-                </button>
-                {isOpen && (
-                  <div className="space-y-3 border-t border-navy-900/10 px-4 py-3">
-                    <div>
-                      <label className="label">شناسه</label>
-                      <input className="input font-mono text-xs" value={p.purpose} readOnly dir="ltr" />
-                    </div>
-                    <div>
-                      <label className="label">پرامپت system</label>
-                      <textarea
-                        className="input min-h-[12rem] font-mono text-xs leading-6"
-                        value={p.systemPrompt}
-                        onChange={(e) => updatePromptText(p.purpose, e.target.value)}
-                        dir="auto"
-                      />
-                    </div>
-                    <div className="flex flex-wrap gap-2">
-                      <button
-                        type="button"
-                        className="btn-primary"
-                        disabled={promptBusy === p.purpose}
-                        onClick={() => savePrompt(p.purpose)}
-                      >
-                        {promptBusy === p.purpose ? '...' : 'ذخیره پرامپت'}
-                      </button>
-                      <button
-                        type="button"
-                        className="btn-secondary"
-                        disabled={promptBusy === p.purpose}
-                        onClick={() => resetPrompt(p.purpose)}
-                      >
-                        بازگشت به پیش‌فرض
-                      </button>
-                    </div>
-                  </div>
-                )}
-              </div>
-            );
-          })}
-        </div>
-      </section>
-
-      <form onSubmit={saveLlm} className="card grid max-w-2xl gap-4">
-        <h2 className="text-lg font-semibold">API مدل زبانی</h2>
-        <p className="rounded-lg bg-navy-50 px-3 py-2 text-sm text-navy-800/80">
-          اشتراک Cursor API عمومی برای اپلیکیشن‌های بیرونی ندارد؛ فقط داخل IDE کار می‌کند. برای سبدیار از
-          OpenRouter، OpenAI یا هر سرویس سازگار با OpenAI استفاده کنید.
-        </p>
-
-        <div>
-          <label className="label">ارائه‌دهنده</label>
-          <select
-            className="input"
-            value={provider}
-            onChange={(e) => applyProvider(e.target.value as ProviderId)}
-          >
-            {(Object.keys(PROVIDERS) as ProviderId[]).map((id) => (
-              <option key={id} value={id}>
-                {PROVIDERS[id].label}
-              </option>
-            ))}
-          </select>
-          <p className="mt-1 text-xs text-navy-800/55">{PROVIDERS[provider].hint}</p>
-        </div>
-
-        <div>
-          <label className="label">Base URL</label>
-          <input
-            className="input"
-            value={llm.baseUrl}
-            onChange={(e) => {
-              const baseUrl = e.target.value;
-              setLlm({ ...llm, baseUrl });
-              setProvider(detectProvider(baseUrl));
-            }}
-            dir="ltr"
-          />
-        </div>
-        <div>
-          <label className="label">مدل (چندتایی با ویرگول = جایگزین خودکار)</label>
-          <input
-            className="input"
-            value={llm.model}
-            onChange={(e) => setLlm({ ...llm, model: e.target.value })}
-            dir="ltr"
-            placeholder="model-a:free, model-b:free"
-          />
-        </div>
-        <div>
-          <label className="label">API Token</label>
-          <input
-            className="input"
-            type="password"
-            value={llm.apiToken}
-            onChange={(e) => setLlm({ ...llm, apiToken: e.target.value })}
-            placeholder={llm.hasToken ? 'برای جایگزینی توکن جدید وارد کنید' : 'sk-...'}
-            dir="ltr"
-          />
-        </div>
-        <label className="flex items-center gap-2 text-sm">
-          <input
-            type="checkbox"
-            checked={llm.usePlatformFallback}
-            onChange={(e) => setLlm({ ...llm, usePlatformFallback: e.target.checked })}
-          />
-          در صورت نبود توکن شخصی، از کلید پلتفرم استفاده شود
-        </label>
-        <button className="btn-primary w-fit">ذخیره LLM</button>
-      </form>
+      )}
     </div>
   );
 }

@@ -22,6 +22,7 @@ export class AuthService {
     if (!user) throw new UnauthorizedException('نام کاربری یا رمز عبور نادرست است');
     const ok = await bcrypt.compare(password, user.passwordHash);
     if (!ok) throw new UnauthorizedException('نام کاربری یا رمز عبور نادرست است');
+    if (!user.isActive) throw new UnauthorizedException('حساب کاربری غیرفعال است');
     return this.tokenFor(user.id, user.email, user.role);
   }
 

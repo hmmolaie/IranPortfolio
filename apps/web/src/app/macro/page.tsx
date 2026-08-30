@@ -31,18 +31,24 @@ export default function MacroPage() {
       router.replace('/login');
       return;
     }
-    api<Macro | null>('/macro/latest', { auth: false })
-      .then((m) => {
-        setMacro(m);
-        if (m) {
-          setForm({
-            inflationPct: m.inflationPct?.toString() ?? '',
-            interestRatePct: m.interestRatePct?.toString() ?? '',
-            usdIrr: m.usdIrr?.toString() ?? '',
-            geoRiskScore: m.geoRiskScore?.toString() ?? '5',
-            summaryFa: m.summaryFa ?? '',
-          });
+    api<{ role?: string }>('/users/me')
+      .then((u) => {
+        if (u.role !== 'ADMIN') {
+          router.replace('/dashboard');
+          return;
         }
+        return api<Macro | null>('/macro/latest', { auth: false });
+      })
+      .then((m) => {
+        if (!m) return;
+        setMacro(m);
+        setForm({
+          inflationPct: m.inflationPct?.toString() ?? '',
+          interestRatePct: m.interestRatePct?.toString() ?? '',
+          usdIrr: m.usdIrr?.toString() ?? '',
+          geoRiskScore: m.geoRiskScore?.toString() ?? '5',
+          summaryFa: m.summaryFa ?? '',
+        });
       })
       .catch(() => undefined);
   }, [router]);

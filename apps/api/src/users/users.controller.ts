@@ -1,5 +1,5 @@
-import { Body, Controller, Get, Patch, Post, Req, UseGuards } from '@nestjs/common';
-import { IsInt, IsOptional, IsString, Max, Min, MinLength } from 'class-validator';
+import { Body, Controller, Get, Param, Patch, Post, Req, UseGuards } from '@nestjs/common';
+import { IsBoolean, IsInt, IsOptional, IsString, Max, Min, MinLength } from 'class-validator';
 import { UserRole } from '@prisma/client';
 import { UsersService } from './users.service';
 import { JwtAuthGuard } from '../auth/jwt-auth.guard';
@@ -47,6 +47,27 @@ class CreateUserDto {
   name?: string;
 }
 
+class UpdateUserByAdminDto {
+  @IsOptional()
+  @IsString()
+  email?: string;
+
+  @IsOptional()
+  @IsString()
+  name?: string;
+}
+
+class SetPasswordByAdminDto {
+  @IsString()
+  @MinLength(6)
+  password!: string;
+}
+
+class SetActiveByAdminDto {
+  @IsBoolean()
+  isActive!: boolean;
+}
+
 @Controller('users')
 @UseGuards(JwtAuthGuard)
 export class UsersController {
@@ -78,5 +99,23 @@ export class UsersController {
   @Patch('me')
   updateMe(@Req() req: { user: { userId: string } }, @Body() dto: UpdateProfileDto) {
     return this.users.updateProfile(req.user.userId, dto);
+  }
+
+  @Patch(':id')
+  @UseGuards(AdminGuard)
+  updateUser(@Param('id') id: string, @Body() dto: UpdateUserByAdminDto) {
+    return this.users.updateUserByAdmin(id, dto);
+  }
+
+  @Patch(':id/password')
+  @UseGuards(AdminGuard)
+  setPassword(@Param('id') id: string, @Body() dto: SetPasswordByAdminDto) {
+    return this.users.setPasswordByAdmin(id, dto.password);
+  }
+
+  @Patch(':id/status')
+  @UseGuards(AdminGuard)
+  setStatus(@Param('id') id: string, @Body() dto: SetActiveByAdminDto) {
+    return this.users.setActiveByAdmin(id, dto.isActive);
   }
 }

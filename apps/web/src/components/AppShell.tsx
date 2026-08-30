@@ -12,8 +12,9 @@ const allLinks = [
   { href: '/portfolios', label: 'سبدها', adminOnly: false },
   { href: '/funds', label: 'صندوق‌ها', adminOnly: true },
   { href: '/lessons', label: 'درس‌آموخته‌ها', adminOnly: true },
-  { href: '/macro', label: 'اقتصاد ایران', adminOnly: false },
+  { href: '/macro', label: 'اقتصاد ایران', adminOnly: true },
   { href: '/news', label: 'اخبار اقتصادی ایران', adminOnly: false },
+  { href: '/admin/users', label: 'مدیریت کاربران', adminOnly: true },
   { href: '/settings', label: 'تنظیمات', adminOnly: true },
 ];
 

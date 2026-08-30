@@ -1,4 +1,4 @@
-import { Injectable } from '@nestjs/common';
+import { Injectable, NotFoundException } from '@nestjs/common';
 import { UserRole } from '@prisma/client';
 import { PrismaService } from '../prisma/prisma.service';
 import * as bcrypt from 'bcryptjs';
@@ -25,7 +25,7 @@ export class UsersService {
     return this.prisma.user.findMany({
       where: { role: UserRole.USER },
       orderBy: { createdAt: 'desc' },
-      select: { id: true, email: true, name: true, createdAt: true },
+      select: { id: true, email: true, name: true, createdAt: true, isActive: true },
     });
   }
 
@@ -35,6 +35,46 @@ export class UsersService {
       select: { id: true },
     });
     return admin?.id ?? null;
+  }
+
+  async updateUserByAdmin(
+    userId: string,
+    data: { email?: string; name?: string },
+  ) {
+    const user = await this.prisma.user.findUnique({ where: { id: userId } });
+    if (!user || user.role !== UserRole.USER) {
+      throw new NotFoundException('کاربر یافت نشد');
+    }
+    return this.prisma.user.update({
+      where: { id: userId },
+      data: {
+        ...(data.email !== undefined ? { email: data.email.trim() } : {}),
+        ...(data.name !== undefined ? { name: data.name.trim() || null } : {}),
+      },
+      select: { id: true, email: true, name: true, createdAt: true, isActive: true },
+    });
+  }
+
+  async setPasswordByAdmin(userId: string, password: string) {
+    const user = await this.prisma.user.findUnique({ where: { id: userId } });
+    if (!user || user.role !== UserRole.USER) {
+      throw new NotFoundException('کاربر یافت نشد');
+    }
+    const passwordHash = await bcrypt.hash(password, 10);
+    await this.prisma.user.update({ where: { id: userId }, data: { passwordHash } });
+    return { ok: true };
+  }
+
+  async setActiveByAdmin(userId: string, isActive: boolean) {
+    const user = await this.prisma.user.findUnique({ where: { id: userId } });
+    if (!user || user.role !== UserRole.USER) {
+      throw new NotFoundException('کاربر یافت نشد');
+    }
+    return this.prisma.user.update({
+      where: { id: userId },
+      data: { isActive },
+      select: { id: true, email: true, name: true, createdAt: true, isActive: true },
+    });
   }
 
   async createUser(data: {
@@ -53,7 +93,7 @@ export class UsersService {
         profile: { create: {} },
         llmSetting: { create: {} },
       },
-      select: { id: true, email: true, name: true, role: true, createdAt: true },
+      select: { id: true, email: true, name: true, role: true, createdAt: true, isActive: true },
     });
   }
 

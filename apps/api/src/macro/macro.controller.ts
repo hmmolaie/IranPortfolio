@@ -3,6 +3,7 @@ import { IsInt, IsNumber, IsOptional, IsString, Max, Min } from 'class-validator
 import { PrismaService } from '../prisma/prisma.service';
 import { LlmService } from '../llm/llm.service';
 import { JwtAuthGuard } from '../auth/jwt-auth.guard';
+import { AdminGuard } from '../auth/admin.guard';
 
 class MacroDto {
   @IsOptional()
@@ -46,7 +47,7 @@ export class MacroController {
   }
 
   @Put()
-  @UseGuards(JwtAuthGuard)
+  @UseGuards(JwtAuthGuard, AdminGuard)
   async upsert(@Body() dto: MacroDto) {
     const asOfDate = new Date();
     asOfDate.setUTCHours(0, 0, 0, 0);
@@ -58,7 +59,7 @@ export class MacroController {
   }
 
   @Post('ask')
-  @UseGuards(JwtAuthGuard)
+  @UseGuards(JwtAuthGuard, AdminGuard)
   async ask(@Req() req: { user: { userId: string } }, @Body() dto: AskDto) {
     const macro = await this.prisma.macroSnapshot.findFirst({ orderBy: { asOfDate: 'desc' } });
     const macroSystem = await this.llm.getSystemPrompt(req.user.userId, 'macro_qa');
