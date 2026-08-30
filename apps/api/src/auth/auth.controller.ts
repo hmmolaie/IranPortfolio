@@ -1,22 +1,9 @@
-import { Body, Controller, Post } from '@nestjs/common';
-import { IsEmail, IsOptional, IsString, MinLength } from 'class-validator';
+import { Body, Controller, ForbiddenException, Post } from '@nestjs/common';
+import { IsString } from 'class-validator';
 import { AuthService } from './auth.service';
 
-class RegisterDto {
-  @IsEmail()
-  email!: string;
-
-  @IsString()
-  @MinLength(6)
-  password!: string;
-
-  @IsOptional()
-  @IsString()
-  name?: string;
-}
-
 class LoginDto {
-  @IsEmail()
+  @IsString()
   email!: string;
 
   @IsString()
@@ -28,8 +15,8 @@ export class AuthController {
   constructor(private readonly auth: AuthService) {}
 
   @Post('register')
-  register(@Body() dto: RegisterDto) {
-    return this.auth.register(dto.email, dto.password, dto.name);
+  register() {
+    throw new ForbiddenException('ثبت‌نام عمومی غیرفعال است. حساب توسط مدیر ساخته می‌شود.');
   }
 
   @Post('login')

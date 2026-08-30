@@ -58,12 +58,6 @@ export default function LoginPage() {
             {loading ? '...' : 'ورود'}
           </button>
         </form>
-        <p className="mt-4 text-sm text-navy-800/60">
-          حساب ندارید؟{' '}
-          <Link href="/register" className="text-navy-900 underline">
-            ثبت‌نام
-          </Link>
-        </p>
       </div>
     </div>
   );
