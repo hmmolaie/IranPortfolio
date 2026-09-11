@@ -389,4 +389,83 @@ export class LlmService {
       throw this.humanizeError(e);
     }
   }
+
+  /**
+   * تست اتصال و پاسخ‌گویی LLM.
+   * اگر baseUrl/model/apiToken در body بیاید، همان تنظیمات پیش‌نویس تست می‌شود (بدون ذخیره).
+   */
+  async testConnection(
+    userId: string,
+    draft?: { baseUrl?: string; model?: string; apiToken?: string },
+  ) {
+    const started = Date.now();
+    try {
+      let creds: LlmCreds;
+      if (draft?.baseUrl || draft?.model || draft?.apiToken) {
+        const saved = await this.prisma.llmSetting.findUnique({ where: { userId } });
+        const token =
+          draft.apiToken?.trim() ||
+          (saved?.apiTokenEncrypted ? this.decryptToken(saved.apiTokenEncrypted) : '') ||
+          this.config.get<string>('PLATFORM_LLM_API_KEY') ||
+          '';
+        if (!token) {
+          return {
+            ok: false,
+            latencyMs: Date.now() - started,
+            error: 'توکن API برای تست موجود نیست. ابتدا کلید را وارد و ذخیره کنید.',
+            messageFa: 'توکن API برای تست موجود نیست. ابتدا کلید را وارد و ذخیره کنید.',
+          };
+        }
+        const modelRaw = (draft.model ?? saved?.model ?? 'gpt-4o-mini').trim();
+        const models = parseModelList(modelRaw);
+        const baseUrl = (draft.baseUrl ?? saved?.baseUrl ?? 'https://api.openai.com/v1')
+          .trim()
+          .replace(/\/$/, '');
+        creds = {
+          baseUrl,
+          model: models[0] ?? modelRaw,
+          fallbackModels: models.slice(1),
+          apiKey: token,
+        };
+      } else {
+        creds = await this.resolveCredentials(userId);
+      }
+
+      const { content, model } = await this.callWithModelFallback(creds, (m) => ({
+        model: m,
+        temperature: 0,
+        max_tokens: 40,
+        messages: [
+          {
+            role: 'system',
+            content: 'You are a connectivity test. Reply with exactly: OK',
+          },
+          {
+            role: 'user',
+            content: 'ping',
+          },
+        ],
+      }));
+
+      const reply = (content || '').trim().slice(0, 200);
+      const latencyMs = Date.now() - started;
+      return {
+        ok: true,
+        latencyMs,
+        baseUrl: creds.baseUrl,
+        model,
+        reply: reply || '(پاسخ خالی)',
+        messageFa: `اتصال برقرار است. مدل «${model}» در ${latencyMs.toLocaleString('fa-IR')} میلی‌ثانیه پاسخ داد.`,
+      };
+    } catch (e) {
+      const latencyMs = Date.now() - started;
+      const err = this.humanizeError(e);
+      return {
+        ok: false,
+        latencyMs,
+        error: err.message,
+        messageFa: `تست ناموفق: ${err.message}`,
+      };
+    }
+  }
 }

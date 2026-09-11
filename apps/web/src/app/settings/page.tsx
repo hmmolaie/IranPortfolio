@@ -93,6 +93,14 @@ export default function SettingsPage() {
   const [openPrompt, setOpenPrompt] = useState<string | null>(null);
   const [promptBusy, setPromptBusy] = useState('');
   const [msg, setMsg] = useState('');
+  const [llmTestBusy, setLlmTestBusy] = useState(false);
+  const [llmTestResult, setLlmTestResult] = useState<{
+    ok: boolean;
+    messageFa: string;
+    reply?: string;
+    model?: string;
+    latencyMs?: number;
+  } | null>(null);
   const [passwordForm, setPasswordForm] = useState({
     currentPassword: '',
     newPassword: '',
@@ -231,6 +239,43 @@ export default function SettingsPage() {
     });
     setMsg('تنظیمات LLM ذخیره شد.');
     setLlm((prev) => ({ ...prev, apiToken: '', hasToken: prev.hasToken || Boolean(llm.apiToken) }));
+  }
+
+  async function testLlm() {
+    setLlmTestBusy(true);
+    setLlmTestResult(null);
+    setMsg('');
+    try {
+      const res = await api<{
+        ok: boolean;
+        messageFa?: string;
+        error?: string;
+        reply?: string;
+        model?: string;
+        latencyMs?: number;
+      }>('/llm/test', {
+        method: 'POST',
+        body: JSON.stringify({
+          baseUrl: llm.baseUrl.trim() || undefined,
+          model: llm.model.trim() || undefined,
+          ...(llm.apiToken.trim() ? { apiToken: llm.apiToken.trim() } : {}),
+        }),
+      });
+      setLlmTestResult({
+        ok: res.ok,
+        messageFa: res.messageFa ?? (res.ok ? 'اتصال برقرار است.' : res.error ?? 'تست ناموفق'),
+        reply: res.reply,
+        model: res.model,
+        latencyMs: res.latencyMs,
+      });
+    } catch (err) {
+      setLlmTestResult({
+        ok: false,
+        messageFa: (err as Error).message,
+      });
+    } finally {
+      setLlmTestBusy(false);
+    }
   }
 
   async function addFund(e: FormEvent) {
@@ -774,7 +819,55 @@ export default function SettingsPage() {
             />
             در صورت نبود توکن شخصی، از کلید پلتفرم استفاده شود
           </label>
-          <button className="btn-primary w-fit">ذخیره LLM</button>
+          <div className="flex flex-wrap gap-2">
+            <button type="submit" className="btn-primary w-fit">
+              ذخیره LLM
+            </button>
+            <button
+              type="button"
+              className="btn-secondary w-fit"
+              disabled={llmTestBusy}
+              onClick={testLlm}
+            >
+              {llmTestBusy ? 'در حال تست...' : 'تست LLM'}
+            </button>
+          </div>
+          {llmTestResult && (
+            <div
+              className={`rounded-lg px-3 py-3 text-sm leading-7 ${
+                llmTestResult.ok
+                  ? 'bg-emerald-50 text-emerald-900'
+                  : 'bg-red-50 text-red-800'
+              }`}
+            >
+              <p className="font-medium">{llmTestResult.messageFa}</p>
+              {llmTestResult.ok && (
+                <ul className="mt-2 space-y-1 text-xs opacity-90">
+                  {llmTestResult.model && (
+                    <li>
+                      مدل:{' '}
+                      <span className="font-mono" dir="ltr">
+                        {llmTestResult.model}
+                      </span>
+                    </li>
+                  )}
+                  {llmTestResult.latencyMs != null && (
+                    <li>
+                      زمان پاسخ: {llmTestResult.latencyMs.toLocaleString('fa-IR')} میلی‌ثانیه
+                    </li>
+                  )}
+                  {llmTestResult.reply && (
+                    <li>
+                      پاسخ مدل:{' '}
+                      <span className="font-mono" dir="ltr">
+                        {llmTestResult.reply}
+                      </span>
+                    </li>
+                  )}
+                </ul>
+              )}
+            </div>
+          )}
         </form>
       )}
     </div>

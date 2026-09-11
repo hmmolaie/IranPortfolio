@@ -1,4 +1,4 @@
-import { Body, Controller, Delete, Get, Param, Put, Req, UseGuards } from '@nestjs/common';
+import { Body, Controller, Delete, Get, Param, Post, Put, Req, UseGuards } from '@nestjs/common';
 import { IsBoolean, IsOptional, IsString } from 'class-validator';
 import { LlmService } from './llm.service';
 import { JwtAuthGuard } from '../auth/jwt-auth.guard';
@@ -22,6 +22,20 @@ class UpdateLlmDto {
   usePlatformFallback?: boolean;
 }
 
+class TestLlmDto {
+  @IsOptional()
+  @IsString()
+  baseUrl?: string;
+
+  @IsOptional()
+  @IsString()
+  model?: string;
+
+  @IsOptional()
+  @IsString()
+  apiToken?: string;
+}
+
 class UpdatePromptDto {
   @IsString()
   systemPrompt!: string;
@@ -40,6 +54,11 @@ export class LlmController {
   @Put('settings')
   put(@Req() req: { user: { userId: string } }, @Body() dto: UpdateLlmDto) {
     return this.llm.saveSettings(req.user.userId, dto);
+  }
+
+  @Post('test')
+  test(@Req() req: { user: { userId: string } }, @Body() dto: TestLlmDto) {
+    return this.llm.testConnection(req.user.userId, dto);
   }
 
   @Get('prompts')
