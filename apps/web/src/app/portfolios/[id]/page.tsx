@@ -307,6 +307,9 @@ export default function PortfolioDetailPage() {
 
   if (!p) return <p className="text-navy-800/60">در حال بارگذاری...</p>;
   const latest = p.snapshots[0];
+  const itemsTotal = latest
+    ? latest.items.reduce((s, i) => s + (i.amountRial || 0), 0)
+    : 0;
 
   return (
     <div className="space-y-8">
@@ -315,6 +318,12 @@ export default function PortfolioDetailPage() {
           <h1 className="text-3xl font-bold">{p.name}</h1>
           <p className="mt-2 text-navy-800/70">
             سرمایه {formatRial(p.capitalRial)} · نقد {formatRial(p.cashRial)}
+            {latest && (
+              <>
+                {' '}
+                · ارزش تخصیص‌یافته {formatRial(itemsTotal)}
+              </>
+            )}
           </p>
         </div>
         <div className="flex flex-wrap gap-2">
@@ -424,6 +433,12 @@ export default function PortfolioDetailPage() {
                   {s.items.slice(0, 6).map((i) => (
                     <li key={i.symbol}>
                       {i.symbol} — {formatNum(i.weightPct)}٪
+                      {p.capitalRial > 0 && (
+                        <span className="text-navy-800/45">
+                          {' '}
+                          (~{formatRial((i.weightPct / 100) * p.capitalRial)})
+                        </span>
+                      )}
                       {i.assetType === 'PHYSICAL_GOLD' || i.assetType === 'PHYSICAL_USD'
                         ? ` (${ASSET_TYPE_LABELS_FA[i.assetType as AssetType] ?? i.assetType})`
                         : ''}
@@ -510,6 +525,19 @@ export default function PortfolioDetailPage() {
                   </tr>
                 ))}
               </tbody>
+              <tfoot>
+                <tr className="border-t-2 border-navy-900/15 bg-navy-50/60">
+                  <td className="py-3 pe-4 font-semibold" colSpan={4}>
+                    جمع مبلغ کل سبد
+                  </td>
+                  <td className="py-3 pe-4 font-semibold text-navy-900">
+                    {formatRial(itemsTotal)}
+                  </td>
+                  <td className="py-3 pe-4 text-xs text-navy-800/55" colSpan={2}>
+                    سقف سرمایه: {formatRial(p.capitalRial)}
+                  </td>
+                </tr>
+              </tfoot>
             </table>
           </div>
 

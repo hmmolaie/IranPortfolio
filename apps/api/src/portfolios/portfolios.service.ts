@@ -53,11 +53,11 @@ export class PortfoliosService {
     return p;
   }
 
-  create(
+  async create(
     userId: string,
     data: { name: string; strategy: PortfolioStrategy; capitalRial: number; description?: string },
   ) {
-    return this.prisma.portfolio.create({
+    const portfolio = await this.prisma.portfolio.create({
       data: {
         userId,
         name: data.name,
@@ -67,6 +67,14 @@ export class PortfoliosService {
         description: data.description,
       },
     });
+
+    try {
+      await this.suggest(userId, portfolio.id, { initialCreate: true });
+    } catch {
+      /* سبد خالی برمی‌گردد؛ کاربر بعداً می‌تواند پیشنهاد بگیرد */
+    }
+
+    return this.get(userId, portfolio.id);
   }
 
   async remove(userId: string, id: string, isAdmin = false) {
@@ -75,8 +83,12 @@ export class PortfoliosService {
     return { ok: true };
   }
 
-  async suggest(userId: string, portfolioId: string) {
-    const strategies = await this.suggestStrategies(userId, portfolioId);
+  async suggest(
+    userId: string,
+    portfolioId: string,
+    options?: { initialCreate?: boolean },
+  ) {
+    const strategies = await this.suggestStrategies(userId, portfolioId, options);
     const first = strategies.strategies[0];
     if (!first) {
       return this.createSnapshotFromItems(userId, portfolioId, {
@@ -87,7 +99,11 @@ export class PortfoliosService {
     return this.createSnapshotFromItems(userId, portfolioId, first);
   }
 
-  async suggestStrategies(userId: string, portfolioId: string) {
+  async suggestStrategies(
+    userId: string,
+    portfolioId: string,
+    options?: { initialCreate?: boolean },
+  ) {
     const portfolio = await this.get(userId, portfolioId);
     const profile = await this.prisma.userProfile.findUnique({ where: { userId } });
     const platformUserId = (await this.users.getAdminUserId()) ?? userId;
@@ -115,10 +131,25 @@ export class PortfoliosService {
     const userPrompt = JSON.stringify(
       {
         capitalRial: portfolio.capitalRial,
+        capitalRialFormatted: portfolio.capitalRial.toLocaleString('en-US'),
         strategy: portfolio.strategy,
         preferencesNoteFa: portfolio.preferencesNoteFa,
         userProfile: profile,
-        universe: universe.slice(0, 80),
+        hardConstraints: {
+          maxTotalRial: portfolio.capitalRial,
+          weightPctMeaning:
+            'weightPct درصد از سرمایه (capitalRial) است؛ مجموع weightPct هر استراتژی باید دقیقاً حدود ۱۰۰ باشد',
+          doNotExceedCapital: true,
+          quantityRule:
+            'تعداد سهم را خودت حساب نکن؛ فقط وزن درصدی بده. سیستم بر اساس قیمت و سرمایه تعداد قابل‌خرید می‌سازد و جمع مبلغ از سرمایه بیشتر نمی‌شود',
+        },
+        universe: universe.slice(0, 80).map((u) => ({
+          symbol: u.symbol,
+          nameFa: u.nameFa,
+          assetType: u.assetType,
+          lastPrice: u.lastPrice,
+          pe: u.pe,
+        })),
         macro,
         economicNews: economicNews.map((n) => ({
           date: n.batch.newsDateKey,
@@ -144,6 +175,13 @@ export class PortfoliosService {
           llmReasoningFa: i.llmReasoningFa,
         })),
         lessons: lessons.map((l) => ({ title: l.titleFa, body: l.bodyFa })),
+        instruction: options?.initialCreate
+          ? `این ایجاد اولیه سبد است. سرمایه کل ${portfolio.capitalRial} ریال و استراتژی ${portfolio.strategy} است.
+فقط weightPct بده (جمع ≈ ۱۰۰). جمع ارزش سبد نباید از ${portfolio.capitalRial} ریال بیشتر شود.
+سهامی پیشنهاد نکن که قیمت یک واحدش از سهم بودجه‌اش بیشتر باشد.
+از درس‌آموخته‌ها، اخبار، بازار و صندوق‌ها استفاده کن. PHYSICAL_GOLD / PHYSICAL_USD در صورت مناسب بودن مجاز است.`
+          : `چند استراتژی متفاوت پیشنهاد بده. سرمایه کل ${portfolio.capitalRial} ریال است.
+weightPct فقط درصد از همین سرمایه است (جمع هر استراتژی ≈ ۱۰۰). ارزش کل هر استراتژی مساوی همین سرمایه است و نباید بیشتر شود.`,
       },
       null,
       2,
@@ -229,12 +267,13 @@ export class PortfoliosService {
     const portfolio = await this.get(userId, portfolioId);
     const universe = await this.buildUniverse();
     const items = this.materializeItems(out.items ?? [], portfolio.capitalRial, universe);
+    const totalValueRial = items.reduce((s, i) => s + i.amountRial, 0);
     return this.prisma.portfolioSnapshot.create({
       data: {
         portfolioId,
         kind: SnapshotKind.SUGGESTION,
         strategySummaryFa: out.strategySummaryFa ?? 'پیشنهاد سبد',
-        totalValueRial: portfolio.capitalRial,
+        totalValueRial: Math.min(totalValueRial, portfolio.capitalRial),
         items: { create: items },
       },
       include: { items: true },
@@ -713,25 +752,177 @@ export class PortfoliosService {
     capital: number,
     universe: Array<{ id: string; symbol: string; assetType: AssetType; lastPrice: number | null }>,
   ) {
-    const total = items.reduce((s, i) => s + (i.weightPct || 0), 0) || 100;
-    return items.map((i) => {
-      const normalized = this.normalizePhysicalAsset(i.symbol, i.assetType);
-      const weightPct = (i.weightPct / total) * 100;
-      const amountRial = (weightPct / 100) * capital;
-      const u = universe.find((x) => x.symbol === normalized.symbol);
-      const unitPrice = u?.lastPrice ?? 1;
-      const quantity = unitPrice ? amountRial / unitPrice : 0;
-      return {
+    const capitalSafe = Math.max(0, Math.round(Number(capital) || 0));
+    if (capitalSafe <= 0 || !items?.length) return [];
+
+    type Prep = {
+      symbol: string;
+      assetType: AssetType;
+      weight: number;
+      reasonFa: string;
+    };
+
+    const prepared: Prep[] = [];
+    for (const raw of items) {
+      const normalized = this.normalizePhysicalAsset(
+        String(raw.symbol ?? ''),
+        raw.assetType ?? AssetType.STOCK,
+      );
+      const weight = Math.max(0, Number(raw.weightPct) || 0);
+      if (!normalized.symbol || weight <= 0) continue;
+      prepared.push({
         symbol: normalized.symbol,
         assetType: normalized.assetType,
-        weightPct,
+        weight,
+        reasonFa: raw.reasonFa || 'انتخاب بر اساس استراتژی',
+      });
+    }
+    if (!prepared.length) return [];
+
+    const weightSum = prepared.reduce((s, i) => s + i.weight, 0) || 100;
+
+    type Row = {
+      symbol: string;
+      assetType: AssetType;
+      weightPct: number;
+      quantity: number;
+      amountRial: number;
+      unitPrice: number;
+      reasonFa: string;
+      instrumentId?: string;
+    };
+
+    const rows: Row[] = [];
+    let allocated = 0;
+
+    for (const i of prepared) {
+      const remainingBudget = capitalSafe - allocated;
+      if (remainingBudget <= 0) break;
+
+      const targetWeight = i.weight / weightSum;
+      let targetAmount = Math.floor(targetWeight * capitalSafe);
+      targetAmount = Math.min(targetAmount, remainingBudget);
+      if (targetAmount <= 0) continue;
+
+      const u = universe.find(
+        (x) => x.symbol === i.symbol || x.symbol.trim() === i.symbol.trim(),
+      );
+      const price = u?.lastPrice != null && u.lastPrice > 0 ? u.lastPrice : null;
+      const needsMarketPrice =
+        i.assetType === AssetType.STOCK ||
+        i.assetType === AssetType.GOLD_ETF ||
+        i.assetType === AssetType.OPTION ||
+        i.assetType === AssetType.FUND;
+
+      let quantity = 0;
+      let amountRial = 0;
+      let unitPrice = price ?? 0;
+
+      if (price && needsMarketPrice) {
+        // فقط تعداد صحیح قابل خرید در سقف بودجهٔ این سهم و کل سرمایه
+        quantity = Math.floor(targetAmount / price);
+        if (quantity < 1) continue; // یک واحد از بودجهٔ تخصیصی گران‌تر است → رد
+        amountRial = quantity * price;
+        if (amountRial > remainingBudget) {
+          quantity = Math.floor(remainingBudget / price);
+          if (quantity < 1) continue;
+          amountRial = quantity * price;
+        }
+        unitPrice = price;
+      } else if (
+        i.assetType === AssetType.PHYSICAL_GOLD ||
+        i.assetType === AssetType.PHYSICAL_USD ||
+        i.assetType === AssetType.DEPOSIT ||
+        i.assetType === AssetType.CASH
+      ) {
+        // تخصیص مبلغی بدون الزام به قیمت تابلو
+        amountRial = targetAmount;
+        unitPrice = price && price > 0 ? price : 1;
+        quantity = unitPrice > 0 ? amountRial / unitPrice : 0;
+      } else if (price) {
+        quantity = Math.floor(targetAmount / price);
+        if (quantity < 1) continue;
+        amountRial = quantity * price;
+        unitPrice = price;
+      } else {
+        // بدون قیمت معتبر برای سهم → وارد سبد نکن (از قیمت جعلی ۱ استفاده نکن)
+        continue;
+      }
+
+      if (amountRial <= 0) continue;
+      allocated += amountRial;
+      rows.push({
+        symbol: i.symbol,
+        assetType: i.assetType,
+        weightPct: 0, // بعداً از مبلغ نهایی محاسبه می‌شود
         quantity,
         amountRial,
         unitPrice,
-        reasonFa: i.reasonFa || 'انتخاب بر اساس استراتژی',
+        reasonFa: i.reasonFa,
         instrumentId: u?.id && !u.id.startsWith('synthetic-') ? u.id : undefined,
-      };
-    });
+      });
+    }
+
+    // اگر به‌خاطر رند کردن تعداد، جمع از سرمایه رد شد (نباید رخ دهد) مقیاس کن
+    const sumAmounts = rows.reduce((s, r) => s + r.amountRial, 0);
+    if (sumAmounts > capitalSafe && sumAmounts > 0) {
+      let left = capitalSafe;
+      for (let idx = 0; idx < rows.length; idx++) {
+        const r = rows[idx];
+        if (idx === rows.length - 1) {
+          if (r.unitPrice > 0 && (r.assetType === AssetType.STOCK || r.assetType === AssetType.GOLD_ETF || r.assetType === AssetType.OPTION || r.assetType === AssetType.FUND)) {
+            const q = Math.floor(left / r.unitPrice);
+            r.quantity = q;
+            r.amountRial = q * r.unitPrice;
+          } else {
+            r.amountRial = Math.max(0, left);
+            r.quantity = r.unitPrice > 0 ? r.amountRial / r.unitPrice : 0;
+          }
+        } else {
+          const share = r.amountRial / sumAmounts;
+          let amt = Math.floor(share * capitalSafe);
+          if (r.unitPrice > 0 && (r.assetType === AssetType.STOCK || r.assetType === AssetType.GOLD_ETF || r.assetType === AssetType.OPTION || r.assetType === AssetType.FUND)) {
+            const q = Math.floor(amt / r.unitPrice);
+            r.quantity = q;
+            r.amountRial = q * r.unitPrice;
+          } else {
+            r.amountRial = amt;
+            r.quantity = r.unitPrice > 0 ? r.amountRial / r.unitPrice : 0;
+          }
+          left -= r.amountRial;
+        }
+      }
+    }
+
+    let finalAllocated = rows.reduce((s, r) => s + r.amountRial, 0);
+    // ماندهٔ مصرف‌نشده به‌صورت نقد در سبد
+    const leftover = capitalSafe - finalAllocated;
+    if (leftover > 0) {
+      const existingCash = rows.find((r) => r.assetType === AssetType.CASH || r.symbol === 'CASH');
+      if (existingCash) {
+        existingCash.amountRial += leftover;
+        existingCash.quantity = existingCash.amountRial;
+        existingCash.unitPrice = 1;
+      } else {
+        rows.push({
+          symbol: 'CASH',
+          assetType: AssetType.CASH,
+          weightPct: 0,
+          quantity: leftover,
+          amountRial: leftover,
+          unitPrice: 1,
+          reasonFa: 'ماندهٔ نقد پس از تخصیص قابل‌خرید',
+        });
+      }
+      finalAllocated = capitalSafe;
+    }
+
+    return rows
+      .filter((r) => r.amountRial > 0)
+      .map((r) => ({
+        ...r,
+        weightPct: finalAllocated > 0 ? (r.amountRial / capitalSafe) * 100 : 0,
+      }));
   }
 
   private normalizePhysicalAsset(symbol: string, assetType: AssetType) {
