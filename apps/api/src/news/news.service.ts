@@ -1,6 +1,7 @@
 import { Injectable } from '@nestjs/common';
 import { PrismaService } from '../prisma/prisma.service';
 import { LlmService } from '../llm/llm.service';
+import { UsersService } from '../users/users.service';
 import { daysAgoDateKey, tehranDateFa, tehranDateKey } from './tehran-date';
 
 type NewsLlmItem = {
@@ -24,12 +25,19 @@ export class NewsService {
   constructor(
     private readonly prisma: PrismaService,
     private readonly llm: LlmService,
+    private readonly users: UsersService,
   ) {}
 
+  /** اخبار مشترک پلتفرم (ذخیره‌شده توسط admin) */
+  private async platformOwnerId(fallbackUserId: string) {
+    return (await this.users.getAdminUserId()) ?? fallbackUserId;
+  }
+
   async list(userId: string, days = 14) {
+    const ownerId = await this.platformOwnerId(userId);
     const since = daysAgoDateKey(days);
     const batches = await this.prisma.economicNewsBatch.findMany({
-      where: { userId, newsDateKey: { gte: since } },
+      where: { userId: ownerId, newsDateKey: { gte: since } },
       orderBy: { newsDateKey: 'desc' },
       include: { items: { orderBy: { sortOrder: 'asc' } } },
     });
@@ -41,16 +49,17 @@ export class NewsService {
   }
 
   async refresh(userId: string) {
+    const ownerId = await this.platformOwnerId(userId);
     const newsDateKey = tehranDateKey();
     const macro = await this.prisma.macroSnapshot.findFirst({ orderBy: { asOfDate: 'desc' } });
     const recentBatches = await this.prisma.economicNewsBatch.findMany({
-      where: { userId },
+      where: { userId: ownerId },
       orderBy: { newsDateKey: 'desc' },
       take: 3,
       include: { items: { orderBy: { relevanceScore: 'desc' }, take: 5 } },
     });
 
-    const system = await this.llm.getSystemPrompt(userId, 'economic_news_refresh');
+    const system = await this.llm.getSystemPrompt(ownerId, 'economic_news_refresh');
     const userPrompt = JSON.stringify(
       {
         todayTehran: newsDateKey,
@@ -74,7 +83,7 @@ export class NewsService {
         'economic_news_refresh',
         system,
         userPrompt,
-        userId,
+        ownerId,
       );
     } catch (e) {
       out = {
@@ -87,7 +96,7 @@ export class NewsService {
     const items = Array.isArray(out.items) ? out.items : [];
 
     const existing = await this.prisma.economicNewsBatch.findUnique({
-      where: { userId_newsDateKey: { userId, newsDateKey } },
+      where: { userId_newsDateKey: { userId: ownerId, newsDateKey } },
     });
     if (existing) {
       await this.prisma.economicNewsItem.deleteMany({ where: { batchId: existing.id } });
@@ -98,7 +107,7 @@ export class NewsService {
           sourceNoteFa: out.sourceNoteFa ?? null,
         },
       });
-      await this.createItems(existing.id, userId, items);
+      await this.createItems(existing.id, ownerId, items);
       return this.prisma.economicNewsBatch.findUnique({
         where: { id: existing.id },
         include: { items: { orderBy: { sortOrder: 'asc' } } },
@@ -107,25 +116,26 @@ export class NewsService {
 
     const batch = await this.prisma.economicNewsBatch.create({
       data: {
-        userId,
+        userId: ownerId,
         newsDateKey,
         summaryFa: out.analysisSummaryFa ?? null,
         sourceNoteFa: out.sourceNoteFa ?? null,
       },
     });
-    await this.createItems(batch.id, userId, items);
+    await this.createItems(batch.id, ownerId, items);
     return this.prisma.economicNewsBatch.findUnique({
       where: { id: batch.id },
       include: { items: { orderBy: { sortOrder: 'asc' } } },
     });
   }
 
-  /** اخبار اخیر برای پیشنهاد سبد */
+  /** اخبار اخیر برای پیشنهاد سبد — از مخزن مشترک admin */
   async getForPortfolioContext(userId: string, limit = 12) {
+    const ownerId = await this.platformOwnerId(userId);
     const since = daysAgoDateKey(5);
     return this.prisma.economicNewsItem.findMany({
       where: {
-        userId,
+        userId: ownerId,
         batch: { newsDateKey: { gte: since } },
       },
       orderBy: [{ relevanceScore: 'desc' }, { createdAt: 'desc' }],

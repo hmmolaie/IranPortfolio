@@ -3,6 +3,7 @@ import { Type } from 'class-transformer';
 import { IsInt, IsOptional, Max, Min } from 'class-validator';
 import { NewsService } from './news.service';
 import { JwtAuthGuard } from '../auth/jwt-auth.guard';
+import { AdminGuard } from '../auth/admin.guard';
 
 class ListQueryDto {
   @IsOptional()
@@ -24,6 +25,7 @@ export class NewsController {
   }
 
   @Post('refresh')
+  @UseGuards(AdminGuard)
   refresh(@Req() req: { user: { userId: string } }) {
     return this.news.refresh(req.user.userId);
   }

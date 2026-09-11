@@ -2,7 +2,7 @@
 
 import { useEffect, useState } from 'react';
 import { useRouter } from 'next/navigation';
-import { api, formatNum, getToken } from '@/lib/api';
+import { api, formatNum, getToken, getUserRole, setUserRole, UserRole } from '@/lib/api';
 
 type NewsItem = {
   id: string;
@@ -61,6 +61,8 @@ export default function NewsPage() {
   const [data, setData] = useState<NewsListResponse | null>(null);
   const [loading, setLoading] = useState(false);
   const [msg, setMsg] = useState('');
+  const [role, setRole] = useState<UserRole | null>(null);
+  const isAdmin = role === 'ADMIN';
 
   async function load() {
     const res = await api<NewsListResponse>('/news?days=21');
@@ -72,6 +74,16 @@ export default function NewsPage() {
       router.replace('/login');
       return;
     }
+    const cached = getUserRole();
+    if (cached) setRole(cached);
+    api<{ role?: UserRole }>('/users/me')
+      .then((u) => {
+        if (u.role) {
+          setUserRole(u.role);
+          setRole(u.role);
+        }
+      })
+      .catch(() => undefined);
     load().catch(() => undefined);
   }, [router]);
 
@@ -97,25 +109,30 @@ export default function NewsPage() {
         <div>
           <h1 className="text-3xl font-bold">اخبار اقتصادی ایران</h1>
           <p className="mt-2 text-navy-800/70">
-            با زدن «به‌روزرسانی اخبار»، از مدل زبانی تنظیم‌شده در سیستم پرسیده می‌شود اخبار اقتصادی
-            امروز در X را مرور کند؛ نتیجه اینجا ذخیره و در پیشنهاد سبد لحاظ می‌شود.
+            {isAdmin
+              ? 'با زدن «به‌روزرسانی اخبار»، از مدل زبانی اخبار اقتصادی امروز مرور و ذخیره می‌شود؛ همه کاربران همان اخبار را می‌بینند و در پیشنهاد سبد لحاظ می‌شود.'
+              : 'اخبار اقتصادی ثبت‌شده در سیستم را مشاهده کنید. این اخبار در پیشنهاد سبد نیز استفاده می‌شوند.'}
           </p>
           {data?.todayLabelFa && (
             <p className="mt-1 text-sm text-navy-800/50">امروز: {data.todayLabelFa}</p>
           )}
         </div>
-        <button className="btn-primary" onClick={refresh} disabled={loading}>
-          {loading ? 'در حال تحلیل...' : 'به‌روزرسانی اخبار'}
-        </button>
+        {isAdmin && (
+          <button className="btn-primary" onClick={refresh} disabled={loading}>
+            {loading ? 'در حال تحلیل...' : 'به‌روزرسانی اخبار'}
+          </button>
+        )}
       </div>
 
       {msg && <p className="text-sm text-navy-800">{msg}</p>}
 
-      <p className="rounded-lg bg-navy-50 px-4 py-3 text-sm text-navy-800/75">
-        اتصال مستقیم به X در سبدیار نیست؛ درخواست به همان LLM تنظیم‌شده در{' '}
-        <strong>تنظیمات</strong> ارسال می‌شود. متن پرامپت را از{' '}
-        <strong>پرامپت‌های LLM → به‌روزرسانی اخبار اقتصادی</strong> می‌توانید تغییر دهید.
-      </p>
+      {isAdmin && (
+        <p className="rounded-lg bg-navy-50 px-4 py-3 text-sm text-navy-800/75">
+          اتصال مستقیم به X در سبدیار نیست؛ درخواست به همان LLM تنظیم‌شده در{' '}
+          <strong>تنظیمات</strong> ارسال می‌شود. متن پرامپت را از{' '}
+          <strong>پرامپت‌های LLM → به‌روزرسانی اخبار اقتصادی</strong> می‌توانید تغییر دهید.
+        </p>
+      )}
 
       {todayBatch?.summaryFa && (
         <section className="card">
@@ -131,7 +148,9 @@ export default function NewsPage() {
 
       {data && data.batches.length === 0 && (
         <p className="text-sm text-navy-800/60">
-          هنوز خبری ثبت نشده. دکمه «به‌روزرسانی اخبار» را بزنید.
+          {isAdmin
+            ? 'هنوز خبری ثبت نشده. دکمه «به‌روزرسانی اخبار» را بزنید.'
+            : 'هنوز خبری در سیستم ثبت نشده است.'}
         </p>
       )}
 
