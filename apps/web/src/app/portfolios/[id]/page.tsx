@@ -5,6 +5,7 @@ import { useParams, useRouter } from 'next/navigation';
 import { ASSET_TYPE_LABELS_FA, AssetType } from '@sabadyar/shared';
 import { api, formatNum, formatRial, getToken } from '@/lib/api';
 import { PortfolioPieChart } from '@/components/PortfolioPieChart';
+import { ConfirmDeletePortfolioModal } from '@/components/ConfirmDeletePortfolioModal';
 
 type Item = {
   id: string;
@@ -86,6 +87,8 @@ export default function PortfolioDetailPage() {
   const [newWeight, setNewWeight] = useState('5');
 
   const [analysis, setAnalysis] = useState<AnalysisResult | null>(null);
+  const [confirmDelete, setConfirmDelete] = useState(false);
+  const [deleting, setDeleting] = useState(false);
 
   async function load() {
     const data = await api<Portfolio>(`/portfolios/${id}`);
@@ -230,6 +233,19 @@ export default function PortfolioDetailPage() {
     }
   }
 
+  async function deletePortfolio() {
+    setDeleting(true);
+    setMsg('');
+    try {
+      await api(`/portfolios/${id}`, { method: 'DELETE' });
+      router.replace('/portfolios');
+    } catch (err) {
+      setMsg((err as Error).message);
+      setDeleting(false);
+      setConfirmDelete(false);
+    }
+  }
+
   async function loadStrategies() {
     setStrategiesBusy(true);
     setMsg('');
@@ -336,6 +352,14 @@ export default function PortfolioDetailPage() {
             onClick={() => run('monthly', `/portfolios/${id}/monthly-evaluate`)}
           >
             ارزیابی ماهانه
+          </button>
+          <button
+            type="button"
+            className="inline-flex items-center justify-center rounded-lg border border-red-700/30 bg-white px-5 py-2.5 text-sm font-medium text-red-700 transition hover:bg-red-50"
+            disabled={!!busy || deleting}
+            onClick={() => setConfirmDelete(true)}
+          >
+            حذف سبد
           </button>
         </div>
       </div>
@@ -653,6 +677,15 @@ export default function PortfolioDetailPage() {
           {p.events.length === 0 && <li className="text-navy-800/50">رویدادی ثبت نشده</li>}
         </ul>
       </section>
+
+      {confirmDelete && (
+        <ConfirmDeletePortfolioModal
+          portfolioName={p.name}
+          busy={deleting}
+          onCancel={() => !deleting && setConfirmDelete(false)}
+          onConfirm={deletePortfolio}
+        />
+      )}
     </div>
   );
 }

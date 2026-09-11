@@ -4,6 +4,7 @@ import { FormEvent, useEffect, useState } from 'react';
 import Link from 'next/link';
 import { useRouter } from 'next/navigation';
 import { api, formatRial, getToken } from '@/lib/api';
+import { ConfirmDeletePortfolioModal } from '@/components/ConfirmDeletePortfolioModal';
 
 const STRATEGIES = [
   { value: 'GROWTH', label: 'رشدی' },
@@ -28,6 +29,8 @@ export default function PortfoliosPage() {
   const [strategy, setStrategy] = useState('GROWTH');
   const [capital, setCapital] = useState('1000000000');
   const [error, setError] = useState('');
+  const [pendingDelete, setPendingDelete] = useState<Portfolio | null>(null);
+  const [deleting, setDeleting] = useState(false);
 
   async function load() {
     setItems(await api<Portfolio[]>('/portfolios'));
@@ -56,6 +59,21 @@ export default function PortfoliosPage() {
       router.push(`/portfolios/${p.id}`);
     } catch (err) {
       setError((err as Error).message);
+    }
+  }
+
+  async function confirmDelete() {
+    if (!pendingDelete) return;
+    setDeleting(true);
+    setError('');
+    try {
+      await api(`/portfolios/${pendingDelete.id}`, { method: 'DELETE' });
+      setPendingDelete(null);
+      await load();
+    } catch (err) {
+      setError((err as Error).message);
+    } finally {
+      setDeleting(false);
     }
   }
 
@@ -93,15 +111,35 @@ export default function PortfoliosPage() {
 
       <div className="grid gap-4 sm:grid-cols-2">
         {items.map((p) => (
-          <Link key={p.id} href={`/portfolios/${p.id}`} className="card transition hover:border-gold-400/40">
-            <div className="text-lg font-semibold">{p.name}</div>
-            <div className="mt-1 text-sm text-navy-800/60">
-              {STRATEGIES.find((s) => s.value === p.strategy)?.label ?? p.strategy}
+          <div key={p.id} className="card flex flex-col gap-3 transition hover:border-gold-400/40">
+            <Link href={`/portfolios/${p.id}`} className="block flex-1">
+              <div className="text-lg font-semibold">{p.name}</div>
+              <div className="mt-1 text-sm text-navy-800/60">
+                {STRATEGIES.find((s) => s.value === p.strategy)?.label ?? p.strategy}
+              </div>
+              <div className="mt-4 text-navy-900">{formatRial(p.capitalRial)}</div>
+            </Link>
+            <div className="flex justify-end border-t border-navy-900/8 pt-3">
+              <button
+                type="button"
+                className="text-sm text-red-700 hover:underline"
+                onClick={() => setPendingDelete(p)}
+              >
+                حذف سبد
+              </button>
             </div>
-            <div className="mt-4 text-navy-900">{formatRial(p.capitalRial)}</div>
-          </Link>
+          </div>
         ))}
       </div>
+
+      {pendingDelete && (
+        <ConfirmDeletePortfolioModal
+          portfolioName={pendingDelete.name}
+          busy={deleting}
+          onCancel={() => !deleting && setPendingDelete(null)}
+          onConfirm={confirmDelete}
+        />
+      )}
     </div>
   );
 }
