@@ -5,6 +5,7 @@ import Link from 'next/link';
 import { useRouter } from 'next/navigation';
 import { api, formatRial, getToken } from '@/lib/api';
 import { ConfirmDeletePortfolioModal } from '@/components/ConfirmDeletePortfolioModal';
+import { PortfolioCreatingOverlay } from '@/components/PortfolioCreatingOverlay';
 
 const STRATEGIES = [
   { value: 'GROWTH', label: 'رشدی' },
@@ -158,13 +159,14 @@ export default function PortfoliosPage() {
           </button>
         </div>
         {creating && (
-          <p className="text-sm text-navy-800/70 sm:col-span-2 lg:col-span-4">
-            سبد با سرمایه و استراتژی انتخابی، بر اساس آخرین درس‌آموخته‌ها، اخبار، دادهٔ بازار و صندوق‌ها
-            در حال تشکیل است. لطفاً صبر کنید.
+          <p className="text-sm text-navy-800/55 sm:col-span-2 lg:col-span-4">
+            لطفاً صفحه را نبندید؛ ساخت سبد با هوش مصنوعی ممکن است کمی طول بکشد.
           </p>
         )}
         {error && <p className="text-sm text-red-700 sm:col-span-2">{error}</p>}
       </form>
+
+      {creating && <PortfolioCreatingOverlay />}
 
       <div className="grid gap-4 sm:grid-cols-2">
         {items.map((p) => (
