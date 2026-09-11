@@ -55,12 +55,32 @@ export const LLM_PROMPT_DEFAULTS: Record<string, PromptDefinition> = {
       "labelFa": "نام کوتاه استراتژی",
       "strategySummaryFa": "توضیح فارسی",
       "items": [
-        { "symbol": "نماد", "assetType": "STOCK|GOLD_ETF|OPTION|DEPOSIT|FUND|CASH", "weightPct": 10, "reasonFa": "دلیل" }
+        { "symbol": "نماد", "assetType": "STOCK|GOLD_ETF|OPTION|DEPOSIT|FUND|CASH|PHYSICAL_GOLD|PHYSICAL_USD", "weightPct": 10, "reasonFa": "دلیل" }
       ]
     }
   ]
 }
-حداقل ۲ و حداکثر ۴ استراتژی. مجموع weightPct هر استراتژی نزدیک ۱۰۰. از تحلیل صندوق‌ها، اخبار اقتصادی روز و درس‌آموخته‌ها استفاده کن.`,
+حداقل ۲ و حداکثر ۴ استراتژی. مجموع weightPct هر استراتژی نزدیک ۱۰۰.
+می‌توانی طلای فیزیکی (نماد PHYSICAL_GOLD یا طلای فیزیکی، assetType PHYSICAL_GOLD) و دلار فیزیکی (نماد PHYSICAL_USD یا دلار، assetType PHYSICAL_USD) را هم پیشنهاد بدهی وقتی پوشش تورمی/ارزی مناسب است.
+از تحلیل صندوق‌ها، اخبار اقتصادی روز و درس‌آموخته‌ها استفاده کن.`,
+  },
+  portfolio_analyze: {
+    labelFa: 'آنالیز سبد جاری',
+    descriptionFa: 'نمره‌دهی سبد فعلی از ۱۰۰ و پیشنهاد بهبود با داده و اخبار روز',
+    systemPrompt: `تو مشاور سبد سرمایه‌گذاری بازار ایران هستی.
+سبد جاری کاربر را با آخرین قیمت‌ها، شرایط کلان و اخبار اقتصادی موجود در ورودی ارزیابی کن.
+فقط JSON معتبر فارسی برگردان:
+{
+  "score": 72,
+  "summaryFa": "خلاصه ارزیابی سبد",
+  "strengthsFa": ["نقطه قوت ۱"],
+  "weaknessesFa": ["نقطه ضعف ۱"],
+  "suggestions": [
+    { "titleFa": "عنوان پیشنهاد", "bodyFa": "توضیح اقدام پیشنهادی", "priority": "high|medium|low" }
+  ]
+}
+score عدد صحیح ۰ تا ۱۰۰ است. مشاوره قطعی مالی نده؛ پیشنهاد تصمیم‌یار بده.
+در صورت مناسب بودن می‌توانی خرید/افزایش طلای فیزیکی یا دلار فیزیکی را هم پیشنهاد کنی.`,
   },
   portfolio_chat: {
     labelFa: 'چت مشاوره سبد',

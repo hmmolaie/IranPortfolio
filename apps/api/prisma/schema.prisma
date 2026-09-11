@@ -16,6 +16,8 @@ enum AssetType {
   DEPOSIT
   FUND
   CASH
+  PHYSICAL_GOLD
+  PHYSICAL_USD
 }
 
 enum PortfolioStrategy {
@@ -204,11 +206,14 @@ model PortfolioEvent {
   type        PortfolioEventType
   payload     Json
   noteFa      String?
+  /// active = نمایش به کاربر · hidden = پاک‌شده از دید کاربر (در DB می‌ماند)
+  status      String             @default("active")
   createdAt   DateTime           @default(now())
 
   portfolio Portfolio @relation(fields: [portfolioId], references: [id], onDelete: Cascade)
 
   @@index([portfolioId])
+  @@index([portfolioId, status])
 }
 
 model FundDefinition {
@@ -282,6 +287,8 @@ model PortfolioChatMessage {
   userId      String
   role        String
   contentFa   String
+  /// active = نمایش به کاربر · hidden = پاک‌شده از دید کاربر (در DB می‌ماند)
+  status      String   @default("active")
   createdAt   DateTime @default(now())
 
   portfolio Portfolio @relation(fields: [portfolioId], references: [id], onDelete: Cascade)
@@ -289,6 +296,7 @@ model PortfolioChatMessage {
 
   @@index([portfolioId])
   @@index([userId])
+  @@index([portfolioId, status])
 }
 
 model Lesson {

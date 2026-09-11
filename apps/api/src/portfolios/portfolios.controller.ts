@@ -1,4 +1,14 @@
-import { Body, Controller, Get, Param, Post, Query, Req, UseGuards } from '@nestjs/common';
+import {
+  Body,
+  Controller,
+  Delete,
+  Get,
+  Param,
+  Post,
+  Query,
+  Req,
+  UseGuards,
+} from '@nestjs/common';
 import { UserRole } from '@prisma/client';
 import { AssetType, PortfolioStrategy } from '@prisma/client';
 import {
@@ -9,6 +19,7 @@ import {
   IsOptional,
   IsString,
   Min,
+  Max,
   ValidateNested,
 } from 'class-validator';
 import { Type } from 'class-transformer';
@@ -41,6 +52,14 @@ class WeightItemDto {
   @IsOptional()
   @IsNumber()
   quantity?: number;
+
+  @IsOptional()
+  @IsEnum(AssetType)
+  assetType?: AssetType;
+
+  @IsOptional()
+  @IsString()
+  reasonFa?: string;
 }
 
 class AdjustDto {
@@ -48,6 +67,23 @@ class AdjustDto {
   @ValidateNested({ each: true })
   @Type(() => WeightItemDto)
   items!: WeightItemDto[];
+}
+
+class AddItemDto {
+  @IsString()
+  symbol!: string;
+
+  @IsEnum(AssetType)
+  assetType!: AssetType;
+
+  @IsNumber()
+  @Min(0.1)
+  @Max(100)
+  weightPct!: number;
+
+  @IsOptional()
+  @IsString()
+  reasonFa?: string;
 }
 
 class CashDto {
@@ -136,6 +172,16 @@ export class PortfoliosController {
     return this.portfolios.postChat(req.user.userId, id, dto.message);
   }
 
+  @Delete(':id/chat')
+  hideChat(@Req() req: { user: { userId: string } }, @Param('id') id: string) {
+    return this.portfolios.hideChat(req.user.userId, id);
+  }
+
+  @Delete(':id/events')
+  hideEvents(@Req() req: { user: { userId: string } }, @Param('id') id: string) {
+    return this.portfolios.hideEvents(req.user.userId, id);
+  }
+
   @Post(':id/suggest-strategies')
   suggestStrategies(@Req() req: { user: { userId: string } }, @Param('id') id: string) {
     return this.portfolios.suggestStrategies(req.user.userId, id);
@@ -165,6 +211,11 @@ export class PortfoliosController {
     return this.portfolios.monthlyEvaluate(req.user.userId, id);
   }
 
+  @Post(':id/analyze')
+  analyze(@Req() req: { user: { userId: string } }, @Param('id') id: string) {
+    return this.portfolios.analyzeCurrent(req.user.userId, id);
+  }
+
   @Post(':id/adjust')
   adjust(
     @Req() req: { user: { userId: string } },
@@ -172,6 +223,24 @@ export class PortfoliosController {
     @Body() dto: AdjustDto,
   ) {
     return this.portfolios.adjustWeights(req.user.userId, id, dto.items);
+  }
+
+  @Post(':id/items')
+  addItem(
+    @Req() req: { user: { userId: string } },
+    @Param('id') id: string,
+    @Body() dto: AddItemDto,
+  ) {
+    return this.portfolios.addItem(req.user.userId, id, dto);
+  }
+
+  @Delete(':id/items/:symbol')
+  removeItem(
+    @Req() req: { user: { userId: string } },
+    @Param('id') id: string,
+    @Param('symbol') symbol: string,
+  ) {
+    return this.portfolios.removeItem(req.user.userId, id, decodeURIComponent(symbol));
   }
 
   @Post(':id/cash')

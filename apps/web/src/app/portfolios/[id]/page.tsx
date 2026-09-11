@@ -2,7 +2,9 @@
 
 import { FormEvent, useEffect, useRef, useState } from 'react';
 import { useParams, useRouter } from 'next/navigation';
+import { ASSET_TYPE_LABELS_FA, AssetType } from '@sabadyar/shared';
 import { api, formatNum, formatRial, getToken } from '@/lib/api';
+import { PortfolioPieChart } from '@/components/PortfolioPieChart';
 
 type Item = {
   id: string;
@@ -51,6 +53,17 @@ type StrategyOption = {
   }>;
 };
 
+type AnalysisResult = {
+  score: number;
+  summaryFa: string;
+  strengthsFa: string[];
+  weaknessesFa: string[];
+  suggestions: Array<{ titleFa: string; bodyFa: string; priority?: string }>;
+  analyzedAt: string;
+};
+
+const ADDABLE_TYPES = Object.values(AssetType);
+
 export default function PortfolioDetailPage() {
   const { id } = useParams<{ id: string }>();
   const router = useRouter();
@@ -67,6 +80,12 @@ export default function PortfolioDetailPage() {
 
   const [strategies, setStrategies] = useState<StrategyOption[] | null>(null);
   const [strategiesBusy, setStrategiesBusy] = useState(false);
+
+  const [newSymbol, setNewSymbol] = useState('');
+  const [newAssetType, setNewAssetType] = useState<AssetType>(AssetType.STOCK);
+  const [newWeight, setNewWeight] = useState('5');
+
+  const [analysis, setAnalysis] = useState<AnalysisResult | null>(null);
 
   async function load() {
     const data = await api<Portfolio>(`/portfolios/${id}`);
@@ -124,6 +143,93 @@ export default function PortfolioDetailPage() {
     await run('adjust', `/portfolios/${id}/adjust`, { items });
   }
 
+  async function addSymbol(e: FormEvent) {
+    e.preventDefault();
+    if (!newSymbol.trim()) return;
+    setBusy('add');
+    setMsg('');
+    try {
+      await api(`/portfolios/${id}/items`, {
+        method: 'POST',
+        body: JSON.stringify({
+          symbol: newSymbol.trim(),
+          assetType: newAssetType,
+          weightPct: Number(newWeight),
+        }),
+      });
+      setNewSymbol('');
+      setNewWeight('5');
+      await load();
+      setMsg('نماد اضافه شد.');
+    } catch (err) {
+      setMsg((err as Error).message);
+    } finally {
+      setBusy('');
+    }
+  }
+
+  async function removeSymbol(symbol: string) {
+    if (!confirm(`نماد «${symbol}» از سبد حذف شود؟`)) return;
+    setBusy('remove');
+    setMsg('');
+    try {
+      await api(`/portfolios/${id}/items/${encodeURIComponent(symbol)}`, {
+        method: 'DELETE',
+      });
+      await load();
+      setMsg('نماد حذف شد.');
+    } catch (err) {
+      setMsg((err as Error).message);
+    } finally {
+      setBusy('');
+    }
+  }
+
+  async function clearChat() {
+    if (!confirm('گفتگوهای قبلی پاک شوند؟ (در سیستم باقی می‌مانند)')) return;
+    setBusy('clearChat');
+    setMsg('');
+    try {
+      await api(`/portfolios/${id}/chat`, { method: 'DELETE' });
+      setChat([]);
+      setMsg('گفتگوها پاک شد.');
+    } catch (err) {
+      setMsg((err as Error).message);
+    } finally {
+      setBusy('');
+    }
+  }
+
+  async function clearEvents() {
+    if (!confirm('رویدادها پاک شوند؟ (در سیستم باقی می‌مانند)')) return;
+    setBusy('clearEvents');
+    setMsg('');
+    try {
+      await api(`/portfolios/${id}/events`, { method: 'DELETE' });
+      await load();
+      setMsg('رویدادها پاک شد.');
+    } catch (err) {
+      setMsg((err as Error).message);
+    } finally {
+      setBusy('');
+    }
+  }
+
+  async function analyzePortfolio() {
+    setBusy('analyze');
+    setMsg('');
+    setAnalysis(null);
+    try {
+      const res = await api<AnalysisResult>(`/portfolios/${id}/analyze`, { method: 'POST' });
+      setAnalysis(res);
+      setMsg('آنالیز سبد انجام شد.');
+    } catch (err) {
+      setMsg((err as Error).message);
+    } finally {
+      setBusy('');
+    }
+  }
+
   async function loadStrategies() {
     setStrategiesBusy(true);
     setMsg('');
@@ -177,6 +283,12 @@ export default function PortfolioDetailPage() {
     }
   }
 
+  function onPickPhysical(type: AssetType) {
+    setNewAssetType(type);
+    if (type === AssetType.PHYSICAL_GOLD) setNewSymbol('PHYSICAL_GOLD');
+    if (type === AssetType.PHYSICAL_USD) setNewSymbol('PHYSICAL_USD');
+  }
+
   if (!p) return <p className="text-navy-800/60">در حال بارگذاری...</p>;
   const latest = p.snapshots[0];
 
@@ -190,6 +302,13 @@ export default function PortfolioDetailPage() {
           </p>
         </div>
         <div className="flex flex-wrap gap-2">
+          <button
+            className="btn-primary"
+            disabled={!!busy || !latest}
+            onClick={analyzePortfolio}
+          >
+            {busy === 'analyze' ? '...' : 'آنالیز سبد جاری با AI'}
+          </button>
           <button
             className="btn-primary"
             disabled={!!busy || strategiesBusy}
@@ -223,6 +342,50 @@ export default function PortfolioDetailPage() {
 
       {msg && <p className="text-sm">{msg}</p>}
 
+      {analysis && (
+        <section className="card space-y-4">
+          <div className="flex flex-wrap items-center justify-between gap-3">
+            <h2 className="text-lg font-semibold">نتیجه آنالیز AI</h2>
+            <div className="flex items-baseline gap-2">
+              <span className="text-4xl font-bold text-navy-900">
+                {analysis.score.toLocaleString('fa-IR')}
+              </span>
+              <span className="text-sm text-navy-800/55">از ۱۰۰</span>
+            </div>
+          </div>
+          <p className="leading-7 text-navy-800/85">{analysis.summaryFa}</p>
+          <div className="grid gap-4 sm:grid-cols-2">
+            <div>
+              <h3 className="text-sm font-semibold text-emerald-800">نقاط قوت</h3>
+              <ul className="mt-2 list-disc space-y-1 pe-5 text-sm text-navy-800/80">
+                {analysis.strengthsFa.map((s, i) => (
+                  <li key={i}>{s}</li>
+                ))}
+              </ul>
+            </div>
+            <div>
+              <h3 className="text-sm font-semibold text-red-800">نقاط ضعف</h3>
+              <ul className="mt-2 list-disc space-y-1 pe-5 text-sm text-navy-800/80">
+                {analysis.weaknessesFa.map((s, i) => (
+                  <li key={i}>{s}</li>
+                ))}
+              </ul>
+            </div>
+          </div>
+          {analysis.suggestions.length > 0 && (
+            <div className="space-y-2 border-t border-navy-900/10 pt-4">
+              <h3 className="text-sm font-semibold">پیشنهادهای بهبود</h3>
+              {analysis.suggestions.map((s, i) => (
+                <article key={i} className="rounded-lg bg-navy-50/80 px-3 py-2">
+                  <div className="font-medium">{s.titleFa}</div>
+                  <p className="mt-1 text-sm leading-7 text-navy-800/75">{s.bodyFa}</p>
+                </article>
+              ))}
+            </div>
+          )}
+        </section>
+      )}
+
       {strategies && strategies.length > 0 && (
         <section className="space-y-4">
           <h2 className="text-lg font-semibold">استراتژی‌های پیشنهادی</h2>
@@ -233,10 +396,13 @@ export default function PortfolioDetailPage() {
                   <h3 className="font-semibold text-navy-900">{s.labelFa}</h3>
                   <p className="mt-2 text-sm leading-7 text-navy-800/80">{s.strategySummaryFa}</p>
                 </div>
-                <ul className="text-xs text-navy-800/70 space-y-1">
+                <ul className="space-y-1 text-xs text-navy-800/70">
                   {s.items.slice(0, 6).map((i) => (
                     <li key={i.symbol}>
                       {i.symbol} — {formatNum(i.weightPct)}٪
+                      {i.assetType === 'PHYSICAL_GOLD' || i.assetType === 'PHYSICAL_USD'
+                        ? ` (${ASSET_TYPE_LABELS_FA[i.assetType as AssetType] ?? i.assetType})`
+                        : ''}
                     </li>
                   ))}
                   {s.items.length > 6 && (
@@ -270,21 +436,31 @@ export default function PortfolioDetailPage() {
             )}
           </div>
 
+          <div>
+            <h3 className="mb-3 text-sm font-semibold">ترکیب سبد</h3>
+            <PortfolioPieChart items={latest.items} />
+          </div>
+
           <div className="overflow-x-auto">
             <table className="min-w-full text-sm">
               <thead>
                 <tr className="border-b border-navy-900/10 text-start">
                   <th className="py-2 pe-4 font-medium">نماد</th>
+                  <th className="py-2 pe-4 font-medium">نوع</th>
                   <th className="py-2 pe-4 font-medium">وزن٪</th>
                   <th className="py-2 pe-4 font-medium">مقدار</th>
                   <th className="py-2 pe-4 font-medium">مبلغ</th>
-                  <th className="py-2 font-medium">دلیل</th>
+                  <th className="py-2 pe-4 font-medium">دلیل</th>
+                  <th className="py-2 font-medium">عملیات</th>
                 </tr>
               </thead>
               <tbody>
                 {latest.items.map((i) => (
                   <tr key={i.id} className="border-b border-navy-900/5 align-top">
                     <td className="py-3 pe-4 font-medium">{i.symbol}</td>
+                    <td className="py-3 pe-4 text-xs text-navy-800/60">
+                      {ASSET_TYPE_LABELS_FA[i.assetType as AssetType] ?? i.assetType}
+                    </td>
                     <td className="py-3 pe-4">
                       <input
                         className="input w-20"
@@ -296,25 +472,96 @@ export default function PortfolioDetailPage() {
                     </td>
                     <td className="py-3 pe-4">{formatNum(i.quantity)}</td>
                     <td className="py-3 pe-4">{formatRial(i.amountRial)}</td>
-                    <td className="py-3 leading-6 text-navy-800/75">{i.reasonFa}</td>
+                    <td className="py-3 pe-4 leading-6 text-navy-800/75">{i.reasonFa}</td>
+                    <td className="py-3">
+                      <button
+                        type="button"
+                        className="text-xs text-red-700 hover:underline"
+                        disabled={!!busy}
+                        onClick={() => removeSymbol(i.symbol)}
+                      >
+                        حذف
+                      </button>
+                    </td>
                   </tr>
                 ))}
               </tbody>
             </table>
           </div>
-          <button className="btn-secondary" onClick={saveAdjust} disabled={!!busy}>
-            ذخیره تغییرات وزن
-          </button>
+
+          <div className="flex flex-wrap gap-2">
+            <button className="btn-secondary" onClick={saveAdjust} disabled={!!busy}>
+              ذخیره تغییرات وزن
+            </button>
+          </div>
+
+          <form
+            onSubmit={addSymbol}
+            className="grid gap-3 border-t border-navy-900/10 pt-4 sm:grid-cols-4"
+          >
+            <div>
+              <label className="label">نماد جدید</label>
+              <input
+                className="input"
+                value={newSymbol}
+                onChange={(e) => setNewSymbol(e.target.value)}
+                placeholder="مثلاً شپنا یا PHYSICAL_GOLD"
+                required
+              />
+            </div>
+            <div>
+              <label className="label">نوع دارایی</label>
+              <select
+                className="input"
+                value={newAssetType}
+                onChange={(e) => onPickPhysical(e.target.value as AssetType)}
+              >
+                {ADDABLE_TYPES.map((t) => (
+                  <option key={t} value={t}>
+                    {ASSET_TYPE_LABELS_FA[t]}
+                  </option>
+                ))}
+              </select>
+            </div>
+            <div>
+              <label className="label">وزن٪</label>
+              <input
+                className="input"
+                type="number"
+                min={0.1}
+                max={100}
+                step={0.1}
+                value={newWeight}
+                onChange={(e) => setNewWeight(e.target.value)}
+                required
+              />
+            </div>
+            <div className="flex items-end">
+              <button type="submit" className="btn-primary w-full" disabled={!!busy || !latest}>
+                {busy === 'add' ? '...' : 'افزودن به سبد'}
+              </button>
+            </div>
+          </form>
         </section>
       )}
 
       <section className="card flex flex-col gap-4">
-        <div>
-          <h2 className="text-lg font-semibold">گفتگو دربارهٔ سبد</h2>
-          <p className="mt-1 text-sm text-navy-800/60">
-            دربارهٔ چرایی انتخاب سهام، محدودیت‌ها و علاقه‌مندی‌ها بپرسید؛ پاسخ‌ها و ترجیحات شما ذخیره
-            می‌شود.
-          </p>
+        <div className="flex flex-wrap items-start justify-between gap-3">
+          <div>
+            <h2 className="text-lg font-semibold">گفتگو دربارهٔ سبد</h2>
+            <p className="mt-1 text-sm text-navy-800/60">
+              دربارهٔ چرایی انتخاب سهام، محدودیت‌ها و علاقه‌مندی‌ها بپرسید؛ پاسخ‌ها و ترجیحات شما ذخیره
+              می‌شود.
+            </p>
+          </div>
+          <button
+            type="button"
+            className="btn-secondary text-xs"
+            disabled={!!busy || chat.length === 0}
+            onClick={clearChat}
+          >
+            {busy === 'clearChat' ? '...' : 'پاک کردن گفتگوها'}
+          </button>
         </div>
         <div className="max-h-80 space-y-3 overflow-y-auto rounded-lg bg-navy-50/60 p-4">
           {chat.length === 0 && (
@@ -383,7 +630,17 @@ export default function PortfolioDetailPage() {
       </section>
 
       <section className="card">
-        <h2 className="text-lg font-semibold">رویدادها</h2>
+        <div className="flex flex-wrap items-center justify-between gap-3">
+          <h2 className="text-lg font-semibold">رویدادها</h2>
+          <button
+            type="button"
+            className="btn-secondary text-xs"
+            disabled={!!busy || p.events.length === 0}
+            onClick={clearEvents}
+          >
+            {busy === 'clearEvents' ? '...' : 'پاک کردن رویدادها'}
+          </button>
+        </div>
         <ul className="mt-3 space-y-2 text-sm">
           {p.events.map((e) => (
             <li key={e.id} className="flex justify-between gap-4 border-b border-navy-900/5 py-2">

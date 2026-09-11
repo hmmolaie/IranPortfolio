@@ -1,4 +1,4 @@
-import { Injectable, NotFoundException, ForbiddenException } from '@nestjs/common';
+import { Injectable, NotFoundException, ForbiddenException, BadRequestException } from '@nestjs/common';
 import {
   AssetType,
   PortfolioEventType,
@@ -41,7 +41,11 @@ export class PortfoliosService {
           orderBy: { createdAt: 'desc' },
           include: { items: true },
         },
-        events: { orderBy: { createdAt: 'desc' }, take: 50 },
+        events: {
+          where: { status: 'active' },
+          orderBy: { createdAt: 'desc' },
+          take: 50,
+        },
       },
     });
     if (!p) throw new NotFoundException('سبد یافت نشد');
@@ -234,10 +238,28 @@ export class PortfoliosService {
   async getChat(userId: string, portfolioId: string) {
     await this.get(userId, portfolioId);
     return this.prisma.portfolioChatMessage.findMany({
-      where: { portfolioId, userId },
+      where: { portfolioId, userId, status: 'active' },
       orderBy: { createdAt: 'asc' },
       take: 100,
     });
+  }
+
+  async hideChat(userId: string, portfolioId: string) {
+    await this.get(userId, portfolioId);
+    await this.prisma.portfolioChatMessage.updateMany({
+      where: { portfolioId, userId, status: 'active' },
+      data: { status: 'hidden' },
+    });
+    return { ok: true };
+  }
+
+  async hideEvents(userId: string, portfolioId: string) {
+    await this.get(userId, portfolioId);
+    await this.prisma.portfolioEvent.updateMany({
+      where: { portfolioId, status: 'active' },
+      data: { status: 'hidden' },
+    });
+    return { ok: true };
   }
 
   async postChat(userId: string, portfolioId: string, message: string) {
@@ -250,7 +272,7 @@ export class PortfoliosService {
     });
 
     const history = await this.prisma.portfolioChatMessage.findMany({
-      where: { portfolioId, userId },
+      where: { portfolioId, userId, status: 'active' },
       orderBy: { createdAt: 'asc' },
       take: 30,
     });
@@ -400,7 +422,14 @@ export class PortfoliosService {
   async adjustWeights(
     userId: string,
     portfolioId: string,
-    items: Array<{ symbol: string; weightPct: number; quantity?: number }>,
+    items: Array<{
+      symbol: string;
+      weightPct: number;
+      quantity?: number;
+      assetType?: AssetType;
+      reasonFa?: string;
+    }>,
+    options?: { skipEvent?: boolean; noteFa?: string },
   ) {
     const portfolio = await this.get(userId, portfolioId);
     const latest = portfolio.snapshots[0];
@@ -415,14 +444,14 @@ export class PortfoliosService {
       const amountRial = (weightPct / 100) * portfolio.capitalRial;
       const quantity = i.quantity ?? (price ? amountRial / price : 0);
       return {
-        symbol: i.symbol,
-        assetType: prev?.assetType ?? u?.assetType ?? AssetType.STOCK,
+        symbol: i.symbol.trim(),
+        assetType: i.assetType ?? prev?.assetType ?? u?.assetType ?? AssetType.STOCK,
         weightPct,
         quantity,
         amountRial,
         unitPrice: price,
-        reasonFa: prev?.reasonFa ?? 'ویرایش دستی کاربر',
-        instrumentId: u?.id,
+        reasonFa: i.reasonFa ?? prev?.reasonFa ?? 'ویرایش دستی کاربر',
+        instrumentId: u?.id && !u.id.startsWith('synthetic-') ? u.id : undefined,
       };
     });
 
@@ -438,16 +467,196 @@ export class PortfoliosService {
       include: { items: true },
     });
 
+    if (!options?.skipEvent) {
+      await this.prisma.portfolioEvent.create({
+        data: {
+          portfolioId,
+          type: PortfolioEventType.WEIGHT_EDIT,
+          payload: { items },
+          noteFa: options?.noteFa ?? 'ویرایش وزن/مقدار توسط کاربر',
+        },
+      });
+    }
+
+    return snapshot;
+  }
+
+  async addItem(
+    userId: string,
+    portfolioId: string,
+    data: {
+      symbol: string;
+      assetType: AssetType;
+      weightPct: number;
+      reasonFa?: string;
+    },
+  ) {
+    const portfolio = await this.get(userId, portfolioId);
+    const latest = portfolio.snapshots[0];
+    if (!latest) throw new NotFoundException('ابتدا یک پیشنهاد یا اسنپ‌شات بسازید');
+
+    const symbol = data.symbol.trim();
+    if (!symbol) throw new NotFoundException('نماد نامعتبر است');
+    if (latest.items.some((i) => i.symbol === symbol)) {
+      throw new BadRequestException('این نماد از قبل در سبد هست');
+    }
+
+    const remaining = Math.max(0, 100 - data.weightPct);
+    const currentTotal = latest.items.reduce((s, i) => s + i.weightPct, 0) || 100;
+    const scaled = latest.items.map((i) => ({
+      symbol: i.symbol,
+      weightPct: currentTotal ? (i.weightPct / currentTotal) * remaining : 0,
+      quantity: undefined as number | undefined,
+      assetType: i.assetType,
+      reasonFa: i.reasonFa,
+    }));
+
+    scaled.push({
+      symbol,
+      weightPct: data.weightPct,
+      quantity: undefined,
+      assetType: data.assetType,
+      reasonFa: data.reasonFa ?? 'افزودن دستی توسط کاربر',
+    });
+
+    const snapshot = await this.adjustWeights(userId, portfolioId, scaled, { skipEvent: true });
     await this.prisma.portfolioEvent.create({
       data: {
         portfolioId,
-        type: PortfolioEventType.WEIGHT_EDIT,
-        payload: { items },
-        noteFa: 'ویرایش وزن/مقدار توسط کاربر',
+        type: PortfolioEventType.BUY,
+        payload: { symbol, weightPct: data.weightPct, assetType: data.assetType },
+        noteFa: `افزودن نماد ${symbol}`,
       },
     });
-
     return snapshot;
+  }
+
+  async removeItem(userId: string, portfolioId: string, symbol: string) {
+    const portfolio = await this.get(userId, portfolioId);
+    const latest = portfolio.snapshots[0];
+    if (!latest) throw new NotFoundException('نسخه‌ای برای ویرایش نیست');
+
+    const remaining = latest.items.filter((i) => i.symbol !== symbol);
+    if (remaining.length === latest.items.length) {
+      throw new NotFoundException('نماد در سبد یافت نشد');
+    }
+    if (remaining.length === 0) {
+      throw new BadRequestException('حداقل یک نماد باید در سبد بماند');
+    }
+
+    const total = remaining.reduce((s, i) => s + i.weightPct, 0) || 100;
+    const items = remaining.map((i) => ({
+      symbol: i.symbol,
+      weightPct: (i.weightPct / total) * 100,
+      assetType: i.assetType,
+      reasonFa: i.reasonFa,
+    }));
+
+    const snapshot = await this.adjustWeights(userId, portfolioId, items, { skipEvent: true });
+    await this.prisma.portfolioEvent.create({
+      data: {
+        portfolioId,
+        type: PortfolioEventType.SELL,
+        payload: { symbol },
+        noteFa: `حذف نماد ${symbol}`,
+      },
+    });
+    return snapshot;
+  }
+
+  async analyzeCurrent(userId: string, portfolioId: string) {
+    const portfolio = await this.get(userId, portfolioId);
+    const latest = portfolio.snapshots[0];
+    if (!latest) throw new NotFoundException('سبدی برای آنالیز وجود ندارد');
+
+    const universe = await this.buildUniverse();
+    const macro = await this.prisma.macroSnapshot.findFirst({ orderBy: { asOfDate: 'desc' } });
+    const economicNews = await this.news.getForPortfolioContext(userId, 12);
+    const profile = await this.prisma.userProfile.findUnique({ where: { userId } });
+
+    const pricedItems = latest.items.map((i) => {
+      const u = universe.find((x) => x.symbol === i.symbol);
+      return {
+        symbol: i.symbol,
+        assetType: i.assetType,
+        weightPct: i.weightPct,
+        amountRial: i.amountRial,
+        quantity: i.quantity,
+        unitPrice: u?.lastPrice ?? i.unitPrice,
+        lastMarketPrice: u?.lastPrice ?? null,
+        pe: u?.pe ?? null,
+        reasonFa: i.reasonFa,
+      };
+    });
+
+    const system = await this.llm.getSystemPrompt(userId, 'portfolio_analyze');
+    const userPrompt = JSON.stringify(
+      {
+        portfolio: {
+          name: portfolio.name,
+          strategy: portfolio.strategy,
+          capitalRial: portfolio.capitalRial,
+          cashRial: portfolio.cashRial,
+          preferencesNoteFa: portfolio.preferencesNoteFa,
+        },
+        userProfile: profile,
+        currentItems: pricedItems,
+        macro,
+        economicNews: economicNews.map((n) => ({
+          date: n.batch.newsDateKey,
+          title: n.titleFa,
+          summary: n.summaryFa,
+          marketImpact: n.marketImpactFa,
+          direction: n.impactDirection,
+          relevance: n.relevanceScore,
+          sectors: n.sectorsFa,
+        })),
+      },
+      null,
+      2,
+    );
+
+    type AnalysisOut = {
+      score: number;
+      summaryFa: string;
+      strengthsFa: string[];
+      weaknessesFa: string[];
+      suggestions: Array<{ titleFa: string; bodyFa: string; priority?: string }>;
+    };
+
+    let analysis: AnalysisOut;
+    try {
+      analysis = await this.llm.chatJson<AnalysisOut>(
+        'portfolio_analyze',
+        system,
+        userPrompt,
+        userId,
+      );
+    } catch (e) {
+      analysis = {
+        score: 55,
+        summaryFa: `آنالیز خودکار بدون LLM: ترکیب فعلی را با اخبار و قیمت روز بررسی کنید. (${(e as Error).message.slice(0, 80)})`,
+        strengthsFa: ['وجود تخصیص ثبت‌شده در سبد'],
+        weaknessesFa: ['دسترسی به مدل زبانی برای تحلیل عمیق‌تر برقرار نشد'],
+        suggestions: [
+          {
+            titleFa: 'بررسی مجدد وزن‌ها',
+            bodyFa: 'وزن سهام، طلا و نقد را با شرایط تورمی و اخبار روز تطبیق دهید.',
+            priority: 'medium',
+          },
+        ],
+      };
+    }
+
+    const score = Math.min(100, Math.max(0, Math.round(Number(analysis.score) || 0)));
+    return {
+      score,
+      summaryFa: analysis.summaryFa ?? '',
+      strengthsFa: analysis.strengthsFa ?? [],
+      weaknessesFa: analysis.weaknessesFa ?? [],
+      suggestions: analysis.suggestions ?? [],
+      analyzedAt: new Date().toISOString(),
+    };
   }
 
   async cashEvent(
@@ -500,22 +709,40 @@ export class PortfoliosService {
   ) {
     const total = items.reduce((s, i) => s + (i.weightPct || 0), 0) || 100;
     return items.map((i) => {
+      const normalized = this.normalizePhysicalAsset(i.symbol, i.assetType);
       const weightPct = (i.weightPct / total) * 100;
       const amountRial = (weightPct / 100) * capital;
-      const u = universe.find((x) => x.symbol === i.symbol);
+      const u = universe.find((x) => x.symbol === normalized.symbol);
       const unitPrice = u?.lastPrice ?? 1;
       const quantity = unitPrice ? amountRial / unitPrice : 0;
       return {
-        symbol: i.symbol,
-        assetType: i.assetType ?? u?.assetType ?? AssetType.STOCK,
+        symbol: normalized.symbol,
+        assetType: normalized.assetType,
         weightPct,
         quantity,
         amountRial,
         unitPrice,
         reasonFa: i.reasonFa || 'انتخاب بر اساس استراتژی',
-        instrumentId: u?.id,
+        instrumentId: u?.id && !u.id.startsWith('synthetic-') ? u.id : undefined,
       };
     });
+  }
+
+  private normalizePhysicalAsset(symbol: string, assetType: AssetType) {
+    const s = symbol.trim();
+    if (
+      assetType === AssetType.PHYSICAL_GOLD ||
+      /طلای?\s*فیزیکی|PHYSICAL_GOLD/i.test(s)
+    ) {
+      return { symbol: 'PHYSICAL_GOLD', assetType: AssetType.PHYSICAL_GOLD };
+    }
+    if (
+      assetType === AssetType.PHYSICAL_USD ||
+      /دلار\s*فیزیکی|PHYSICAL_USD/i.test(s)
+    ) {
+      return { symbol: 'PHYSICAL_USD', assetType: AssetType.PHYSICAL_USD };
+    }
+    return { symbol: s, assetType };
   }
 
   private fallbackSuggest(
@@ -532,7 +759,7 @@ export class PortfoliosService {
       reasonFa: string;
     }> = [];
 
-    const stockWeight = strategy === PortfolioStrategy.CONSERVATIVE ? 40 : 60;
+    const stockWeight = strategy === PortfolioStrategy.CONSERVATIVE ? 40 : 55;
     const each = stocks.length ? stockWeight / stocks.length : 0;
     for (const s of stocks) {
       items.push({
@@ -546,15 +773,27 @@ export class PortfoliosService {
       items.push({
         symbol: gold.symbol,
         assetType: AssetType.GOLD_ETF,
-        weightPct: 20,
+        weightPct: 15,
         reasonFa: 'پوشش تورمی با صندوق طلا',
       });
     }
+    items.push({
+      symbol: 'PHYSICAL_GOLD',
+      assetType: AssetType.PHYSICAL_GOLD,
+      weightPct: 10,
+      reasonFa: 'پوشش تورمی با طلای فیزیکی',
+    });
+    items.push({
+      symbol: 'PHYSICAL_USD',
+      assetType: AssetType.PHYSICAL_USD,
+      weightPct: 10,
+      reasonFa: 'پوشش ارزی با دلار فیزیکی',
+    });
     if (deposit) {
       items.push({
         symbol: deposit.symbol,
         assetType: AssetType.DEPOSIT,
-        weightPct: 20,
+        weightPct: gold ? 10 : 25,
         reasonFa: 'بخش امن نقدشونده با سپرده بانکی',
       });
     }
@@ -570,7 +809,12 @@ export class PortfoliosService {
       take: 200,
       include: { priceBars: { orderBy: { tradeDate: 'desc' }, take: 1 } },
     });
-    return instruments.map((i) => ({
+    const macro = await this.prisma.macroSnapshot.findFirst({ orderBy: { asOfDate: 'desc' } });
+    const usdIrr = macro?.usdIrr && macro.usdIrr > 0 ? macro.usdIrr : 600000;
+    // تقریبی: هر گرم طلا ≈ ۷۵ دلار × نرخ دلار (قابل جایگزینی با دادهٔ دقیق‌تر)
+    const goldGramRial = usdIrr * 75;
+
+    const list = instruments.map((i) => ({
       id: i.id,
       symbol: i.symbol,
       nameFa: i.nameFa,
@@ -579,5 +823,28 @@ export class PortfoliosService {
       eps: i.priceBars[0]?.eps ?? null,
       pe: i.priceBars[0]?.pe ?? null,
     }));
+
+    list.push(
+      {
+        id: 'synthetic-physical-gold',
+        symbol: 'PHYSICAL_GOLD',
+        nameFa: 'طلای فیزیکی',
+        assetType: AssetType.PHYSICAL_GOLD,
+        lastPrice: goldGramRial,
+        eps: null,
+        pe: null,
+      },
+      {
+        id: 'synthetic-physical-usd',
+        symbol: 'PHYSICAL_USD',
+        nameFa: 'دلار فیزیکی',
+        assetType: AssetType.PHYSICAL_USD,
+        lastPrice: usdIrr,
+        eps: null,
+        pe: null,
+      },
+    );
+
+    return list;
   }
 }
