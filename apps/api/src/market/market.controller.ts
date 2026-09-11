@@ -1,8 +1,25 @@
-import { Controller, Get, NotFoundException, Param, Post, Query, Req, UseGuards } from '@nestjs/common';
+import {
+  Body,
+  Controller,
+  Get,
+  NotFoundException,
+  Param,
+  Post,
+  Query,
+  Req,
+  UseGuards,
+} from '@nestjs/common';
 import { AssetType } from '@prisma/client';
+import { IsString, MinLength } from 'class-validator';
 import { MarketService } from './market.service';
 import { JwtAuthGuard } from '../auth/jwt-auth.guard';
 import { AdminGuard } from '../auth/admin.guard';
+
+class AskDto {
+  @IsString()
+  @MinLength(2)
+  question!: string;
+}
 
 @Controller('market')
 export class MarketController {
@@ -31,6 +48,16 @@ export class MarketController {
     const inst = await this.market.getInstrument(id);
     if (!inst) throw new NotFoundException('نماد یافت نشد');
     return inst;
+  }
+
+  @Post('instruments/:id/ask')
+  @UseGuards(JwtAuthGuard)
+  ask(
+    @Req() req: { user: { userId: string } },
+    @Param('id') id: string,
+    @Body() dto: AskDto,
+  ) {
+    return this.market.askAboutInstrument(req.user.userId, id, dto.question);
   }
 
   @Post('ingest')

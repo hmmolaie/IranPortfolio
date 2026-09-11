@@ -1,7 +1,8 @@
-import { Injectable, Logger, ServiceUnavailableException } from '@nestjs/common';
+import { Injectable, Logger, NotFoundException, ServiceUnavailableException } from '@nestjs/common';
 import { Cron } from '@nestjs/schedule';
 import { AssetType, Prisma } from '@prisma/client';
 import { PrismaService } from '../prisma/prisma.service';
+import { LlmService } from '../llm/llm.service';
 
 const UA =
   'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/126.0.0.0 Safari/537.36';
@@ -70,7 +71,10 @@ type IngestRow = Record<string, unknown>;
 export class MarketService {
   private readonly logger = new Logger(MarketService.name);
 
-  constructor(private readonly prisma: PrismaService) {}
+  constructor(
+    private readonly prisma: PrismaService,
+    private readonly llm: LlmService,
+  ) {}
 
   @Cron('0 30 15 * * 0-4') // تقریبی پایان بازار ایران (سرور ممکن است UTC باشد)
   async scheduledIngest() {
@@ -138,17 +142,46 @@ export class MarketService {
   async getPriceHistory(id: string, limit = 90) {
     const bars = await this.prisma.priceBar.findMany({
       where: { instrumentId: id },
-      orderBy: { tradeDate: 'asc' },
-      take: Math.min(limit, 365),
+      orderBy: { tradeDate: 'desc' },
+      take: Math.min(Math.max(limit, 1), 2000),
     });
-    return bars.map((b) => ({
-      tradeDate: b.tradeDate,
-      lastPrice: b.lastPrice,
-      closePrice: b.closePrice,
-      eps: b.eps,
-      pe: b.pe,
-      volume: b.volume,
-    }));
+    return bars
+      .reverse()
+      .map((b) => ({
+        tradeDate: b.tradeDate,
+        lastPrice: b.lastPrice,
+        closePrice: b.closePrice,
+        eps: b.eps,
+        pe: b.pe,
+        volume: b.volume,
+      }));
+  }
+
+  async askAboutInstrument(userId: string, id: string, question: string) {
+    const inst = await this.getInstrument(id);
+    if (!inst) throw new NotFoundException('نماد یافت نشد');
+    const history = await this.getPriceHistory(id, 60);
+    const system = await this.llm.getSystemPrompt(userId, 'market_symbol_qa');
+    const answer = await this.llm.chatText(
+      'market_symbol_qa',
+      system,
+      JSON.stringify(
+        {
+          instrument: {
+            symbol: inst.symbol,
+            nameFa: inst.nameFa,
+            assetType: inst.assetType,
+            last: inst.last,
+          },
+          recentBars: history.slice(-20),
+          question,
+        },
+        null,
+        2,
+      ),
+      userId,
+    );
+    return { answer };
   }
 
   async ingestToday() {

@@ -69,6 +69,12 @@ export class PortfoliosService {
     });
   }
 
+  async remove(userId: string, id: string, isAdmin = false) {
+    await this.get(userId, id, isAdmin);
+    await this.prisma.portfolio.delete({ where: { id } });
+    return { ok: true };
+  }
+
   async suggest(userId: string, portfolioId: string) {
     const strategies = await this.suggestStrategies(userId, portfolioId);
     const first = strategies.strategies[0];

@@ -158,6 +158,12 @@ export class PortfoliosController {
     return this.portfolios.get(req.user.userId, id, isAdmin);
   }
 
+  @Delete(':id')
+  remove(@Req() req: { user: { userId: string; role?: UserRole } }, @Param('id') id: string) {
+    const isAdmin = req.user.role === UserRole.ADMIN;
+    return this.portfolios.remove(req.user.userId, id, isAdmin);
+  }
+
   @Get(':id/chat')
   getChat(@Req() req: { user: { userId: string } }, @Param('id') id: string) {
     return this.portfolios.getChat(req.user.userId, id);
