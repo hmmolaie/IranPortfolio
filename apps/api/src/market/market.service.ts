@@ -16,6 +16,22 @@ const FETCH_HEADERS: Record<string, string> = {
 
 const GOLD_SYMBOLS = new Set(['عیار', 'طلا', 'گوهر', 'زر', 'ناب', 'مثقال', 'جواهر']);
 
+/** شاخص کل و هم‌وزن بورس تهران (TSETMC) */
+const MARKET_INDICES = [
+  {
+    key: 'total' as const,
+    insCode: '32097828799138957',
+    symbol: 'TEDPIX',
+    nameFa: 'شاخص کل',
+  },
+  {
+    key: 'equalWeight' as const,
+    insCode: '67130298613737946',
+    symbol: 'TESWEQ',
+    nameFa: 'شاخص هم‌وزن',
+  },
+];
+
 /** تاریخ تقویمی تهران (بازار ایران)، نه UTC کانتینر */
 function tehranNow(): Date {
   return new Date(new Date().toLocaleString('en-US', { timeZone: 'Asia/Tehran' }));
@@ -85,32 +101,45 @@ export class MarketService {
     }
   }
 
-  async listLatest(params: { q?: string; assetType?: AssetType; take?: number }) {
-    const take = Math.min(params.take ?? 100, 500);
-    const instruments = await this.prisma.instrument.findMany({
-      where: {
-        isActive: true,
-        ...(params.assetType ? { assetType: params.assetType } : {}),
-        ...(params.q
-          ? {
-              OR: [
-                { symbol: { contains: params.q } },
-                { nameFa: { contains: params.q } },
-              ],
-            }
-          : {}),
-      },
-      take,
-      orderBy: { symbol: 'asc' },
-      include: {
-        priceBars: {
-          orderBy: { tradeDate: 'desc' },
-          take: 1,
-        },
-      },
-    });
+  async listLatest(params: {
+    q?: string;
+    assetType?: AssetType;
+    take?: number;
+    page?: number;
+  }) {
+    const take = Math.min(Math.max(params.take ?? 20, 1), 100);
+    const page = Math.max(params.page ?? 1, 1);
+    const skip = (page - 1) * take;
+    const where = {
+      isActive: true,
+      assetType: params.assetType ? params.assetType : { not: AssetType.INDEX },
+      ...(params.q
+        ? {
+            OR: [
+              { symbol: { contains: params.q } },
+              { nameFa: { contains: params.q } },
+            ],
+          }
+        : {}),
+    };
 
-    return instruments.map((i) => ({
+    const [total, instruments] = await Promise.all([
+      this.prisma.instrument.count({ where }),
+      this.prisma.instrument.findMany({
+        where,
+        skip,
+        take,
+        orderBy: { symbol: 'asc' },
+        include: {
+          priceBars: {
+            orderBy: { tradeDate: 'desc' },
+            take: 1,
+          },
+        },
+      }),
+    ]);
+
+    const items = instruments.map((i) => ({
       id: i.id,
       symbol: i.symbol,
       nameFa: i.nameFa,
@@ -118,6 +147,14 @@ export class MarketService {
       insCode: i.insCode,
       last: i.priceBars[0] ?? null,
     }));
+
+    return {
+      items,
+      total,
+      page,
+      pageSize: take,
+      totalPages: Math.max(1, Math.ceil(total / take)),
+    };
   }
 
   async getInstrument(id: string) {
@@ -225,9 +262,21 @@ export class MarketService {
     }
 
     if (!totalUpserted && days.every((d) => d.upserted === 0)) {
+      // حتی اگر سهام نیامد، شاخص‌ها را جدا امتحان کن
+      try {
+        await this.ingestIndices();
+      } catch {
+        /* ignore */
+      }
       throw new ServiceUnavailableException(
         'هیچ داده‌ای از بازار دریافت نشد. سرور شما IP خارج ایران دارد؛ در .env مقدار BRS_API_KEY را از https://brsapi.ir تنظیم کنید و کانتینر api را دوباره بالا بیاورید.',
       );
+    }
+
+    try {
+      await this.ingestIndices();
+    } catch (e) {
+      this.logger.warn(`اینجست شاخص‌ها: ${(e as Error).message}`);
     }
 
     const last = days[days.length - 1];
@@ -314,6 +363,212 @@ export class MarketService {
     }
 
     return { tradeDate: dEven, upserted, source };
+  }
+
+  async getMarketIndices(historyDays = 60) {
+    const take = Math.min(Math.max(historyDays, 5), 365);
+    let result = await this.readMarketIndices(take);
+    const needFetch = result.some((r) => r.history.length < 2);
+    if (needFetch) {
+      try {
+        await this.ingestIndices();
+        result = await this.readMarketIndices(take);
+      } catch (e) {
+        this.logger.warn(`خواندن شاخص‌ها ناموفق: ${(e as Error).message}`);
+      }
+    }
+    return result;
+  }
+
+  private async readMarketIndices(take: number) {
+    const out = [];
+    for (const def of MARKET_INDICES) {
+      const instrument = await this.prisma.instrument.findFirst({
+        where: {
+          OR: [{ insCode: def.insCode }, { symbol: def.symbol, assetType: AssetType.INDEX }],
+        },
+      });
+      if (!instrument) {
+        out.push({
+          key: def.key,
+          symbol: def.symbol,
+          nameFa: def.nameFa,
+          lastValue: null as number | null,
+          changePct: null as number | null,
+          history: [] as Array<{ tradeDate: string; value: number }>,
+        });
+        continue;
+      }
+      const bars = await this.prisma.priceBar.findMany({
+        where: { instrumentId: instrument.id },
+        orderBy: { tradeDate: 'desc' },
+        take,
+      });
+      const chronological = [...bars].reverse();
+      const history = chronological
+        .map((b) => {
+          const value = b.closePrice ?? b.lastPrice;
+          if (value == null || !(value > 0)) return null;
+          return { tradeDate: b.tradeDate.toISOString(), value };
+        })
+        .filter((x): x is { tradeDate: string; value: number } => Boolean(x));
+      const last = history[history.length - 1]?.value ?? null;
+      const prev = history.length >= 2 ? history[history.length - 2]?.value : null;
+      const changePct =
+        last != null && prev != null && prev > 0 ? ((last - prev) / prev) * 100 : null;
+      out.push({
+        key: def.key,
+        symbol: def.symbol,
+        nameFa: def.nameFa,
+        lastValue: last,
+        changePct,
+        history,
+      });
+    }
+    return out;
+  }
+
+  /** دریافت و ذخیره شاخص کل و هم‌وزن */
+  async ingestIndices() {
+    let upserted = 0;
+    for (const def of MARKET_INDICES) {
+      const instrument = await this.prisma.instrument.upsert({
+        where: { insCode: def.insCode },
+        create: {
+          insCode: def.insCode,
+          symbol: def.symbol,
+          nameFa: def.nameFa,
+          assetType: AssetType.INDEX,
+        },
+        update: {
+          symbol: def.symbol,
+          nameFa: def.nameFa,
+          assetType: AssetType.INDEX,
+          isActive: true,
+        },
+      });
+
+      const points = await this.fetchIndexHistory(def.insCode);
+      for (const p of points) {
+        await this.prisma.priceBar.upsert({
+          where: {
+            instrumentId_tradeDate: {
+              instrumentId: instrument.id,
+              tradeDate: p.tradeDate,
+            },
+          },
+          create: {
+            instrumentId: instrument.id,
+            tradeDate: p.tradeDate,
+            lastPrice: p.value,
+            closePrice: p.value,
+          },
+          update: {
+            lastPrice: p.value,
+            closePrice: p.value,
+          },
+        });
+        upserted += 1;
+      }
+    }
+
+    // به‌روزرسانی مقدار لحظه‌ای امروز از لیست شاخص‌های منتخب
+    try {
+      const live = await this.fetchJson(
+        'https://cdn.tsetmc.com/api/Index/GetIndexB1LastAll/SelectedIndexes/1',
+      );
+      const list: IngestRow[] = Array.isArray(live?.indexB1)
+        ? live.indexB1
+        : Array.isArray(live)
+          ? live
+          : [];
+      const tradeDate = todayDateOnly();
+      for (const def of MARKET_INDICES) {
+        const row = list.find((x) => String(x.insCode) === def.insCode);
+        const value = this.num(row?.xDrNivJIdx004 ?? row?.lastValue);
+        if (value == null) continue;
+        const instrument = await this.prisma.instrument.findUnique({
+          where: { insCode: def.insCode },
+        });
+        if (!instrument) continue;
+        await this.prisma.priceBar.upsert({
+          where: {
+            instrumentId_tradeDate: { instrumentId: instrument.id, tradeDate },
+          },
+          create: {
+            instrumentId: instrument.id,
+            tradeDate,
+            lastPrice: value,
+            closePrice: value,
+            raw: row as Prisma.InputJsonValue,
+          },
+          update: {
+            lastPrice: value,
+            closePrice: value,
+            raw: row as Prisma.InputJsonValue,
+          },
+        });
+        upserted += 1;
+      }
+    } catch (e) {
+      this.logger.warn(`شاخص لحظه‌ای: ${(e as Error).message}`);
+    }
+
+    this.logger.log(`شاخص‌ها: ${upserted} ردیف ذخیره شد`);
+    return { upserted };
+  }
+
+  private async fetchIndexHistory(
+    insCode: string,
+  ): Promise<Array<{ tradeDate: Date; value: number }>> {
+    // اولویت: تاریخچه قیمت پایانی CDN
+    try {
+      const data = await this.fetchJson(
+        `https://cdn.tsetmc.com/api/ClosingPrice/GetClosingPriceDailyList/${insCode}/90`,
+      );
+      const list: IngestRow[] = Array.isArray(data?.closingPriceDaily)
+        ? data.closingPriceDaily
+        : Array.isArray(data)
+          ? data
+          : [];
+      const points = list
+        .map((row) => {
+          const dEven = String(row.dEven ?? row.date ?? '').replace(/\D/g, '');
+          const value = this.num(row.pClosing ?? row.closePrice ?? row.price ?? row.last);
+          if (dEven.length !== 8 || value == null || !(value > 0)) return null;
+          return { tradeDate: dEvenToDate(dEven), value };
+        })
+        .filter((x): x is { tradeDate: Date; value: number } => Boolean(x));
+      if (points.length) return points;
+    } catch (e) {
+      this.logger.warn(`تاریخچه شاخص CDN (${insCode}): ${(e as Error).message}`);
+    }
+
+    // جایگزین: نمودار قدیمی TSETMC
+    try {
+      const res = await fetch(
+        `https://old.tsetmc.com/tsev2/chart/data/Index.aspx?i=${insCode}&t=value`,
+        { headers: FETCH_HEADERS, signal: AbortSignal.timeout(20_000) },
+      );
+      const text = await res.text();
+      if (!res.ok) throw new Error(`${res.status}`);
+      const points: Array<{ tradeDate: Date; value: number }> = [];
+      for (const line of text.split(/[;\n]/).map((s) => s.trim()).filter(Boolean)) {
+        const [dPart, vPart] = line.split(',');
+        const dEven = String(dPart ?? '').replace(/\D/g, '');
+        const value = this.num(vPart);
+        if (dEven.length !== 8 || value == null || !(value > 0)) continue;
+        points.push({ tradeDate: dEvenToDate(dEven), value });
+      }
+      if (points.length) {
+        // فقط ۹۰ روز اخیر
+        return points.slice(-90);
+      }
+    } catch (e) {
+      this.logger.warn(`تاریخچه شاخص legacy (${insCode}): ${(e as Error).message}`);
+    }
+
+    return [];
   }
 
   private async fetchRowsForDate(

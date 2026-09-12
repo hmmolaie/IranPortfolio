@@ -116,11 +116,59 @@ export class PricesService {
     return this.prisma.spotPriceApiConfig.findUnique({ where: { id: 'default' } });
   }
 
+  /** بررسی می‌کند آدرس واقعاً JSON برمی‌گرداند */
+  private async assertUriReturnsJson(uri: string): Promise<unknown> {
+    let res: Response;
+    try {
+      res = await fetch(uri, {
+        headers: { Accept: 'application/json' },
+        signal: AbortSignal.timeout(45_000),
+      });
+    } catch (e) {
+      throw new BadRequestException(
+        `امکان اتصال به آدرس API نیست: ${(e as Error).message || 'خطای شبکه'}`,
+      );
+    }
+
+    const text = await res.text();
+    if (!res.ok) {
+      throw new BadRequestException(
+        `آدرس API پاسخ موفق برنگرداند (کد ${res.status}). ذخیره انجام نشد.`,
+      );
+    }
+
+    const contentType = (res.headers.get('content-type') || '').toLowerCase();
+    let json: unknown;
+    try {
+      json = JSON.parse(text);
+    } catch {
+      throw new BadRequestException(
+        'این نشانی JSON معتبر برنمی‌گرداند. لطفاً آدرسی وارد کنید که پاسخ آن JSON باشد.',
+      );
+    }
+
+    if (json === null || (typeof json !== 'object' && !Array.isArray(json))) {
+      throw new BadRequestException(
+        'پاسخ این نشانی JSON شیء یا آرایه نیست. ذخیره انجام نشد.',
+      );
+    }
+
+    // اگر Content-Type مشخصاً غیر JSON بود ولی parse شد، قبول می‌کنیم
+    if (contentType && !contentType.includes('json') && !contentType.includes('text/plain')) {
+      this.logger.warn(`Content-Type غیرمنتظره برای API قیمت: ${contentType}`);
+    }
+
+    return json;
+  }
+
   async saveConfig(uri: string) {
     const trimmed = uri.trim();
     if (!/^https?:\/\//i.test(trimmed)) {
       throw new BadRequestException('آدرس API باید با http یا https شروع شود');
     }
+
+    await this.assertUriReturnsJson(trimmed);
+
     return this.prisma.spotPriceApiConfig.upsert({
       where: { id: 'default' },
       create: { id: 'default', uri: trimmed },

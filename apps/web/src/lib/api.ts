@@ -47,11 +47,13 @@ export async function api<T>(
     let message = 'خطای سرور';
     try {
       const j = await res.json();
-      message = j.message ?? (Array.isArray(j.message) ? j.message.join('، ') : message);
+      if (Array.isArray(j.message)) message = j.message.join('، ');
+      else if (typeof j.message === 'string') message = j.message;
+      else if (typeof j.error === 'string') message = j.error;
     } catch {
       message = await res.text();
     }
-    throw new Error(typeof message === 'string' ? message : 'خطای سرور');
+    throw new Error(typeof message === 'string' && message ? message : 'خطای سرور');
   }
   if (res.status === 204) return undefined as T;
   return res.json() as Promise<T>;

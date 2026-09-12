@@ -7,6 +7,7 @@ export enum AssetType {
   CASH = 'CASH',
   PHYSICAL_GOLD = 'PHYSICAL_GOLD',
   PHYSICAL_USD = 'PHYSICAL_USD',
+  INDEX = 'INDEX',
 }
 
 export enum PortfolioStrategy {
@@ -36,6 +37,7 @@ export const ASSET_TYPE_LABELS_FA: Record<AssetType, string> = {
   [AssetType.CASH]: 'نقد',
   [AssetType.PHYSICAL_GOLD]: 'طلای فیزیکی',
   [AssetType.PHYSICAL_USD]: 'دلار فیزیکی',
+  [AssetType.INDEX]: 'شاخص',
 };
 
 export enum SnapshotKind {

@@ -4,6 +4,7 @@ import { FormEvent, useEffect, useState } from 'react';
 import { useRouter } from 'next/navigation';
 import clsx from 'clsx';
 import { api, getToken } from '@/lib/api';
+import { useToast } from '@/components/Toast';
 
 type AppUser = {
   id: string;
@@ -17,9 +18,9 @@ type EditMode = 'edit' | 'password' | null;
 
 export default function AdminUsersPage() {
   const router = useRouter();
+  const toast = useToast();
   const [users, setUsers] = useState<AppUser[]>([]);
   const [newUser, setNewUser] = useState({ email: '', password: '', name: '' });
-  const [msg, setMsg] = useState('');
   const [loading, setLoading] = useState(false);
   const [selected, setSelected] = useState<AppUser | null>(null);
   const [editMode, setEditMode] = useState<EditMode>(null);
@@ -49,14 +50,12 @@ export default function AdminUsersPage() {
     setEditMode('edit');
     setEditForm({ email: user.email, name: user.name ?? '' });
     setNewPassword('');
-    setMsg('');
   }
 
   function openPassword(user: AppUser) {
     setSelected(user);
     setEditMode('password');
     setNewPassword('');
-    setMsg('');
   }
 
   function closePanel() {
@@ -68,7 +67,6 @@ export default function AdminUsersPage() {
   async function addUser(e: FormEvent) {
     e.preventDefault();
     setLoading(true);
-    setMsg('');
     try {
       await api('/users', {
         method: 'POST',
@@ -80,9 +78,9 @@ export default function AdminUsersPage() {
       });
       setNewUser({ email: '', password: '', name: '' });
       await loadUsers();
-      setMsg('کاربر جدید ایجاد شد.');
+      toast.success('کاربر جدید ایجاد شد.');
     } catch (err) {
-      setMsg((err as Error).message);
+      toast.error((err as Error).message);
     } finally {
       setLoading(false);
     }
@@ -92,7 +90,6 @@ export default function AdminUsersPage() {
     e.preventDefault();
     if (!selected) return;
     setLoading(true);
-    setMsg('');
     try {
       await api(`/users/${selected.id}`, {
         method: 'PATCH',
@@ -102,10 +99,10 @@ export default function AdminUsersPage() {
         }),
       });
       await loadUsers();
-      setMsg('اطلاعات کاربر به‌روز شد.');
+      toast.success('اطلاعات کاربر به‌روز شد.');
       closePanel();
     } catch (err) {
-      setMsg((err as Error).message);
+      toast.error((err as Error).message);
     } finally {
       setLoading(false);
     }
@@ -115,16 +112,15 @@ export default function AdminUsersPage() {
     e.preventDefault();
     if (!selected) return;
     setLoading(true);
-    setMsg('');
     try {
       await api(`/users/${selected.id}/password`, {
         method: 'PATCH',
         body: JSON.stringify({ password: newPassword }),
       });
-      setMsg('رمز عبور تغییر کرد.');
+      toast.success('رمز عبور تغییر کرد.');
       closePanel();
     } catch (err) {
-      setMsg((err as Error).message);
+      toast.error((err as Error).message);
     } finally {
       setLoading(false);
     }
@@ -135,17 +131,16 @@ export default function AdminUsersPage() {
     const label = next ? 'فعال' : 'غیرفعال';
     if (!confirm(`کاربر «${user.name || user.email}» ${label} شود؟`)) return;
     setLoading(true);
-    setMsg('');
     try {
       await api(`/users/${user.id}/status`, {
         method: 'PATCH',
         body: JSON.stringify({ isActive: next }),
       });
       await loadUsers();
-      setMsg(`کاربر ${label} شد.`);
+      toast.success(`کاربر ${label} شد.`);
       if (selected?.id === user.id) closePanel();
     } catch (err) {
-      setMsg((err as Error).message);
+      toast.error((err as Error).message);
     } finally {
       setLoading(false);
     }
@@ -157,8 +152,6 @@ export default function AdminUsersPage() {
         <h1 className="text-3xl font-bold">مدیریت کاربران</h1>
         <p className="mt-2 text-navy-800/70">ایجاد، ویرایش، تغییر رمز و غیرفعال‌سازی کاربران</p>
       </div>
-
-      {msg && <p className="text-sm text-navy-800">{msg}</p>}
 
       <section className="card overflow-x-auto p-0">
         <table className="min-w-full text-sm">

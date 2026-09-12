@@ -30,12 +30,19 @@ export class MarketController {
     @Query('q') q?: string,
     @Query('assetType') assetType?: AssetType,
     @Query('take') take?: string,
+    @Query('page') page?: string,
   ) {
     return this.market.listLatest({
       q,
       assetType,
       take: take ? Number(take) : undefined,
+      page: page ? Number(page) : undefined,
     });
+  }
+
+  @Get('indices')
+  indices(@Query('days') days?: string) {
+    return this.market.getMarketIndices(days ? Number(days) : 60);
   }
 
   @Get('instruments/:id/history')

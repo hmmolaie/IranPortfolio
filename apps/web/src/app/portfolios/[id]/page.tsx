@@ -6,6 +6,7 @@ import { ASSET_TYPE_LABELS_FA, AssetType } from '@sabadyar/shared';
 import { api, formatNum, formatRial, getToken } from '@/lib/api';
 import { PortfolioPieChart } from '@/components/PortfolioPieChart';
 import { ConfirmDeletePortfolioModal } from '@/components/ConfirmDeletePortfolioModal';
+import { useToast } from '@/components/Toast';
 
 type Item = {
   id: string;
@@ -68,11 +69,11 @@ const ADDABLE_TYPES = Object.values(AssetType);
 export default function PortfolioDetailPage() {
   const { id } = useParams<{ id: string }>();
   const router = useRouter();
+  const toast = useToast();
   const [p, setP] = useState<Portfolio | null>(null);
   const [busy, setBusy] = useState('');
   const [editWeights, setEditWeights] = useState<Record<string, string>>({});
   const [cashAmount, setCashAmount] = useState('100000000');
-  const [msg, setMsg] = useState('');
 
   const [chat, setChat] = useState<ChatMessage[]>([]);
   const [chatInput, setChatInput] = useState('');
@@ -122,16 +123,15 @@ export default function PortfolioDetailPage() {
 
   async function run(action: string, path: string, body?: unknown) {
     setBusy(action);
-    setMsg('');
     try {
       await api(path, {
         method: 'POST',
         body: body ? JSON.stringify(body) : undefined,
       });
       await load();
-      setMsg('انجام شد.');
+      toast.success('انجام شد.');
     } catch (e) {
-      setMsg((e as Error).message);
+      toast.error((e as Error).message);
     } finally {
       setBusy('');
     }
@@ -150,7 +150,6 @@ export default function PortfolioDetailPage() {
     e.preventDefault();
     if (!newSymbol.trim()) return;
     setBusy('add');
-    setMsg('');
     try {
       await api(`/portfolios/${id}/items`, {
         method: 'POST',
@@ -163,9 +162,9 @@ export default function PortfolioDetailPage() {
       setNewSymbol('');
       setNewWeight('5');
       await load();
-      setMsg('نماد اضافه شد.');
+      toast.success('نماد اضافه شد.');
     } catch (err) {
-      setMsg((err as Error).message);
+      toast.error((err as Error).message);
     } finally {
       setBusy('');
     }
@@ -174,15 +173,14 @@ export default function PortfolioDetailPage() {
   async function removeSymbol(symbol: string) {
     if (!confirm(`نماد «${symbol}» از سبد حذف شود؟`)) return;
     setBusy('remove');
-    setMsg('');
     try {
       await api(`/portfolios/${id}/items/${encodeURIComponent(symbol)}`, {
         method: 'DELETE',
       });
       await load();
-      setMsg('نماد حذف شد.');
+      toast.success('نماد حذف شد.');
     } catch (err) {
-      setMsg((err as Error).message);
+      toast.error((err as Error).message);
     } finally {
       setBusy('');
     }
@@ -191,13 +189,12 @@ export default function PortfolioDetailPage() {
   async function clearChat() {
     if (!confirm('گفتگوهای قبلی پاک شوند؟ (در سیستم باقی می‌مانند)')) return;
     setBusy('clearChat');
-    setMsg('');
     try {
       await api(`/portfolios/${id}/chat`, { method: 'DELETE' });
       setChat([]);
-      setMsg('گفتگوها پاک شد.');
+      toast.success('گفتگوها پاک شد.');
     } catch (err) {
-      setMsg((err as Error).message);
+      toast.error((err as Error).message);
     } finally {
       setBusy('');
     }
@@ -206,13 +203,12 @@ export default function PortfolioDetailPage() {
   async function clearEvents() {
     if (!confirm('رویدادها پاک شوند؟ (در سیستم باقی می‌مانند)')) return;
     setBusy('clearEvents');
-    setMsg('');
     try {
       await api(`/portfolios/${id}/events`, { method: 'DELETE' });
       await load();
-      setMsg('رویدادها پاک شد.');
+      toast.success('رویدادها پاک شد.');
     } catch (err) {
-      setMsg((err as Error).message);
+      toast.error((err as Error).message);
     } finally {
       setBusy('');
     }
@@ -220,14 +216,13 @@ export default function PortfolioDetailPage() {
 
   async function analyzePortfolio() {
     setBusy('analyze');
-    setMsg('');
     setAnalysis(null);
     try {
       const res = await api<AnalysisResult>(`/portfolios/${id}/analyze`, { method: 'POST' });
       setAnalysis(res);
-      setMsg('آنالیز سبد انجام شد.');
+      toast.success('آنالیز سبد انجام شد.');
     } catch (err) {
-      setMsg((err as Error).message);
+      toast.error((err as Error).message);
     } finally {
       setBusy('');
     }
@@ -235,12 +230,12 @@ export default function PortfolioDetailPage() {
 
   async function deletePortfolio() {
     setDeleting(true);
-    setMsg('');
     try {
       await api(`/portfolios/${id}`, { method: 'DELETE' });
+      toast.success('سبد حذف شد.');
       router.replace('/portfolios');
     } catch (err) {
-      setMsg((err as Error).message);
+      toast.error((err as Error).message);
       setDeleting(false);
       setConfirmDelete(false);
     }
@@ -248,15 +243,15 @@ export default function PortfolioDetailPage() {
 
   async function loadStrategies() {
     setStrategiesBusy(true);
-    setMsg('');
     try {
       const out = await api<{ strategies: StrategyOption[] }>(
         `/portfolios/${id}/suggest-strategies`,
         { method: 'POST' },
       );
       setStrategies(out.strategies ?? []);
+      toast.success('پیشنهادهای استراتژی آماده شد.');
     } catch (e) {
-      setMsg((e as Error).message);
+      toast.error((e as Error).message);
     } finally {
       setStrategiesBusy(false);
     }
@@ -264,7 +259,6 @@ export default function PortfolioDetailPage() {
 
   async function applyStrategy(s: StrategyOption) {
     setBusy('apply');
-    setMsg('');
     try {
       await api(`/portfolios/${id}/apply-strategy`, {
         method: 'POST',
@@ -272,9 +266,9 @@ export default function PortfolioDetailPage() {
       });
       setStrategies(null);
       await load();
-      setMsg('استراتژی انتخاب‌شده اعمال شد.');
+      toast.success('استراتژی انتخاب‌شده اعمال شد.');
     } catch (e) {
-      setMsg((e as Error).message);
+      toast.error((e as Error).message);
     } finally {
       setBusy('');
     }
@@ -293,7 +287,7 @@ export default function PortfolioDetailPage() {
       });
       await loadChat();
     } catch (err) {
-      setMsg((err as Error).message);
+      toast.error((err as Error).message);
     } finally {
       setChatBusy(false);
     }
@@ -372,8 +366,6 @@ export default function PortfolioDetailPage() {
           </button>
         </div>
       </div>
-
-      {msg && <p className="text-sm">{msg}</p>}
 
       {analysis && (
         <section className="card space-y-4">

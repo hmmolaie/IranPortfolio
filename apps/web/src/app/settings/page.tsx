@@ -4,6 +4,7 @@ import { FormEvent, useEffect, useState } from 'react';
 import { useRouter } from 'next/navigation';
 import clsx from 'clsx';
 import { api, getToken } from '@/lib/api';
+import { useToast } from '@/components/Toast';
 
 type ProviderId = 'openrouter' | 'openai' | 'custom';
 
@@ -66,6 +67,7 @@ function detectProvider(baseUrl: string): ProviderId {
 
 export default function SettingsPage() {
   const router = useRouter();
+  const toast = useToast();
   const [tab, setTab] = useState<SettingsTab>('profile');
   const [isAdmin, setIsAdmin] = useState(false);
   const [email, setEmail] = useState('');
@@ -93,7 +95,6 @@ export default function SettingsPage() {
   const [prompts, setPrompts] = useState<LlmPrompt[]>([]);
   const [openPrompt, setOpenPrompt] = useState<string | null>(null);
   const [promptBusy, setPromptBusy] = useState('');
-  const [msg, setMsg] = useState('');
   const [llmTestBusy, setLlmTestBusy] = useState(false);
   const [llmTestResult, setLlmTestResult] = useState<{
     ok: boolean;
@@ -108,8 +109,11 @@ export default function SettingsPage() {
     confirmPassword: '',
   });
   const [passwordBusy, setPasswordBusy] = useState(false);
+  const [profileBusy, setProfileBusy] = useState(false);
+  const [llmBusy, setLlmBusy] = useState(false);
   const [spotUri, setSpotUri] = useState('');
   const [spotBusy, setSpotBusy] = useState(false);
+  const [spotFeedback, setSpotFeedback] = useState<{ ok: boolean; text: string } | null>(null);
   const [spotLatest, setSpotLatest] = useState<{
     dateKey?: string;
     usdIrr?: number | null;
@@ -126,6 +130,28 @@ export default function SettingsPage() {
   async function loadFundDefs() {
     const defs = await api<FundDefinition[]>('/funds/definitions?includeInactive=true');
     setFundDefs(defs);
+  }
+
+  async function loadSpotConfig() {
+    try {
+      const c = await api<{ uri: string } | null>('/prices/config');
+      setSpotUri(c?.uri?.trim() ? c.uri : '');
+    } catch {
+      /* non-admin or unavailable */
+    }
+  }
+
+  async function loadSpotLatest() {
+    try {
+      const p = await api<{
+        dateKey?: string;
+        usdIrr?: number | null;
+        goldGramRial?: number | null;
+      } | null>('/prices/latest');
+      setSpotLatest(p);
+    } catch {
+      /* ignore */
+    }
   }
 
   useEffect(() => {
@@ -156,6 +182,10 @@ export default function SettingsPage() {
         investmentPreferencesFa: u.profile?.investmentPreferencesFa ?? '',
         constraintsFa: u.profile?.constraintsFa ?? '',
       });
+      if (admin) {
+        loadSpotConfig().catch(() => undefined);
+        loadSpotLatest().catch(() => undefined);
+      }
     });
     api<{
       baseUrl: string;
@@ -177,32 +207,32 @@ export default function SettingsPage() {
       .catch(() => undefined);
     loadFundDefs().catch(() => undefined);
     loadPrompts().catch(() => undefined);
-    api<{ uri: string } | null>('/prices/config')
-      .then((c) => {
-        if (c?.uri) setSpotUri(c.uri);
-      })
-      .catch(() => undefined);
-    api<{
-      dateKey?: string;
-      usdIrr?: number | null;
-      goldGramRial?: number | null;
-    } | null>('/prices/latest')
-      .then((p) => setSpotLatest(p))
-      .catch(() => undefined);
   }, [router]);
+
+  useEffect(() => {
+    if (tab === 'spotPrices' && isAdmin) {
+      loadSpotConfig().catch(() => undefined);
+      loadSpotLatest().catch(() => undefined);
+    }
+  }, [tab, isAdmin]);
 
   async function saveSpotConfig(e: FormEvent) {
     e.preventDefault();
     setSpotBusy(true);
-    setMsg('');
+    setSpotFeedback(null);
     try {
-      await api('/prices/config', {
+      const saved = await api<{ uri: string }>('/prices/config', {
         method: 'PUT',
         body: JSON.stringify({ uri: spotUri.trim() }),
       });
-      setMsg('آدرس API قیمت ذخیره شد. هر روز ساعت ۱۲ ظهر ایران به‌صورت خودکار خوانده می‌شود.');
+      if (saved?.uri) setSpotUri(saved.uri);
+      const text = 'آدرس API قیمت با موفقیت ذخیره شد و پاسخ JSON تأیید شد.';
+      setSpotFeedback({ ok: true, text });
+      toast.success(text);
     } catch (err) {
-      setMsg((err as Error).message);
+      const text = (err as Error).message || 'ذخیره آدرس ناموفق بود.';
+      setSpotFeedback({ ok: false, text });
+      toast.error(text);
     } finally {
       setSpotBusy(false);
     }
@@ -210,7 +240,7 @@ export default function SettingsPage() {
 
   async function refreshSpotPrices() {
     setSpotBusy(true);
-    setMsg('');
+    setSpotFeedback(null);
     try {
       const row = await api<{
         dateKey: string;
@@ -218,9 +248,20 @@ export default function SettingsPage() {
         goldGramRial?: number | null;
       }>('/prices/refresh', { method: 'POST' });
       setSpotLatest(row);
-      setMsg('قیمت امروز از API خوانده و ذخیره شد.');
+      const parts = [
+        row.usdIrr != null ? `دلار ${row.usdIrr.toLocaleString('fa-IR')}` : null,
+        row.goldGramRial != null ? `طلا ${row.goldGramRial.toLocaleString('fa-IR')}` : null,
+      ].filter(Boolean);
+      const text =
+        parts.length > 0
+          ? `به‌روزرسانی موفق بود (${parts.join(' · ')})`
+          : 'به‌روزرسانی موفق بود و قیمت امروز ذخیره شد.';
+      setSpotFeedback({ ok: true, text });
+      toast.success(text);
     } catch (err) {
-      setMsg((err as Error).message);
+      const text = (err as Error).message || 'به‌روزرسانی قیمت ناموفق بود.';
+      setSpotFeedback({ ok: false, text });
+      toast.error(text);
     } finally {
       setSpotBusy(false);
     }
@@ -242,28 +283,34 @@ export default function SettingsPage() {
 
   async function saveProfile(e: FormEvent) {
     e.preventDefault();
-    await api('/users/me', {
-      method: 'PATCH',
-      body: JSON.stringify({
-        name: profile.name,
-        riskTolerance: Number(profile.riskTolerance),
-        horizonMonths: Number(profile.horizonMonths),
-        notes: profile.notes,
-        investmentPreferencesFa: profile.investmentPreferencesFa,
-        constraintsFa: profile.constraintsFa,
-      }),
-    });
-    setMsg('پروفایل ذخیره شد.');
+    setProfileBusy(true);
+    try {
+      await api('/users/me', {
+        method: 'PATCH',
+        body: JSON.stringify({
+          name: profile.name,
+          riskTolerance: Number(profile.riskTolerance),
+          horizonMonths: Number(profile.horizonMonths),
+          notes: profile.notes,
+          investmentPreferencesFa: profile.investmentPreferencesFa,
+          constraintsFa: profile.constraintsFa,
+        }),
+      });
+      toast.success('پروفایل ذخیره شد.');
+    } catch (err) {
+      toast.error((err as Error).message);
+    } finally {
+      setProfileBusy(false);
+    }
   }
 
   async function savePassword(e: FormEvent) {
     e.preventDefault();
     if (passwordForm.newPassword !== passwordForm.confirmPassword) {
-      setMsg('رمز عبور جدید و تکرار آن یکسان نیستند.');
+      toast.error('رمز عبور جدید و تکرار آن یکسان نیستند.');
       return;
     }
     setPasswordBusy(true);
-    setMsg('');
     try {
       await api('/users/me/password', {
         method: 'PATCH',
@@ -273,9 +320,9 @@ export default function SettingsPage() {
         }),
       });
       setPasswordForm({ currentPassword: '', newPassword: '', confirmPassword: '' });
-      setMsg('رمز عبور با موفقیت تغییر کرد.');
+      toast.success('رمز عبور با موفقیت تغییر کرد.');
     } catch (err) {
-      setMsg((err as Error).message);
+      toast.error((err as Error).message);
     } finally {
       setPasswordBusy(false);
     }
@@ -283,23 +330,29 @@ export default function SettingsPage() {
 
   async function saveLlm(e: FormEvent) {
     e.preventDefault();
-    await api('/llm/settings', {
-      method: 'PUT',
-      body: JSON.stringify({
-        baseUrl: llm.baseUrl,
-        model: llm.model,
-        usePlatformFallback: llm.usePlatformFallback,
-        ...(llm.apiToken ? { apiToken: llm.apiToken } : {}),
-      }),
-    });
-    setMsg('تنظیمات LLM ذخیره شد.');
-    setLlm((prev) => ({ ...prev, apiToken: '', hasToken: prev.hasToken || Boolean(llm.apiToken) }));
+    setLlmBusy(true);
+    try {
+      await api('/llm/settings', {
+        method: 'PUT',
+        body: JSON.stringify({
+          baseUrl: llm.baseUrl,
+          model: llm.model,
+          usePlatformFallback: llm.usePlatformFallback,
+          ...(llm.apiToken ? { apiToken: llm.apiToken } : {}),
+        }),
+      });
+      setLlm((prev) => ({ ...prev, apiToken: '', hasToken: prev.hasToken || Boolean(llm.apiToken) }));
+      toast.success('تنظیمات LLM ذخیره شد.');
+    } catch (err) {
+      toast.error((err as Error).message);
+    } finally {
+      setLlmBusy(false);
+    }
   }
 
   async function testLlm() {
     setLlmTestBusy(true);
     setLlmTestResult(null);
-    setMsg('');
     try {
       const res = await api<{
         ok: boolean;
@@ -323,11 +376,12 @@ export default function SettingsPage() {
         model: res.model,
         latencyMs: res.latencyMs,
       });
+      if (res.ok) toast.success(res.messageFa ?? 'اتصال LLM برقرار است.');
+      else toast.error(res.messageFa ?? res.error ?? 'تست LLM ناموفق بود.');
     } catch (err) {
-      setLlmTestResult({
-        ok: false,
-        messageFa: (err as Error).message,
-      });
+      const message = (err as Error).message;
+      setLlmTestResult({ ok: false, messageFa: message });
+      toast.error(message);
     } finally {
       setLlmTestBusy(false);
     }
@@ -336,17 +390,24 @@ export default function SettingsPage() {
   async function addFund(e: FormEvent) {
     e.preventDefault();
     if (!newFund.nameFa.trim()) return;
-    await api('/funds/definitions', {
-      method: 'POST',
-      body: JSON.stringify({
-        nameFa: newFund.nameFa.trim(),
-        symbolCode: newFund.symbolCode.trim() || undefined,
-        description: newFund.description.trim() || undefined,
-      }),
-    });
-    setNewFund({ nameFa: '', symbolCode: '', description: '' });
-    await loadFundDefs();
-    setMsg('صندوق اضافه شد.');
+    setFundBusy(true);
+    try {
+      await api('/funds/definitions', {
+        method: 'POST',
+        body: JSON.stringify({
+          nameFa: newFund.nameFa.trim(),
+          symbolCode: newFund.symbolCode.trim() || undefined,
+          description: newFund.description.trim() || undefined,
+        }),
+      });
+      setNewFund({ nameFa: '', symbolCode: '', description: '' });
+      await loadFundDefs();
+      toast.success('صندوق اضافه شد.');
+    } catch (err) {
+      toast.error((err as Error).message);
+    } finally {
+      setFundBusy(false);
+    }
   }
 
   async function deactivateFund(id: string, name: string) {
@@ -359,7 +420,9 @@ export default function SettingsPage() {
       });
       await loadFundDefs();
       if (editingFund?.id === id) setEditingFund(null);
-      setMsg('صندوق غیرفعال شد.');
+      toast.success('صندوق غیرفعال شد.');
+    } catch (err) {
+      toast.error((err as Error).message);
     } finally {
       setFundBusy(false);
     }
@@ -374,7 +437,9 @@ export default function SettingsPage() {
         body: JSON.stringify({ isActive: true }),
       });
       await loadFundDefs();
-      setMsg('صندوق فعال شد.');
+      toast.success('صندوق فعال شد.');
+    } catch (err) {
+      toast.error((err as Error).message);
     } finally {
       setFundBusy(false);
     }
@@ -387,7 +452,6 @@ export default function SettingsPage() {
       symbolCode: fund.symbolCode ?? '',
       description: fund.description ?? '',
     });
-    setMsg('');
   }
 
   async function saveEditFund(e: FormEvent) {
@@ -405,7 +469,9 @@ export default function SettingsPage() {
       });
       await loadFundDefs();
       setEditingFund(null);
-      setMsg('صندوق به‌روز شد.');
+      toast.success('صندوق به‌روز شد.');
+    } catch (err) {
+      toast.error((err as Error).message);
     } finally {
       setFundBusy(false);
     }
@@ -425,7 +491,9 @@ export default function SettingsPage() {
         body: JSON.stringify({ systemPrompt: p.systemPrompt }),
       });
       await loadPrompts();
-      setMsg(`پرامپت «${p.labelFa}» ذخیره شد.`);
+      toast.success(`پرامپت «${p.labelFa}» ذخیره شد.`);
+    } catch (err) {
+      toast.error((err as Error).message);
     } finally {
       setPromptBusy('');
     }
@@ -438,7 +506,9 @@ export default function SettingsPage() {
     try {
       await api(`/llm/prompts/${purpose}`, { method: 'DELETE' });
       await loadPrompts();
-      setMsg(`پرامپت «${p.labelFa}» بازنشانی شد.`);
+      toast.success(`پرامپت «${p.labelFa}» بازنشانی شد.`);
+    } catch (err) {
+      toast.error((err as Error).message);
     } finally {
       setPromptBusy('');
     }
@@ -459,7 +529,6 @@ export default function SettingsPage() {
               type="button"
               onClick={() => {
                 setTab(t.id);
-                setMsg('');
               }}
               className={clsx(
                 'whitespace-nowrap border-b-2 px-4 py-3 text-sm font-medium transition',
@@ -473,8 +542,6 @@ export default function SettingsPage() {
           ))}
         </nav>
       </div>
-
-      {msg && <p className="text-sm text-navy-800">{msg}</p>}
 
       {tab === 'profile' && (
         <div className="space-y-6">
@@ -581,7 +648,9 @@ export default function SettingsPage() {
                 placeholder="مثلاً بدون اهرم، حداکثر ۲۰٪ طلا، عدم سرمایه‌گذاری در بانک‌ها..."
               />
             </div>
-            <button className="btn-primary w-fit">ذخیره پروفایل</button>
+            <button className="btn-primary w-fit" disabled={profileBusy}>
+              {profileBusy ? 'در حال ذخیره...' : 'ذخیره پروفایل'}
+            </button>
           </form>
         </div>
       )}
@@ -875,8 +944,8 @@ export default function SettingsPage() {
             در صورت نبود توکن شخصی، از کلید پلتفرم استفاده شود
           </label>
           <div className="flex flex-wrap gap-2">
-            <button type="submit" className="btn-primary w-fit">
-              ذخیره LLM
+            <button type="submit" className="btn-primary w-fit" disabled={llmBusy || llmTestBusy}>
+              {llmBusy ? 'در حال ذخیره...' : 'ذخیره LLM'}
             </button>
             <button
               type="button"
@@ -928,26 +997,6 @@ export default function SettingsPage() {
 
       {tab === 'spotPrices' && isAdmin && (
         <form onSubmit={saveSpotConfig} className="card grid max-w-2xl gap-4">
-          <p className="rounded-lg bg-navy-50 px-3 py-2 text-sm leading-7 text-navy-800/80">
-            آدرس یک API با پاسخ JSON برای قیمت دلار و طلا را وارد کنید. سیستم هر روز ساعت ۱۲ ظهر به وقت ایران
-            آن را می‌خواند و ذخیره می‌کند. کلیدهای رایج مثل
-            <span className="mx-1 font-mono" dir="ltr">
-              usd
-            </span>
-            ،
-            <span className="mx-1 font-mono" dir="ltr">
-              dollar
-            </span>
-            ،
-            <span className="mx-1 font-mono" dir="ltr">
-              gold
-            </span>
-            یا
-            <span className="mx-1 font-mono" dir="ltr">
-              gold18
-            </span>
-            پشتیبانی می‌شوند.
-          </p>
           <div>
             <label className="label">آدرس API (URI)</label>
             <input
@@ -980,7 +1029,7 @@ export default function SettingsPage() {
           )}
           <div className="flex flex-wrap gap-2">
             <button type="submit" className="btn-primary w-fit" disabled={spotBusy}>
-              {spotBusy ? '...' : 'ذخیره آدرس'}
+              {spotBusy ? 'در حال ذخیره...' : 'ذخیره آدرس'}
             </button>
             <button
               type="button"
@@ -988,9 +1037,23 @@ export default function SettingsPage() {
               disabled={spotBusy || !spotUri.trim()}
               onClick={refreshSpotPrices}
             >
-              به‌روزرسانی الان
+              {spotBusy ? 'در حال به‌روزرسانی...' : 'به‌روزرسانی الان'}
             </button>
           </div>
+          {spotFeedback && (
+            <div
+              className={clsx(
+                'rounded-lg px-3 py-3 text-sm leading-7',
+                spotFeedback.ok
+                  ? 'bg-emerald-50 text-emerald-900'
+                  : 'bg-red-50 text-red-800',
+              )}
+              role={spotFeedback.ok ? 'status' : 'alert'}
+            >
+              {spotFeedback.ok ? '✓ ' : '! '}
+              {spotFeedback.text}
+            </div>
+          )}
         </form>
       )}
     </div>

@@ -3,6 +3,7 @@
 import { useEffect, useState } from 'react';
 import { useRouter } from 'next/navigation';
 import { api, formatNum, getToken, getUserRole, setUserRole, UserRole } from '@/lib/api';
+import { useToast } from '@/components/Toast';
 
 type NewsItem = {
   id: string;
@@ -58,9 +59,9 @@ function formatDateKey(key: string) {
 
 export default function NewsPage() {
   const router = useRouter();
+  const toast = useToast();
   const [data, setData] = useState<NewsListResponse | null>(null);
   const [loading, setLoading] = useState(false);
-  const [msg, setMsg] = useState('');
   const [role, setRole] = useState<UserRole | null>(null);
   const isAdmin = role === 'ADMIN';
 
@@ -89,13 +90,12 @@ export default function NewsPage() {
 
   async function refresh() {
     setLoading(true);
-    setMsg('');
     try {
       await api('/news/refresh', { method: 'POST' });
       await load();
-      setMsg('اخبار امروز به‌روزرسانی و ذخیره شد.');
+      toast.success('اخبار امروز به‌روزرسانی و ذخیره شد.');
     } catch (e) {
-      setMsg((e as Error).message);
+      toast.error((e as Error).message);
     } finally {
       setLoading(false);
     }
@@ -123,8 +123,6 @@ export default function NewsPage() {
           </button>
         )}
       </div>
-
-      {msg && <p className="text-sm text-navy-800">{msg}</p>}
 
       {isAdmin && (
         <p className="rounded-lg bg-navy-50 px-4 py-3 text-sm text-navy-800/75">

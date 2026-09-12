@@ -1,7 +1,7 @@
 'use client';
 
 import Link from 'next/link';
-import { FormEvent, MouseEvent, useEffect, useMemo, useRef, useState } from 'react';
+import { MouseEvent, useEffect, useMemo, useRef, useState } from 'react';
 import { useParams, useRouter } from 'next/navigation';
 import { ASSET_TYPE_LABELS_FA, AssetType } from '@sabadyar/shared';
 import { api, formatNum, getToken } from '@/lib/api';
@@ -78,16 +78,16 @@ function InteractiveChart({
   const prices = bars.map(priceOf).filter((p) => p > 0);
   if (prices.length < 2) {
     return (
-      <p className="py-16 text-center text-sm text-white/45">دادهٔ تاریخی کافی برای نمودار نیست.</p>
+      <p className="py-10 text-center text-sm text-navy-800/45">دادهٔ تاریخی کافی برای نمودار نیست.</p>
     );
   }
 
-  const w = 900;
-  const h = 320;
-  const padL = 56;
-  const padR = 110;
-  const padT = 28;
-  const padB = 36;
+  const w = 720;
+  const h = 220;
+  const padL = 52;
+  const padR = 88;
+  const padT = 16;
+  const padB = 28;
   const min = Math.min(...prices, prevClose && prevClose > 0 ? prevClose : prices[0]);
   const max = Math.max(...prices, prevClose && prevClose > 0 ? prevClose : prices[0]);
   const range = max - min || 1;
@@ -103,7 +103,7 @@ function InteractiveChart({
 
   const first = prices[0];
   const up = prices[prices.length - 1] >= first;
-  const stroke = up ? '#34a853' : '#ea4335';
+  const stroke = up ? '#15803d' : '#b91c1c';
   const fillId = up ? 'gUp' : 'gDown';
 
   const yTicks = [max, (max + min) / 2, min];
@@ -136,11 +136,11 @@ function InteractiveChart({
   const hiPct = hi && first ? ((hi.p - first) / first) * 100 : 0;
 
   return (
-    <div className="relative">
+    <div className="relative bg-transparent">
       <svg
         ref={svgRef}
         viewBox={`0 0 ${w} ${h}`}
-        className="w-full touch-pan-y"
+        className="mx-auto max-h-[14rem] w-full max-w-3xl touch-pan-y bg-transparent"
         onMouseMove={onMove}
         onMouseLeave={() => setHover(null)}
         role="img"
@@ -148,12 +148,12 @@ function InteractiveChart({
       >
         <defs>
           <linearGradient id="gUp" x1="0" y1="0" x2="0" y2="1">
-            <stop offset="0%" stopColor="#34a853" stopOpacity="0.35" />
-            <stop offset="100%" stopColor="#34a853" stopOpacity="0" />
+            <stop offset="0%" stopColor="#15803d" stopOpacity="0.28" />
+            <stop offset="100%" stopColor="#15803d" stopOpacity="0" />
           </linearGradient>
           <linearGradient id="gDown" x1="0" y1="0" x2="0" y2="1">
-            <stop offset="0%" stopColor="#ea4335" stopOpacity="0.35" />
-            <stop offset="100%" stopColor="#ea4335" stopOpacity="0" />
+            <stop offset="0%" stopColor="#b91c1c" stopOpacity="0.28" />
+            <stop offset="100%" stopColor="#b91c1c" stopOpacity="0" />
           </linearGradient>
         </defs>
 
@@ -166,10 +166,10 @@ function InteractiveChart({
                 y1={y}
                 x2={w - padR}
                 y2={y}
-                stroke="rgba(255,255,255,0.06)"
+                stroke="rgba(11,31,58,0.08)"
                 strokeWidth={1}
               />
-              <text x={padL - 8} y={y + 4} textAnchor="end" fill="rgba(255,255,255,0.4)" fontSize={11}>
+              <text x={padL - 8} y={y + 3.5} textAnchor="end" fill="rgba(11,31,58,0.4)" fontSize={10}>
                 {formatRialPrice(t)}
               </text>
             </g>
@@ -183,27 +183,34 @@ function InteractiveChart({
               y1={prevY}
               x2={w - padR}
               y2={prevY}
-              stroke="rgba(255,255,255,0.35)"
+              stroke="rgba(11,31,58,0.28)"
               strokeWidth={1}
               strokeDasharray="4 4"
             />
-            <text x={w - padR + 8} y={prevY + 4} fill="rgba(255,255,255,0.55)" fontSize={11}>
-              پایانی قبل {formatRialPrice(prevClose)}
+            <text x={w - padR + 6} y={prevY + 3.5} fill="rgba(11,31,58,0.45)" fontSize={10}>
+              پایانی قبل
             </text>
           </g>
         )}
 
         <polygon points={area} fill={`url(#${fillId})`} />
-        <polyline fill="none" stroke={stroke} strokeWidth={2.2} points={line} />
+        <polyline
+          fill="none"
+          stroke={stroke}
+          strokeWidth={2}
+          strokeLinejoin="round"
+          strokeLinecap="round"
+          points={line}
+        />
 
         {xLabelIdx.map((i) => (
           <text
             key={i}
             x={pts[i].x}
-            y={h - 10}
+            y={h - 8}
             textAnchor="middle"
-            fill="rgba(255,255,255,0.4)"
-            fontSize={11}
+            fill="rgba(11,31,58,0.4)"
+            fontSize={10}
           >
             {new Date(bars[i].tradeDate).toLocaleDateString('fa-IR')}
           </text>
@@ -216,22 +223,22 @@ function InteractiveChart({
               y1={padT}
               x2={hi.x}
               y2={h - padB}
-              stroke="rgba(255,255,255,0.35)"
+              stroke="rgba(11,31,58,0.25)"
               strokeDasharray="3 3"
             />
-            <circle cx={hi.x} cy={hi.y} r={4.5} fill={stroke} stroke="#131314" strokeWidth={2} />
+            <circle cx={hi.x} cy={hi.y} r={4} fill={stroke} stroke="#fffef8" strokeWidth={2} />
             <foreignObject
-              x={Math.min(Math.max(hi.x - 90, padL), w - padR - 180)}
-              y={Math.max(hi.y - 48, 4)}
-              width={180}
-              height={40}
+              x={Math.min(Math.max(hi.x - 80, padL), w - padR - 160)}
+              y={Math.max(hi.y - 42, 2)}
+              width={160}
+              height={36}
             >
-              <div className="rounded-md bg-black/90 px-2.5 py-1.5 text-center text-[11px] text-white shadow-lg">
+              <div className="rounded-lg border border-navy-900/10 bg-white/90 px-2 py-1 text-center text-[11px] text-navy-900 shadow-sm backdrop-blur-sm">
                 <span className="font-medium">{formatRialPrice(hi.p)}</span>
-                <span className={clsx('ms-1.5', hiPct >= 0 ? 'text-emerald-400' : 'text-red-400')}>
+                <span className={clsx('ms-1.5', hiPct >= 0 ? 'text-emerald-700' : 'text-red-700')}>
                   {formatPct(hiPct)}
                 </span>
-                <span className="ms-1.5 text-white/50">
+                <span className="ms-1.5 text-navy-800/45">
                   {new Date(hiBar.tradeDate).toLocaleDateString('fa-IR')}
                 </span>
               </div>
@@ -245,9 +252,9 @@ function InteractiveChart({
 
 function StatRow({ label, value }: { label: string; value: string }) {
   return (
-    <div className="flex items-baseline justify-between gap-3 border-b border-white/5 py-2.5">
-      <span className="text-sm text-white/45">{label}</span>
-      <span className="text-sm font-medium text-white">{value}</span>
+    <div className="flex items-baseline justify-between gap-3 border-b border-navy-900/5 py-2.5">
+      <span className="text-sm text-navy-800/50">{label}</span>
+      <span className="text-sm font-medium text-navy-900">{value}</span>
     </div>
   );
 }
@@ -258,9 +265,6 @@ export default function MarketInstrumentPage() {
   const [inst, setInst] = useState<Instrument | null>(null);
   const [history, setHistory] = useState<Bar[]>([]);
   const [range, setRange] = useState<RangeKey>('1M');
-  const [question, setQuestion] = useState('');
-  const [answer, setAnswer] = useState('');
-  const [askBusy, setAskBusy] = useState(false);
 
   useEffect(() => {
     if (!getToken()) {
@@ -307,25 +311,6 @@ export default function MarketInstrumentPage() {
     };
   }, [visible, history, inst]);
 
-  async function onAsk(e: FormEvent) {
-    e.preventDefault();
-    const q = question.trim();
-    if (!q) return;
-    setAskBusy(true);
-    setAnswer('');
-    try {
-      const res = await api<{ answer: string }>(`/market/instruments/${id}/ask`, {
-        method: 'POST',
-        body: JSON.stringify({ question: q }),
-      });
-      setAnswer(res.answer);
-    } catch (err) {
-      setAnswer((err as Error).message);
-    } finally {
-      setAskBusy(false);
-    }
-  }
-
   if (!inst) {
     return <p className="text-navy-800/60">در حال بارگذاری...</p>;
   }
@@ -339,140 +324,102 @@ export default function MarketInstrumentPage() {
       : '';
 
   return (
-    <div className="-mx-4 -my-8 min-h-[calc(100vh-4rem)] bg-[#131314] text-white sm:-mx-8">
-      <div className="mx-auto max-w-5xl px-4 pb-28 pt-6 sm:px-8">
-        <Link href="/market" className="text-sm text-white/45 transition hover:text-white/80">
-          ← بازگشت به بازار سهام تهران
-        </Link>
+    <div className="space-y-6 bg-transparent">
+      <Link href="/market" className="text-sm text-navy-800/50 transition hover:text-navy-900">
+        ← بازگشت به بازار سهام تهران
+      </Link>
 
-        <div className="mt-5">
-          <div className="flex flex-wrap items-baseline gap-x-3 gap-y-1">
-            <h1 className="text-lg font-medium text-white/80">
-              {inst.symbol}
-              <span className="ms-2 text-sm font-normal text-white/45">{inst.nameFa}</span>
-            </h1>
-            <span className="rounded bg-white/10 px-2 py-0.5 text-xs text-white/60">
-              {ASSET_TYPE_LABELS_FA[inst.assetType as AssetType] ?? inst.assetType}
-            </span>
-          </div>
-
-          <div className="mt-3 flex flex-wrap items-center gap-3">
-            <div className="text-4xl font-normal tracking-tight sm:text-5xl">
-              {formatRialPrice(stats.current)}
-              <span className="ms-2 text-base text-white/40">ریال</span>
-            </div>
-            {stats.changePct != null && (
-              <span
-                className={clsx(
-                  'rounded-full px-3 py-1 text-sm font-medium',
-                  up ? 'bg-[#0d652d] text-[#ceead6]' : 'bg-[#8c1d18] text-[#fce8e6]',
-                )}
-              >
-                {up ? '↑' : '↓'} {formatPct(Math.abs(stats.changePct))} امروز
-              </span>
-            )}
-          </div>
-          {stats.asOf && (
-            <p className="mt-2 text-xs text-white/40">
-              به‌روزرسانی:{' '}
-              {new Date(stats.asOf).toLocaleString('fa-IR', {
-                dateStyle: 'medium',
-                timeZone: 'Asia/Tehran',
-              })}{' '}
-              · خروجی سایت مشاوره سرمایه‌گذاری رسمی نیست
-            </p>
-          )}
+      <div>
+        <div className="flex flex-wrap items-baseline gap-x-3 gap-y-1">
+          <h1 className="text-2xl font-bold text-navy-900">
+            {inst.symbol}
+            <span className="ms-2 text-base font-normal text-navy-800/55">{inst.nameFa}</span>
+          </h1>
+          <span className="rounded-md bg-navy-900/5 px-2 py-0.5 text-xs text-navy-800/60">
+            {ASSET_TYPE_LABELS_FA[inst.assetType as AssetType] ?? inst.assetType}
+          </span>
         </div>
 
-        <div className="mt-6">
-          <InteractiveChart bars={visible} prevClose={stats.prev} />
-        </div>
-
-        <div className="mt-2 flex flex-wrap items-center gap-2 border-b border-white/10 pb-3">
-          {rangeLabel && <span className="me-2 text-xs text-white/40">{rangeLabel}</span>}
-          {RANGES.map((r) => (
-            <button
-              key={r.key}
-              type="button"
-              onClick={() => setRange(r.key)}
+        <div className="mt-3 flex flex-wrap items-center gap-3">
+          <div className="text-3xl font-semibold tracking-tight text-navy-900 sm:text-4xl">
+            {formatRialPrice(stats.current)}
+            <span className="ms-2 text-base font-normal text-navy-800/40">ریال</span>
+          </div>
+          {stats.changePct != null && (
+            <span
               className={clsx(
-                'rounded-full px-3 py-1 text-xs font-medium transition',
-                range === r.key
-                  ? 'bg-white/15 text-white'
-                  : 'text-white/50 hover:bg-white/5 hover:text-white/80',
+                'rounded-full px-3 py-1 text-sm font-medium',
+                up ? 'bg-emerald-50 text-emerald-800' : 'bg-red-50 text-red-800',
               )}
             >
-              {r.label}
-            </button>
-          ))}
+              {up ? '↑' : '↓'} {formatPct(Math.abs(stats.changePct))} امروز
+            </span>
+          )}
         </div>
-
-        <div className="mt-6 grid gap-x-10 gap-y-1 sm:grid-cols-3">
-          <div>
-            <StatRow label="باز" value={formatRialPrice(stats.open)} />
-            <StatRow label="بیشینه" value={formatRialPrice(stats.high)} />
-            <StatRow label="کمینه" value={formatRialPrice(stats.low)} />
-          </div>
-          <div>
-            <StatRow label="حجم" value={formatNum(stats.volume)} />
-            <StatRow label="P/E" value={formatNum(stats.pe)} />
-            <StatRow label="EPS" value={formatNum(stats.eps)} />
-          </div>
-          <div>
-            <StatRow label="بیشینه ۵۲ هفته" value={formatRialPrice(stats.high52)} />
-            <StatRow label="کمینه ۵۲ هفته" value={formatRialPrice(stats.low52)} />
-            <StatRow label="پایانی قبل" value={formatRialPrice(stats.prev)} />
-          </div>
-        </div>
-
-        <section className="mt-10">
-          <h2 className="text-base font-medium">خلاصه معاملات بازه</h2>
-          <ul className="mt-3 list-disc space-y-2 pe-5 text-sm text-white/70">
-            <li>
-              دامنه قیمت: {formatRialPrice(stats.low)} – {formatRialPrice(stats.high)} ریال
-            </li>
-            {stats.changePct != null && (
-              <li>
-                تغییر نسبت به روز قبل: {formatPct(stats.changePct)}
-              </li>
-            )}
-            <li>
-              تعداد روزهای نمودار: {visible.length.toLocaleString('fa-IR')}
-            </li>
-          </ul>
-        </section>
-
-        {answer && (
-          <div className="mt-8 rounded-2xl border border-white/10 bg-white/5 px-4 py-3 text-sm leading-7 text-white/85">
-            {answer}
-          </div>
+        {stats.asOf && (
+          <p className="mt-2 text-xs text-navy-800/45">
+            به‌روزرسانی:{' '}
+            {new Date(stats.asOf).toLocaleString('fa-IR', {
+              dateStyle: 'medium',
+              timeZone: 'Asia/Tehran',
+            })}
+          </p>
         )}
       </div>
 
-      <form
-        onSubmit={onAsk}
-        className="fixed inset-x-0 bottom-0 z-20 border-t border-white/5 bg-[#131314]/95 px-4 py-3 backdrop-blur sm:px-8"
-      >
-        <div className="mx-auto flex max-w-5xl items-center gap-2 rounded-full border border-white/10 bg-[#2c2c2e] px-3 py-2 shadow-lg">
-          <span className="flex h-8 w-8 shrink-0 items-center justify-center rounded-full bg-white/10 text-lg text-white/60">
-            +
-          </span>
-          <input
-            className="min-w-0 flex-1 bg-transparent px-2 py-2 text-sm text-white outline-none placeholder:text-white/40"
-            value={question}
-            onChange={(e) => setQuestion(e.target.value)}
-            placeholder="هر چیزی بپرسید..."
-            disabled={askBusy}
-          />
+      <div className="bg-transparent">
+        <InteractiveChart bars={visible} prevClose={stats.prev} />
+      </div>
+
+      <div className="flex flex-wrap items-center gap-2 border-b border-navy-900/10 pb-3">
+        {rangeLabel && <span className="me-2 text-xs text-navy-800/40">{rangeLabel}</span>}
+        {RANGES.map((r) => (
           <button
-            type="submit"
-            disabled={askBusy || !question.trim()}
-            className="shrink-0 rounded-full bg-white px-4 py-1.5 text-sm font-medium text-[#131314] disabled:opacity-40"
+            key={r.key}
+            type="button"
+            onClick={() => setRange(r.key)}
+            className={clsx(
+              'rounded-full px-3 py-1 text-xs font-medium transition',
+              range === r.key
+                ? 'bg-navy-900 text-white'
+                : 'text-navy-800/55 hover:bg-navy-900/5 hover:text-navy-900',
+            )}
           >
-            {askBusy ? '...' : 'ارسال'}
+            {r.label}
           </button>
+        ))}
+      </div>
+
+      <div className="grid gap-x-10 gap-y-1 sm:grid-cols-3">
+        <div>
+          <StatRow label="باز" value={formatRialPrice(stats.open)} />
+          <StatRow label="بیشینه" value={formatRialPrice(stats.high)} />
+          <StatRow label="کمینه" value={formatRialPrice(stats.low)} />
         </div>
-      </form>
+        <div>
+          <StatRow label="حجم" value={formatNum(stats.volume)} />
+          <StatRow label="P/E" value={formatNum(stats.pe)} />
+          <StatRow label="EPS" value={formatNum(stats.eps)} />
+        </div>
+        <div>
+          <StatRow label="بیشینه ۵۲ هفته" value={formatRialPrice(stats.high52)} />
+          <StatRow label="کمینه ۵۲ هفته" value={formatRialPrice(stats.low52)} />
+          <StatRow label="پایانی قبل" value={formatRialPrice(stats.prev)} />
+        </div>
+      </div>
+
+      <section>
+        <h2 className="text-base font-semibold text-navy-900">خلاصه معاملات بازه</h2>
+        <ul className="mt-3 list-disc space-y-2 pe-5 text-sm text-navy-800/70">
+          <li>
+            دامنه قیمت: {formatRialPrice(stats.low)} – {formatRialPrice(stats.high)} ریال
+          </li>
+          {stats.changePct != null && (
+            <li>تغییر نسبت به روز قبل: {formatPct(stats.changePct)}</li>
+          )}
+          <li>تعداد روزهای نمودار: {visible.length.toLocaleString('fa-IR')}</li>
+        </ul>
+      </section>
     </div>
   );
 }

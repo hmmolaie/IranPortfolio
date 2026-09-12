@@ -1002,7 +1002,7 @@ weightPct فقط درصد از همین سرمایه است (جمع هر است�
 
   private async buildUniverse() {
     const instruments = await this.prisma.instrument.findMany({
-      where: { isActive: true },
+      where: { isActive: true, assetType: { not: AssetType.INDEX } },
       take: 200,
       include: { priceBars: { orderBy: { tradeDate: 'desc' }, take: 1 } },
     });

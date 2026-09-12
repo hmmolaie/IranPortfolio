@@ -5,6 +5,7 @@ import { usePathname, useRouter } from 'next/navigation';
 import { getToken, clearSession, api, getUserRole, setUserRole, UserRole } from '@/lib/api';
 import { useEffect, useState } from 'react';
 import clsx from 'clsx';
+import { ToastProvider } from '@/components/Toast';
 
 const allLinks = [
   { href: '/dashboard', label: 'داشبورد', adminOnly: false },
@@ -55,10 +56,15 @@ export function AppShell({ children }: { children: React.ReactNode }) {
   }
 
   if (isAuthPage) {
-    return <main className="min-h-screen">{children}</main>;
+    return (
+      <ToastProvider>
+        <main className="min-h-screen">{children}</main>
+      </ToastProvider>
+    );
   }
 
   return (
+    <ToastProvider>
     <div className="min-h-screen lg:grid lg:grid-cols-[260px_1fr]">
       <aside className="border-b border-navy-900/10 bg-navy-900 text-white lg:border-b-0 lg:border-e lg:border-navy-800">
         <div className="px-6 py-7">
@@ -109,5 +115,6 @@ export function AppShell({ children }: { children: React.ReactNode }) {
         <main className="px-4 py-8 sm:px-8">{children}</main>
       </div>
     </div>
+    </ToastProvider>
   );
 }

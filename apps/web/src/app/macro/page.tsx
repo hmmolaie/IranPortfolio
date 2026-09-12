@@ -4,6 +4,7 @@ import { FormEvent, useEffect, useState } from 'react';
 import Link from 'next/link';
 import { useRouter } from 'next/navigation';
 import { api, formatNum, getToken } from '@/lib/api';
+import { useToast } from '@/components/Toast';
 
 type Macro = {
   inflationPct?: number | null;
@@ -17,6 +18,7 @@ type Macro = {
 
 export default function MacroPage() {
   const router = useRouter();
+  const toast = useToast();
   const [macro, setMacro] = useState<Macro | null>(null);
   const [form, setForm] = useState({
     inflationPct: '',
@@ -26,7 +28,7 @@ export default function MacroPage() {
   });
   const [question, setQuestion] = useState('');
   const [answer, setAnswer] = useState('');
-  const [msg, setMsg] = useState('');
+  const [saving, setSaving] = useState(false);
 
   useEffect(() => {
     if (!getToken()) {
@@ -56,7 +58,7 @@ export default function MacroPage() {
 
   async function save(e: FormEvent) {
     e.preventDefault();
-    setMsg('');
+    setSaving(true);
     try {
       const saved = await api<Macro>('/macro', {
         method: 'PUT',
@@ -73,9 +75,11 @@ export default function MacroPage() {
         goldGramRial: prev?.goldGramRial,
         spotDateKey: prev?.spotDateKey,
       }));
-      setMsg('شرایط اقتصاد ذخیره شد.');
+      toast.success('شرایط اقتصاد ذخیره شد.');
     } catch (err) {
-      setMsg((err as Error).message);
+      toast.error((err as Error).message);
+    } finally {
+      setSaving(false);
     }
   }
 
@@ -90,6 +94,7 @@ export default function MacroPage() {
       setAnswer(res.answer);
     } catch (err) {
       setAnswer((err as Error).message);
+      toast.error((err as Error).message);
     }
   }
 
@@ -173,8 +178,9 @@ export default function MacroPage() {
             onChange={(e) => setForm({ ...form, summaryFa: e.target.value })}
           />
         </div>
-        <button className="btn-primary w-fit">ذخیره</button>
-        {msg && <p className="text-sm">{msg}</p>}
+        <button className="btn-primary w-fit" disabled={saving}>
+          {saving ? 'در حال ذخیره...' : 'ذخیره'}
+        </button>
       </form>
 
       <form onSubmit={ask} className="card space-y-4">
