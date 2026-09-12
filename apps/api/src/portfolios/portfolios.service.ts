@@ -1006,10 +1006,16 @@ weightPct فقط درصد از همین سرمایه است (جمع هر است�
       take: 200,
       include: { priceBars: { orderBy: { tradeDate: 'desc' }, take: 1 } },
     });
-    const macro = await this.prisma.macroSnapshot.findFirst({ orderBy: { asOfDate: 'desc' } });
-    const usdIrr = macro?.usdIrr && macro.usdIrr > 0 ? macro.usdIrr : 600000;
-    // تقریبی: هر گرم طلا ≈ ۷۵ دلار × نرخ دلار (قابل جایگزینی با دادهٔ دقیق‌تر)
-    const goldGramRial = usdIrr * 75;
+    const [macro, spot] = await Promise.all([
+      this.prisma.macroSnapshot.findFirst({ orderBy: { asOfDate: 'desc' } }),
+      this.prisma.spotPriceDaily.findFirst({ orderBy: { dateKey: 'desc' } }),
+    ]);
+    const usdIrr =
+      (spot?.usdIrr && spot.usdIrr > 0 ? spot.usdIrr : null) ??
+      (macro?.usdIrr && macro.usdIrr > 0 ? macro.usdIrr : null) ??
+      600000;
+    const goldGramRial =
+      spot?.goldGramRial && spot.goldGramRial > 0 ? spot.goldGramRial : usdIrr * 75;
 
     const list = instruments.map((i) => ({
       id: i.id,

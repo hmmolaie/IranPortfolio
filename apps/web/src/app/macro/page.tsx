@@ -1,6 +1,7 @@
 'use client';
 
 import { FormEvent, useEffect, useState } from 'react';
+import Link from 'next/link';
 import { useRouter } from 'next/navigation';
 import { api, formatNum, getToken } from '@/lib/api';
 
@@ -8,8 +9,10 @@ type Macro = {
   inflationPct?: number | null;
   interestRatePct?: number | null;
   usdIrr?: number | null;
+  goldGramRial?: number | null;
   geoRiskScore?: number | null;
   summaryFa?: string | null;
+  spotDateKey?: string | null;
 };
 
 export default function MacroPage() {
@@ -18,7 +21,6 @@ export default function MacroPage() {
   const [form, setForm] = useState({
     inflationPct: '',
     interestRatePct: '',
-    usdIrr: '',
     geoRiskScore: '5',
     summaryFa: '',
   });
@@ -45,7 +47,6 @@ export default function MacroPage() {
         setForm({
           inflationPct: m.inflationPct?.toString() ?? '',
           interestRatePct: m.interestRatePct?.toString() ?? '',
-          usdIrr: m.usdIrr?.toString() ?? '',
           geoRiskScore: m.geoRiskScore?.toString() ?? '5',
           summaryFa: m.summaryFa ?? '',
         });
@@ -62,12 +63,16 @@ export default function MacroPage() {
         body: JSON.stringify({
           inflationPct: form.inflationPct ? Number(form.inflationPct) : undefined,
           interestRatePct: form.interestRatePct ? Number(form.interestRatePct) : undefined,
-          usdIrr: form.usdIrr ? Number(form.usdIrr) : undefined,
           geoRiskScore: Number(form.geoRiskScore),
           summaryFa: form.summaryFa || undefined,
         }),
       });
-      setMacro(saved);
+      setMacro((prev) => ({
+        ...saved,
+        usdIrr: prev?.usdIrr ?? saved.usdIrr,
+        goldGramRial: prev?.goldGramRial,
+        spotDateKey: prev?.spotDateKey,
+      }));
       setMsg('شرایط اقتصاد ذخیره شد.');
     } catch (err) {
       setMsg((err as Error).message);
@@ -90,9 +95,14 @@ export default function MacroPage() {
 
   return (
     <div className="space-y-8">
-      <div>
-        <h1 className="text-3xl font-bold">اقتصاد ایران</h1>
-        <p className="mt-2 text-navy-800/70">تورم، نرخ بهره، ارز و ریسک ژئوپلیتیک برای زمینه پیشنهاد سبد</p>
+      <div className="flex flex-wrap items-end justify-between gap-4">
+        <div>
+          <h1 className="text-3xl font-bold">اقتصاد ایران</h1>
+          <p className="mt-2 text-navy-800/70">تورم، نرخ بهره، ارز و ریسک ژئوپلیتیک برای زمینه پیشنهاد سبد</p>
+        </div>
+        <Link href="/macro/prices" className="btn-secondary">
+          روند قیمت دلار و طلا
+        </Link>
       </div>
 
       <div className="grid gap-4 sm:grid-cols-4">
@@ -105,8 +115,11 @@ export default function MacroPage() {
           <div className="mt-2 text-2xl font-semibold">{formatNum(macro?.interestRatePct)}٪</div>
         </div>
         <div className="card">
-          <div className="text-sm text-navy-800/50">دلار</div>
+          <div className="text-sm text-navy-800/50">دلار (آخرین قیمت ذخیره‌شده)</div>
           <div className="mt-2 text-2xl font-semibold">{formatNum(macro?.usdIrr)}</div>
+          {macro?.spotDateKey && (
+            <div className="mt-1 text-xs text-navy-800/45">{macro.spotDateKey}</div>
+          )}
         </div>
         <div className="card">
           <div className="text-sm text-navy-800/50">ریسک ژئوپلیتیک</div>
@@ -132,12 +145,17 @@ export default function MacroPage() {
           />
         </div>
         <div>
-          <label className="label">نرخ دلار (ریال)</label>
+          <label className="label">نرخ دلار (ریال) — فقط خواندنی</label>
           <input
-            className="input"
-            value={form.usdIrr}
-            onChange={(e) => setForm({ ...form, usdIrr: e.target.value })}
+            className="input bg-navy-50/60"
+            value={macro?.usdIrr != null ? String(macro.usdIrr) : ''}
+            readOnly
+            tabIndex={-1}
+            dir="ltr"
           />
+          <p className="mt-1 text-xs text-navy-800/50">
+            از API قیمت لحظه‌ای در تنظیمات به‌روز می‌شود.
+          </p>
         </div>
         <div>
           <label className="label">امتیاز ریسک جنگ/ژئوپلیتیک (۱–۱۰)</label>

@@ -1,10 +1,12 @@
 'use client';
 
-import { FormEvent, useEffect, useState } from 'react';
+import { FormEvent, useEffect, useMemo, useState } from 'react';
 import { useRouter } from 'next/navigation';
 import Link from 'next/link';
+import clsx from 'clsx';
 import { API_URL, api, formatNum, getToken } from '@/lib/api';
 import { getCurrentShamsiParts } from '@/lib/shamsi-date';
+import { WaitingOverlay } from '@/components/WaitingOverlay';
 
 type FundDefinition = {
   id: string;
@@ -33,17 +35,6 @@ type Fund = {
   lessons: Array<{ id: string; titleFa: string }>;
 };
 
-function ScoreChip({ label, value }: { label: string; value?: number | null }) {
-  if (value == null) return null;
-  return (
-    <div className="rounded-lg bg-navy-50 px-3 py-2 text-center">
-      <div className="text-xs text-navy-800/55">{label}</div>
-      <div className="text-lg font-semibold">{formatNum(value)}</div>
-      <div className="text-[10px] text-navy-800/40">از ۱۰</div>
-    </div>
-  );
-}
-
 type TimelineInsight = {
   id: string;
   fromMonth?: string | null;
@@ -53,6 +44,13 @@ type TimelineInsight = {
   llmReasoningFa?: string | null;
   createdAt: string;
 };
+
+type SortKey =
+  | 'newest'
+  | 'rating'
+  | 'managerTechnicalScore'
+  | 'riskAppetiteScore'
+  | 'professionalismScore';
 
 const MONTHS_FA = [
   'فروردین',
@@ -68,6 +66,56 @@ const MONTHS_FA = [
   'بهمن',
   'اسفند',
 ];
+
+const PAGE_SIZE = 10;
+
+const UPLOAD_STEPS = [
+  'خواندن فایل گزارش...',
+  'استخراج متن و جداول...',
+  'تحلیل استراتژی مدیر با AI...',
+  'امتیازدهی فنی و ریسک...',
+  'ذخیره نتیجه در پایگاه داده...',
+];
+
+const ANALYZE_STEPS = [
+  'جمع‌آوری گزارش‌های ماهانه...',
+  'مقایسه ترکیب سبدها...',
+  'تحلیل تغییر استراتژی با AI...',
+  'ثبت بینش ماه‌به‌ماه...',
+];
+
+function ScoreChip({ label, value }: { label: string; value?: number | null }) {
+  if (value == null) return null;
+  return (
+    <div className="rounded-lg bg-navy-50 px-3 py-2 text-center">
+      <div className="text-xs text-navy-800/55">{label}</div>
+      <div className="text-lg font-semibold">{formatNum(value)}</div>
+      <div className="text-[10px] text-navy-800/40">از ۱۰</div>
+    </div>
+  );
+}
+
+function ScoreMini({ label, value }: { label: string; value?: number | null }) {
+  return (
+    <div className="text-center">
+      <div className="text-[10px] text-navy-800/50">{label}</div>
+      <div className="text-sm font-semibold">{value != null ? formatNum(value) : '—'}</div>
+    </div>
+  );
+}
+
+function monthLabel(f: Fund) {
+  if (f.reportYear && f.reportMonthNum) {
+    return `${f.reportYear} / ${MONTHS_FA[f.reportMonthNum - 1] ?? f.reportMonthNum}`;
+  }
+  return f.reportMonth;
+}
+
+function scoreOf(f: Fund, key: SortKey): number {
+  if (key === 'newest') return 0;
+  const v = f[key];
+  return v == null ? -1 : v;
+}
 
 export default function FundsPage() {
   const router = useRouter();
@@ -86,6 +134,13 @@ export default function FundsPage() {
   const [timelineInsights, setTimelineInsights] = useState<TimelineInsight[]>([]);
   const [timelineLoading, setTimelineLoading] = useState(false);
   const [analyzing, setAnalyzing] = useState(false);
+
+  const [filterFundId, setFilterFundId] = useState('');
+  const [filterYear, setFilterYear] = useState('');
+  const [filterMonth, setFilterMonth] = useState('');
+  const [sortKey, setSortKey] = useState<SortKey>('newest');
+  const [page, setPage] = useState(1);
+  const [expandedId, setExpandedId] = useState<string | null>(null);
 
   async function loadDefinitions() {
     const defs = await api<FundDefinition[]>('/funds/definitions');
@@ -133,6 +188,50 @@ export default function FundsPage() {
   useEffect(() => {
     if (timelineFundId) loadTimeline(timelineFundId).catch(() => undefined);
   }, [timelineFundId]);
+
+  const yearOptions = useMemo(() => {
+    const years = new Set<number>();
+    funds.forEach((f) => {
+      if (f.reportYear) years.add(f.reportYear);
+    });
+    return Array.from(years).sort((a, b) => b - a);
+  }, [funds]);
+
+  const filteredSorted = useMemo(() => {
+    let list = [...funds];
+    if (filterFundId) {
+      list = list.filter((f) => f.fundDefinitionId === filterFundId);
+    }
+    if (filterYear) {
+      list = list.filter((f) => String(f.reportYear ?? '') === filterYear);
+    }
+    if (filterMonth) {
+      list = list.filter((f) => String(f.reportMonthNum ?? '') === filterMonth);
+    }
+    if (sortKey === 'newest') {
+      list.sort((a, b) => {
+        const ay = a.reportYear ?? 0;
+        const by = b.reportYear ?? 0;
+        if (ay !== by) return by - ay;
+        return (b.reportMonthNum ?? 0) - (a.reportMonthNum ?? 0);
+      });
+    } else {
+      list.sort((a, b) => scoreOf(b, sortKey) - scoreOf(a, sortKey));
+    }
+    return list;
+  }, [funds, filterFundId, filterYear, filterMonth, sortKey]);
+
+  const totalPages = Math.max(1, Math.ceil(filteredSorted.length / PAGE_SIZE));
+  const currentPage = Math.min(page, totalPages);
+  const pageItems = filteredSorted.slice(
+    (currentPage - 1) * PAGE_SIZE,
+    currentPage * PAGE_SIZE,
+  );
+
+  useEffect(() => {
+    setPage(1);
+    setExpandedId(null);
+  }, [filterFundId, filterYear, filterMonth, sortKey]);
 
   async function onUpload(e: FormEvent) {
     e.preventDefault();
@@ -197,13 +296,6 @@ export default function FundsPage() {
     }
   }
 
-  function monthLabel(f: Fund) {
-    if (f.reportYear && f.reportMonthNum) {
-      return `${f.reportYear} / ${MONTHS_FA[f.reportMonthNum - 1] ?? f.reportMonthNum}`;
-    }
-    return f.reportMonth;
-  }
-
   return (
     <div className="space-y-8">
       <div>
@@ -235,7 +327,7 @@ export default function FundsPage() {
             value={fundDefinitionId}
             onChange={(e) => setFundDefinitionId(e.target.value)}
             required
-            disabled={definitions.length === 0}
+            disabled={definitions.length === 0 || loading}
           >
             <option value="">انتخاب صندوق...</option>
             {definitions.map((d) => (
@@ -256,6 +348,7 @@ export default function FundsPage() {
             value={reportYear}
             onChange={(e) => setReportYear(e.target.value)}
             required
+            disabled={loading}
           />
         </div>
         <div>
@@ -265,6 +358,7 @@ export default function FundsPage() {
             value={reportMonthNum}
             onChange={(e) => setReportMonthNum(e.target.value)}
             required
+            disabled={loading}
           >
             {MONTHS_FA.map((name, i) => (
               <option key={i + 1} value={String(i + 1)}>
@@ -280,6 +374,7 @@ export default function FundsPage() {
             accept=".pdf,.xlsx,.xls,application/pdf,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet,application/vnd.ms-excel"
             onChange={(e) => setFile(e.target.files?.[0] ?? null)}
             required
+            disabled={loading}
           />
         </div>
         <button className="btn-primary w-fit" disabled={loading || definitions.length === 0}>
@@ -303,7 +398,7 @@ export default function FundsPage() {
                 className="input min-w-[12rem]"
                 value={timelineFundId}
                 onChange={(e) => setTimelineFundId(e.target.value)}
-                disabled={definitions.length === 0}
+                disabled={definitions.length === 0 || analyzing}
               >
                 {definitions.map((d) => (
                   <option key={d.id} value={d.id}>
@@ -375,56 +470,229 @@ export default function FundsPage() {
         )}
       </section>
 
-      <div className="space-y-4">
-        <h2 className="text-lg font-semibold">گزارش‌های بارگذاری‌شده</h2>
-        {funds.map((f) => (
-          <article key={f.id} className="card">
-            <div className="flex flex-wrap items-start justify-between gap-2">
-              <div>
-                <h3 className="text-lg font-semibold">{f.fundName}</h3>
-                <p className="text-sm text-navy-800/50">
-                  گزارش {monthLabel(f)}
-                  {f.extractedSheetsJson?.sheetCount != null && (
-                    <span className="ms-2 rounded bg-navy-50 px-2 py-0.5 text-xs">
-                      {f.extractedSheetsJson.sheetCount.toLocaleString('fa-IR')} شیت
-                    </span>
-                  )}
-                </p>
-              </div>
-              <div className="flex flex-wrap items-center gap-3 text-sm">
-                {f.useInSuggestions && (
-                  <span className="rounded bg-gold-400/20 px-2 py-0.5 text-xs text-gold-500">
-                    قابل استفاده در پیشنهاد
-                  </span>
+      <section className="space-y-4">
+        <div className="flex flex-wrap items-end justify-between gap-3">
+          <h2 className="text-lg font-semibold">گزارش‌های بارگذاری‌شده</h2>
+          <p className="text-xs text-navy-800/50">
+            {filteredSorted.length.toLocaleString('fa-IR')} گزارش
+          </p>
+        </div>
+
+        <div className="card grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
+          <div>
+            <label className="label">نام صندوق</label>
+            <select
+              className="input"
+              value={filterFundId}
+              onChange={(e) => setFilterFundId(e.target.value)}
+            >
+              <option value="">همه صندوق‌ها</option>
+              {definitions.map((d) => (
+                <option key={d.id} value={d.id}>
+                  {d.nameFa}
+                </option>
+              ))}
+            </select>
+          </div>
+          <div>
+            <label className="label">سال</label>
+            <select
+              className="input"
+              value={filterYear}
+              onChange={(e) => setFilterYear(e.target.value)}
+            >
+              <option value="">همه سال‌ها</option>
+              {yearOptions.map((y) => (
+                <option key={y} value={String(y)}>
+                  {y.toLocaleString('fa-IR')}
+                </option>
+              ))}
+            </select>
+          </div>
+          <div>
+            <label className="label">ماه</label>
+            <select
+              className="input"
+              value={filterMonth}
+              onChange={(e) => setFilterMonth(e.target.value)}
+            >
+              <option value="">همه ماه‌ها</option>
+              {MONTHS_FA.map((name, i) => (
+                <option key={i + 1} value={String(i + 1)}>
+                  {name}
+                </option>
+              ))}
+            </select>
+          </div>
+          <div>
+            <label className="label">مرتب‌سازی</label>
+            <select
+              className="input"
+              value={sortKey}
+              onChange={(e) => setSortKey(e.target.value as SortKey)}
+            >
+              <option value="newest">جدیدترین گزارش</option>
+              <option value="rating">امتیاز کلی</option>
+              <option value="managerTechnicalScore">نمره فنی مدیر</option>
+              <option value="riskAppetiteScore">ریسک‌پذیری</option>
+              <option value="professionalismScore">حرفه‌ای‌بودن مالی</option>
+            </select>
+          </div>
+        </div>
+
+        <div className="space-y-2">
+          {pageItems.map((f) => {
+            const open = expandedId === f.id;
+            const trendHref = f.fundDefinitionId
+              ? `/funds/${f.fundDefinitionId}`
+              : null;
+            return (
+              <article
+                key={f.id}
+                className={clsx(
+                  'card !p-0 overflow-hidden transition',
+                  open && 'border-navy-900/20',
                 )}
-                <button
-                  type="button"
-                  className="btn-secondary !px-3 !py-1.5 text-xs text-red-700 hover:bg-red-50"
-                  disabled={deletingId === f.id}
-                  onClick={() => onDelete(f.id, f.fundName)}
+              >
+                <div
+                  className="flex cursor-pointer flex-wrap items-center gap-3 px-4 py-3 hover:bg-navy-50/50"
+                  onClick={() => setExpandedId(open ? null : f.id)}
+                  onKeyDown={(e) => {
+                    if (e.key === 'Enter' || e.key === ' ') {
+                      e.preventDefault();
+                      setExpandedId(open ? null : f.id);
+                    }
+                  }}
+                  role="button"
+                  tabIndex={0}
                 >
-                  {deletingId === f.id ? 'در حال حذف...' : 'حذف'}
-                </button>
-              </div>
-            </div>
-            {(f.rating != null ||
-              f.managerTechnicalScore != null ||
-              f.riskAppetiteScore != null ||
-              f.professionalismScore != null) && (
-              <div className="mt-4 grid grid-cols-2 gap-2 sm:grid-cols-4">
-                <ScoreChip label="امتیاز کلی" value={f.rating} />
-                <ScoreChip label="نمره فنی مدیر" value={f.managerTechnicalScore} />
-                <ScoreChip label="ریسک‌پذیری" value={f.riskAppetiteScore} />
-                <ScoreChip label="حرفه‌ای‌بودن مالی" value={f.professionalismScore} />
-              </div>
-            )}
-            <p className="mt-3 leading-7 text-navy-800/80">{f.guessedStrategyFa}</p>
-          </article>
-        ))}
-        {funds.length === 0 && (
-          <p className="text-sm text-navy-800/50">هنوز گزارشی بارگذاری نشده.</p>
+                  <div className="min-w-0 flex-1">
+                    {trendHref ? (
+                      <Link
+                        href={trendHref}
+                        className="text-base font-semibold text-navy-900 hover:underline"
+                        onClick={(e) => e.stopPropagation()}
+                      >
+                        {f.fundName}
+                      </Link>
+                    ) : (
+                      <span className="text-base font-semibold">{f.fundName}</span>
+                    )}
+                    <p className="mt-0.5 text-xs text-navy-800/50">
+                      {monthLabel(f)}
+                      {f.useInSuggestions && (
+                        <span className="ms-2 rounded bg-gold-400/20 px-1.5 py-0.5 text-[10px] text-gold-500">
+                          در پیشنهاد
+                        </span>
+                      )}
+                    </p>
+                  </div>
+                  <div className="grid grid-cols-4 gap-3 sm:gap-4">
+                    <ScoreMini label="کلی" value={f.rating} />
+                    <ScoreMini label="فنی" value={f.managerTechnicalScore} />
+                    <ScoreMini label="ریسک" value={f.riskAppetiteScore} />
+                    <ScoreMini label="حرفه‌ای" value={f.professionalismScore} />
+                  </div>
+                  <span className="text-xs text-navy-800/40">{open ? '▲' : '▼'}</span>
+                </div>
+
+                {open && (
+                  <div className="space-y-4 border-t border-navy-900/8 px-4 py-4">
+                    <div className="flex flex-wrap items-center justify-between gap-2">
+                      <div className="text-xs text-navy-800/50">
+                        {f.extractedSheetsJson?.sheetCount != null && (
+                          <span>
+                            {f.extractedSheetsJson.sheetCount.toLocaleString('fa-IR')} شیت
+                          </span>
+                        )}
+                      </div>
+                      <button
+                        type="button"
+                        className="btn-secondary !px-3 !py-1.5 text-xs text-red-700 hover:bg-red-50"
+                        disabled={deletingId === f.id}
+                        onClick={() => onDelete(f.id, f.fundName)}
+                      >
+                        {deletingId === f.id ? 'در حال حذف...' : 'حذف گزارش'}
+                      </button>
+                    </div>
+                    <div className="grid grid-cols-2 gap-2 sm:grid-cols-4">
+                      <ScoreChip label="امتیاز کلی" value={f.rating} />
+                      <ScoreChip label="نمره فنی مدیر" value={f.managerTechnicalScore} />
+                      <ScoreChip label="ریسک‌پذیری" value={f.riskAppetiteScore} />
+                      <ScoreChip label="حرفه‌ای‌بودن مالی" value={f.professionalismScore} />
+                    </div>
+                    {f.guessedStrategyFa && (
+                      <p className="leading-7 text-navy-800/80">{f.guessedStrategyFa}</p>
+                    )}
+                    {f.lessons?.length > 0 && (
+                      <div>
+                        <h4 className="text-sm font-semibold">درس‌آموخته‌ها</h4>
+                        <ul className="mt-2 list-disc space-y-1 pe-5 text-sm text-navy-800/75">
+                          {f.lessons.map((l) => (
+                            <li key={l.id}>{l.titleFa}</li>
+                          ))}
+                        </ul>
+                      </div>
+                    )}
+                    {trendHref && (
+                      <Link href={trendHref} className="inline-block text-sm text-navy-900 underline">
+                        مشاهده روند امتیازات این صندوق
+                      </Link>
+                    )}
+                  </div>
+                )}
+              </article>
+            );
+          })}
+
+          {filteredSorted.length === 0 && (
+            <p className="text-sm text-navy-800/50">
+              {funds.length === 0
+                ? 'هنوز گزارشی بارگذاری نشده.'
+                : 'با فیلترهای فعلی گزارشی پیدا نشد.'}
+            </p>
+          )}
+        </div>
+
+        {filteredSorted.length > PAGE_SIZE && (
+          <div className="flex flex-wrap items-center justify-center gap-2">
+            <button
+              type="button"
+              className="btn-secondary !px-3 !py-1.5 text-xs"
+              disabled={currentPage <= 1}
+              onClick={() => setPage((p) => Math.max(1, p - 1))}
+            >
+              قبلی
+            </button>
+            <span className="text-sm text-navy-800/70">
+              صفحه {currentPage.toLocaleString('fa-IR')} از {totalPages.toLocaleString('fa-IR')}
+            </span>
+            <button
+              type="button"
+              className="btn-secondary !px-3 !py-1.5 text-xs"
+              disabled={currentPage >= totalPages}
+              onClick={() => setPage((p) => Math.min(totalPages, p + 1))}
+            >
+              بعدی
+            </button>
+          </div>
         )}
-      </div>
+      </section>
+
+      {loading && (
+        <WaitingOverlay
+          title="در حال تحلیل گزارش"
+          description="فایل گزارش در حال استخراج و تحلیل با هوش مصنوعی است. لطفاً صفحه را نبندید."
+          steps={UPLOAD_STEPS}
+        />
+      )}
+      {analyzing && (
+        <WaitingOverlay
+          title="در حال تحلیل ماه‌به‌ماه"
+          description="تغییر استراتژی و عملکرد صندوق در طول زمان با AI بررسی می‌شود."
+          steps={ANALYZE_STEPS}
+        />
+      )}
     </div>
   );
 }

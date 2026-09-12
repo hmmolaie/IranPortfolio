@@ -378,3 +378,27 @@ model AiTrace {
   @@index([userId])
   @@index([purpose])
 }
+
+/** تنظیمات تک‌ردیفی آدرس API قیمت لحظه‌ای دلار و طلا */
+model SpotPriceApiConfig {
+  id        String   @id @default("default")
+  uri       String
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+}
+
+/** قیمت روزانه دلار و طلا (به وقت ایران) */
+model SpotPriceDaily {
+  id             String   @id @default(cuid())
+  /// کلید تاریخ شمسی/میلادی تهران به صورت YYYY-MM-DD
+  dateKey        String   @unique
+  asOfDate       DateTime
+  usdIrr         Float?
+  /// قیمت تقریبی هر گرم طلا (۱۸ عیار) به ریال
+  goldGramRial   Float?
+  sourceRaw      Json?
+  createdAt      DateTime @default(now())
+  updatedAt      DateTime @updatedAt
+
+  @@index([asOfDate])
+}

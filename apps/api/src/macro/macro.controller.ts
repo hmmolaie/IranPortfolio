@@ -42,8 +42,18 @@ export class MacroController {
   ) {}
 
   @Get('latest')
-  latest() {
-    return this.prisma.macroSnapshot.findFirst({ orderBy: { asOfDate: 'desc' } });
+  async latest() {
+    const [macro, spot] = await Promise.all([
+      this.prisma.macroSnapshot.findFirst({ orderBy: { asOfDate: 'desc' } }),
+      this.prisma.spotPriceDaily.findFirst({ orderBy: { dateKey: 'desc' } }),
+    ]);
+    if (!macro && !spot) return null;
+    return {
+      ...(macro ?? {}),
+      usdIrr: spot?.usdIrr ?? macro?.usdIrr ?? null,
+      goldGramRial: spot?.goldGramRial ?? null,
+      spotDateKey: spot?.dateKey ?? null,
+    };
   }
 
   @Put()
@@ -51,10 +61,14 @@ export class MacroController {
   async upsert(@Body() dto: MacroDto) {
     const asOfDate = new Date();
     asOfDate.setUTCHours(0, 0, 0, 0);
+    // نرخ دلار از API قیمت لحظه‌ای می‌آید؛ در فرم اقتصاد دستی ذخیره نمی‌شود
+    const { usdIrr: _ignoredUsd, ...rest } = dto;
+    const spot = await this.prisma.spotPriceDaily.findFirst({ orderBy: { dateKey: 'desc' } });
+    const usdIrr = spot?.usdIrr && spot.usdIrr > 0 ? spot.usdIrr : undefined;
     return this.prisma.macroSnapshot.upsert({
       where: { asOfDate },
-      create: { asOfDate, ...dto },
-      update: { ...dto },
+      create: { asOfDate, ...rest, ...(usdIrr != null ? { usdIrr } : {}) },
+      update: { ...rest, ...(usdIrr != null ? { usdIrr } : {}) },
     });
   }
 

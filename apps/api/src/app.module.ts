@@ -11,6 +11,7 @@ import { FundsModule } from './funds/funds.module';
 import { MacroModule } from './macro/macro.module';
 import { LessonsModule } from './lessons/lessons.module';
 import { NewsModule } from './news/news.module';
+import { PricesModule } from './prices/prices.module';
 
 @Module({
   imports: [
@@ -26,6 +27,7 @@ import { NewsModule } from './news/news.module';
     MacroModule,
     LessonsModule,
     NewsModule,
+    PricesModule,
   ],
 })
 export class AppModule {}

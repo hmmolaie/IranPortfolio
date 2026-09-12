@@ -24,13 +24,14 @@ type LlmPrompt = {
   isCustom: boolean;
 };
 
-type SettingsTab = 'profile' | 'funds' | 'prompts' | 'llm';
+type SettingsTab = 'profile' | 'funds' | 'prompts' | 'llm' | 'spotPrices';
 
 const TABS: { id: SettingsTab; label: string }[] = [
   { id: 'profile', label: 'پروفایل' },
   { id: 'funds', label: 'صندوق‌ها' },
   { id: 'prompts', label: 'پرامپت‌ها' },
   { id: 'llm', label: 'API مدل زبانی' },
+  { id: 'spotPrices', label: 'API قیمت لحظه‌ای دلار و طلا' },
 ];
 
 const PROVIDERS: Record<
@@ -107,6 +108,13 @@ export default function SettingsPage() {
     confirmPassword: '',
   });
   const [passwordBusy, setPasswordBusy] = useState(false);
+  const [spotUri, setSpotUri] = useState('');
+  const [spotBusy, setSpotBusy] = useState(false);
+  const [spotLatest, setSpotLatest] = useState<{
+    dateKey?: string;
+    usdIrr?: number | null;
+    goldGramRial?: number | null;
+  } | null>(null);
 
   const visibleTabs = TABS.filter((t) => t.id === 'profile' || isAdmin);
 
@@ -169,7 +177,54 @@ export default function SettingsPage() {
       .catch(() => undefined);
     loadFundDefs().catch(() => undefined);
     loadPrompts().catch(() => undefined);
+    api<{ uri: string } | null>('/prices/config')
+      .then((c) => {
+        if (c?.uri) setSpotUri(c.uri);
+      })
+      .catch(() => undefined);
+    api<{
+      dateKey?: string;
+      usdIrr?: number | null;
+      goldGramRial?: number | null;
+    } | null>('/prices/latest')
+      .then((p) => setSpotLatest(p))
+      .catch(() => undefined);
   }, [router]);
+
+  async function saveSpotConfig(e: FormEvent) {
+    e.preventDefault();
+    setSpotBusy(true);
+    setMsg('');
+    try {
+      await api('/prices/config', {
+        method: 'PUT',
+        body: JSON.stringify({ uri: spotUri.trim() }),
+      });
+      setMsg('آدرس API قیمت ذخیره شد. هر روز ساعت ۱۲ ظهر ایران به‌صورت خودکار خوانده می‌شود.');
+    } catch (err) {
+      setMsg((err as Error).message);
+    } finally {
+      setSpotBusy(false);
+    }
+  }
+
+  async function refreshSpotPrices() {
+    setSpotBusy(true);
+    setMsg('');
+    try {
+      const row = await api<{
+        dateKey: string;
+        usdIrr?: number | null;
+        goldGramRial?: number | null;
+      }>('/prices/refresh', { method: 'POST' });
+      setSpotLatest(row);
+      setMsg('قیمت امروز از API خوانده و ذخیره شد.');
+    } catch (err) {
+      setMsg((err as Error).message);
+    } finally {
+      setSpotBusy(false);
+    }
+  }
 
   useEffect(() => {
     if (!isAdmin && tab !== 'profile') setTab('profile');
@@ -868,6 +923,74 @@ export default function SettingsPage() {
               )}
             </div>
           )}
+        </form>
+      )}
+
+      {tab === 'spotPrices' && isAdmin && (
+        <form onSubmit={saveSpotConfig} className="card grid max-w-2xl gap-4">
+          <p className="rounded-lg bg-navy-50 px-3 py-2 text-sm leading-7 text-navy-800/80">
+            آدرس یک API با پاسخ JSON برای قیمت دلار و طلا را وارد کنید. سیستم هر روز ساعت ۱۲ ظهر به وقت ایران
+            آن را می‌خواند و ذخیره می‌کند. کلیدهای رایج مثل
+            <span className="mx-1 font-mono" dir="ltr">
+              usd
+            </span>
+            ،
+            <span className="mx-1 font-mono" dir="ltr">
+              dollar
+            </span>
+            ،
+            <span className="mx-1 font-mono" dir="ltr">
+              gold
+            </span>
+            یا
+            <span className="mx-1 font-mono" dir="ltr">
+              gold18
+            </span>
+            پشتیبانی می‌شوند.
+          </p>
+          <div>
+            <label className="label">آدرس API (URI)</label>
+            <input
+              className="input"
+              value={spotUri}
+              onChange={(e) => setSpotUri(e.target.value)}
+              placeholder="https://example.com/api/prices"
+              dir="ltr"
+              required
+            />
+          </div>
+          {spotLatest && (
+            <div className="rounded-lg border border-navy-100 bg-white px-3 py-3 text-sm text-navy-800/80">
+              <div>آخرین ذخیره: {spotLatest.dateKey ?? '—'}</div>
+              <div className="mt-1">
+                دلار:{' '}
+                {spotLatest.usdIrr != null
+                  ? spotLatest.usdIrr.toLocaleString('fa-IR')
+                  : '—'}{' '}
+                ریال
+              </div>
+              <div className="mt-1">
+                طلا (گرم):{' '}
+                {spotLatest.goldGramRial != null
+                  ? spotLatest.goldGramRial.toLocaleString('fa-IR')
+                  : '—'}{' '}
+                ریال
+              </div>
+            </div>
+          )}
+          <div className="flex flex-wrap gap-2">
+            <button type="submit" className="btn-primary w-fit" disabled={spotBusy}>
+              {spotBusy ? '...' : 'ذخیره آدرس'}
+            </button>
+            <button
+              type="button"
+              className="btn-secondary w-fit"
+              disabled={spotBusy || !spotUri.trim()}
+              onClick={refreshSpotPrices}
+            >
+              به‌روزرسانی الان
+            </button>
+          </div>
         </form>
       )}
     </div>
