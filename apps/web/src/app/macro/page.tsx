@@ -23,6 +23,7 @@ export default function MacroPage() {
   const [form, setForm] = useState({
     inflationPct: '',
     interestRatePct: '',
+    usdIrr: '',
     geoRiskScore: '5',
     summaryFa: '',
   });
@@ -49,6 +50,7 @@ export default function MacroPage() {
         setForm({
           inflationPct: m.inflationPct?.toString() ?? '',
           interestRatePct: m.interestRatePct?.toString() ?? '',
+          usdIrr: m.usdIrr?.toString() ?? '',
           geoRiskScore: m.geoRiskScore?.toString() ?? '5',
           summaryFa: m.summaryFa ?? '',
         });
@@ -60,22 +62,32 @@ export default function MacroPage() {
     e.preventDefault();
     setSaving(true);
     try {
+      const usd = form.usdIrr.trim() ? Number(form.usdIrr.replace(/,/g, '')) : undefined;
+      if (usd != null && (!Number.isFinite(usd) || usd <= 0)) {
+        toast.error('نرخ دلار باید عدد مثبت باشد.');
+        setSaving(false);
+        return;
+      }
       const saved = await api<Macro>('/macro', {
         method: 'PUT',
         body: JSON.stringify({
           inflationPct: form.inflationPct ? Number(form.inflationPct) : undefined,
           interestRatePct: form.interestRatePct ? Number(form.interestRatePct) : undefined,
+          usdIrr: usd,
           geoRiskScore: Number(form.geoRiskScore),
           summaryFa: form.summaryFa || undefined,
         }),
       });
-      setMacro((prev) => ({
-        ...saved,
-        usdIrr: prev?.usdIrr ?? saved.usdIrr,
-        goldGramRial: prev?.goldGramRial,
-        spotDateKey: prev?.spotDateKey,
+      setMacro(saved);
+      setForm((prev) => ({
+        ...prev,
+        usdIrr: saved.usdIrr?.toString() ?? prev.usdIrr,
       }));
-      toast.success('شرایط اقتصاد ذخیره شد.');
+      toast.success(
+        usd != null
+          ? 'شرایط اقتصاد و نرخ دلار امروز ذخیره شد.'
+          : 'شرایط اقتصاد ذخیره شد.',
+      );
     } catch (err) {
       toast.error((err as Error).message);
     } finally {
@@ -150,16 +162,17 @@ export default function MacroPage() {
           />
         </div>
         <div>
-          <label className="label">نرخ دلار (ریال) — فقط خواندنی</label>
+          <label className="label">نرخ دلار (ریال)</label>
           <input
-            className="input bg-navy-50/60"
-            value={macro?.usdIrr != null ? String(macro.usdIrr) : ''}
-            readOnly
-            tabIndex={-1}
+            className="input"
+            value={form.usdIrr}
+            onChange={(e) => setForm({ ...form, usdIrr: e.target.value })}
+            inputMode="numeric"
             dir="ltr"
+            placeholder="مثلاً 850000"
           />
           <p className="mt-1 text-xs text-navy-800/50">
-            از API قیمت لحظه‌ای در تنظیمات به‌روز می‌شود.
+            با ذخیره، به‌عنوان آخرین قیمت امروز در دیتابیس ثبت می‌شود.
           </p>
         </div>
         <div>

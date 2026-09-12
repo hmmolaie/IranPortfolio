@@ -274,7 +274,7 @@ export default function FundTrendPage() {
                 <tr key={r.id} className="border-b border-navy-900/5 odd:bg-white even:bg-navy-50/40">
                   <td className="px-4 py-3 font-medium">
                     {r.reportYear && r.reportMonthNum
-                      ? `${r.reportYear} / ${MONTHS_FA[r.reportMonthNum - 1]}`
+                      ? `${r.reportYear.toLocaleString('fa-IR', { useGrouping: false })} / ${MONTHS_FA[r.reportMonthNum - 1]}`
                       : r.reportMonth}
                   </td>
                   <td className="px-4 py-3">{formatNum(r.rating)}</td>

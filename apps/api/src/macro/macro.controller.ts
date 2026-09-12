@@ -2,6 +2,7 @@ import { Body, Controller, Get, Post, Put, Req, UseGuards } from '@nestjs/common
 import { IsInt, IsNumber, IsOptional, IsString, Max, Min } from 'class-validator';
 import { PrismaService } from '../prisma/prisma.service';
 import { LlmService } from '../llm/llm.service';
+import { PricesService } from '../prices/prices.service';
 import { JwtAuthGuard } from '../auth/jwt-auth.guard';
 import { AdminGuard } from '../auth/admin.guard';
 
@@ -16,6 +17,7 @@ class MacroDto {
 
   @IsOptional()
   @IsNumber()
+  @Min(1)
   usdIrr?: number;
 
   @IsOptional()
@@ -39,6 +41,7 @@ export class MacroController {
   constructor(
     private readonly prisma: PrismaService,
     private readonly llm: LlmService,
+    private readonly prices: PricesService,
   ) {}
 
   @Get('latest')
@@ -61,15 +64,32 @@ export class MacroController {
   async upsert(@Body() dto: MacroDto) {
     const asOfDate = new Date();
     asOfDate.setUTCHours(0, 0, 0, 0);
-    // نرخ دلار از API قیمت لحظه‌ای می‌آید؛ در فرم اقتصاد دستی ذخیره نمی‌شود
-    const { usdIrr: _ignoredUsd, ...rest } = dto;
-    const spot = await this.prisma.spotPriceDaily.findFirst({ orderBy: { dateKey: 'desc' } });
-    const usdIrr = spot?.usdIrr && spot.usdIrr > 0 ? spot.usdIrr : undefined;
-    return this.prisma.macroSnapshot.upsert({
+
+    const { usdIrr, ...rest } = dto;
+    let spotUsd = usdIrr;
+
+    // نرخ دستی دلار → جدول قیمت روزانه (امروز ایران) + همگام با آخرین قیمت
+    if (usdIrr != null && usdIrr > 0) {
+      const spot = await this.prices.upsertManualSpot({ usdIrr });
+      spotUsd = spot.usdIrr ?? usdIrr;
+    } else {
+      const spot = await this.prisma.spotPriceDaily.findFirst({ orderBy: { dateKey: 'desc' } });
+      spotUsd = spot?.usdIrr && spot.usdIrr > 0 ? spot.usdIrr : undefined;
+    }
+
+    const saved = await this.prisma.macroSnapshot.upsert({
       where: { asOfDate },
-      create: { asOfDate, ...rest, ...(usdIrr != null ? { usdIrr } : {}) },
-      update: { ...rest, ...(usdIrr != null ? { usdIrr } : {}) },
+      create: { asOfDate, ...rest, ...(spotUsd != null ? { usdIrr: spotUsd } : {}) },
+      update: { ...rest, ...(spotUsd != null ? { usdIrr: spotUsd } : {}) },
     });
+
+    const spotLatest = await this.prices.latest();
+    return {
+      ...saved,
+      usdIrr: spotLatest?.usdIrr ?? saved.usdIrr ?? null,
+      goldGramRial: spotLatest?.goldGramRial ?? null,
+      spotDateKey: spotLatest?.dateKey ?? null,
+    };
   }
 
   @Post('ask')

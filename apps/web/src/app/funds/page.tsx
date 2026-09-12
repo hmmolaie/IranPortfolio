@@ -106,7 +106,8 @@ function ScoreMini({ label, value }: { label: string; value?: number | null }) {
 
 function monthLabel(f: Fund) {
   if (f.reportYear && f.reportMonthNum) {
-    return `${f.reportYear} / ${MONTHS_FA[f.reportMonthNum - 1] ?? f.reportMonthNum}`;
+    const yearFa = f.reportYear.toLocaleString('fa-IR', { useGrouping: false });
+    return `${yearFa} / ${MONTHS_FA[f.reportMonthNum - 1] ?? f.reportMonthNum}`;
   }
   return f.reportMonth;
 }
@@ -504,7 +505,7 @@ export default function FundsPage() {
               <option value="">همه سال‌ها</option>
               {yearOptions.map((y) => (
                 <option key={y} value={String(y)}>
-                  {y.toLocaleString('fa-IR')}
+                  {y.toLocaleString('fa-IR', { useGrouping: false })}
                 </option>
               ))}
             </select>

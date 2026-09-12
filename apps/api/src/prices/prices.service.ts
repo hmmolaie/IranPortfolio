@@ -180,6 +180,56 @@ export class PricesService {
     return this.prisma.spotPriceDaily.findFirst({ orderBy: { dateKey: 'desc' } });
   }
 
+  /** ثبت دستی نرخ دلار (و اختیاری طلا) برای امروز به وقت ایران */
+  async upsertManualSpot(input: { usdIrr?: number; goldGramRial?: number }) {
+    if (
+      (input.usdIrr == null || !(input.usdIrr > 0)) &&
+      (input.goldGramRial == null || !(input.goldGramRial > 0))
+    ) {
+      throw new BadRequestException('حداقل یک نرخ معتبر دلار یا طلا لازم است');
+    }
+
+    const dateKey = tehranDateKey();
+    const asOfDate = new Date(`${dateKey}T12:00:00+03:30`);
+    const existing = await this.prisma.spotPriceDaily.findUnique({ where: { dateKey } });
+
+    const usdIrr = input.usdIrr != null && input.usdIrr > 0 ? input.usdIrr : existing?.usdIrr ?? undefined;
+    const goldGramRial =
+      input.goldGramRial != null && input.goldGramRial > 0
+        ? input.goldGramRial
+        : existing?.goldGramRial ?? undefined;
+
+    const row = await this.prisma.spotPriceDaily.upsert({
+      where: { dateKey },
+      create: {
+        dateKey,
+        asOfDate,
+        usdIrr,
+        goldGramRial,
+        sourceRaw: { source: 'manual', at: new Date().toISOString() },
+      },
+      update: {
+        asOfDate,
+        ...(input.usdIrr != null && input.usdIrr > 0 ? { usdIrr: input.usdIrr } : {}),
+        ...(input.goldGramRial != null && input.goldGramRial > 0
+          ? { goldGramRial: input.goldGramRial }
+          : {}),
+        sourceRaw: { source: 'manual', at: new Date().toISOString() },
+      },
+    });
+
+    if (row.usdIrr != null && row.usdIrr > 0) {
+      const macroDate = new Date(dateKey + 'T00:00:00.000Z');
+      await this.prisma.macroSnapshot.upsert({
+        where: { asOfDate: macroDate },
+        create: { asOfDate: macroDate, usdIrr: row.usdIrr },
+        update: { usdIrr: row.usdIrr },
+      });
+    }
+
+    return row;
+  }
+
   async history(days = 90) {
     const take = Math.min(Math.max(days, 1), 730);
     const rows = await this.prisma.spotPriceDaily.findMany({
