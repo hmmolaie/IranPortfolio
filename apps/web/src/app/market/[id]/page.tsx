@@ -330,12 +330,12 @@ export default function MarketInstrumentPage() {
       </Link>
 
       <div>
-        <div className="flex flex-wrap items-baseline gap-x-3 gap-y-1">
-          <h1 className="text-2xl font-bold text-navy-900">
-            {inst.symbol}
-            <span className="ms-2 text-base font-normal text-navy-800/55">{inst.nameFa}</span>
-          </h1>
-          <span className="rounded-md bg-navy-900/5 px-2 py-0.5 text-xs text-navy-800/60">
+        <div className="flex flex-wrap items-start gap-x-3 gap-y-2">
+          <div className="min-w-0 space-y-1.5">
+            <h1 className="text-2xl font-bold text-navy-900">{inst.symbol}</h1>
+            <p className="text-base leading-7 text-navy-800/60">{inst.nameFa}</p>
+          </div>
+          <span className="mt-1 shrink-0 rounded-md bg-navy-900/5 px-2 py-0.5 text-xs text-navy-800/60">
             {ASSET_TYPE_LABELS_FA[inst.assetType as AssetType] ?? inst.assetType}
           </span>
         </div>

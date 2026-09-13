@@ -15,6 +15,12 @@ export const LLM_PROMPT_DEFAULTS: Record<string, PromptDefinition> = {
 به مدیر صندوق از نظر فنی-مالی نمره بده؛ همچنین ریسک‌پذیری سبد و حرفه‌ای‌بودن مالی مدیر را ارزیابی کن.
 همهٔ نمره‌ها بین ۱ تا ۱۰ (اعشار مجاز).
 
+حتماً دارایی‌های مهم گزارش را در آرایه holdings استخراج کن:
+- action: HELD = موجودی پایان ماه، BOUGHT = خرید طی ماه، SOLD = فروش طی ماه
+- assetKind: STOCK | BOND | GOLD | CASH | DEPOSIT | FUND | OTHER
+- symbol: نماد کوتاه بورسی اگر هست (مثل فولاد)؛ وگرنه نام کوتاه یکدست
+حداقل مهم‌ترین اقلام هر دسته را بیاور (ترجیحاً تا ۴۰ ردیف).
+
 فقط JSON معتبر برگردان:
 {
   "guessedStrategyFa": "استراتژی حدسی مدیر",
@@ -29,7 +35,18 @@ export const LLM_PROMPT_DEFAULTS: Record<string, PromptDefinition> = {
   "useInSuggestions": true,
   "strengthsFa": "نقاط قوت",
   "weaknessesFa": "نقاط ضعف",
-  "lessons": [{"titleFa":"عنوان","bodyFa":"متن درس"}]
+  "lessons": [{"titleFa":"عنوان","bodyFa":"متن درس"}],
+  "holdings": [
+    {
+      "symbol": "فولاد",
+      "nameFa": "فولاد مبارکه",
+      "assetKind": "STOCK",
+      "action": "HELD",
+      "weightPct": 4.2,
+      "amountRial": 1000000000,
+      "quantity": 1000
+    }
+  ]
 }`,
   },
   fund_timeline_analysis: {
@@ -54,21 +71,27 @@ export const LLM_PROMPT_DEFAULTS: Record<string, PromptDefinition> = {
 - تعداد سهم را در JSON ننویس؛ سیستم با قیمت و سرمایه محاسبه می‌کند.
 - نمادی که قیمت یک واحد آن از بودجهٔ همان ردیف بیشتر است پیشنهاد نده.
 
+ورودی‌های اجباری برای تصمیم (در strategySummaryFa و reasonFa وقتی مرتبط است منعکس کن):
+1) lessons — درس‌آموخته‌ها
+2) fundHoldings — سهام/اوراق/طلا/نقد و خرید/فروش صندوق‌ها
+3) economicNews — اخبار حدود یک ماه اخیر
+4) fxHistory — روند دلار/طلا حدود یک ماه اخیر
+5) universe و macro و topFunds
+
 فقط JSON:
 {
   "strategies": [
     {
       "labelFa": "نام کوتاه استراتژی",
-      "strategySummaryFa": "توضیح فارسی",
+      "strategySummaryFa": "توضیح فارسی با ارجاع به درس‌آموخته/اخبار/ارز/سبد صندوق‌ها",
       "items": [
-        { "symbol": "نماد", "assetType": "STOCK|GOLD_ETF|OPTION|DEPOSIT|FUND|CASH|PHYSICAL_GOLD|PHYSICAL_USD", "weightPct": 10, "reasonFa": "دلیل" }
+        { "symbol": "نماد", "assetType": "STOCK|GOLD_ETF|OPTION|DEPOSIT|FUND|CASH|PHYSICAL_GOLD|PHYSICAL_USD", "weightPct": 10, "reasonFa": "دلیل با ارجاع به دادهٔ ورودی" }
       ]
     }
   ]
 }
 حداقل ۲ و حداکثر ۴ استراتژی.
 اولین استراتژی باید بهترین و کامل‌ترین ترکیب متناسب با strategy و capitalRial کاربر باشد.
-حتماً از درس‌آموخته‌ها، اخبار اقتصادی، داده‌های بازار (universe) و تحلیل صندوق‌ها استفاده کن.
 می‌توانی PHYSICAL_GOLD و PHYSICAL_USD را وقتی پوشش تورمی/ارزی مناسب است پیشنهاد بدهی.`,
   },
   portfolio_analyze: {

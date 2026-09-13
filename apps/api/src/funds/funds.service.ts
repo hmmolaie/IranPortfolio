@@ -9,6 +9,16 @@ import * as fs from 'fs/promises';
 import * as path from 'path';
 import { extractFundReportText, safeUploadFileName } from './extract-report-text';
 
+type FundHoldingInput = {
+  symbol?: string;
+  nameFa?: string;
+  assetKind?: string;
+  action?: string;
+  weightPct?: number;
+  amountRial?: number;
+  quantity?: number;
+};
+
 type FundAnalysis = {
   guessedStrategyFa: string;
   rating: number;
@@ -23,7 +33,36 @@ type FundAnalysis = {
   strengthsFa?: string;
   weaknessesFa?: string;
   allocationSummaryFa?: string;
+  holdings?: FundHoldingInput[];
 };
+
+const HOLDING_KINDS = new Set(['STOCK', 'BOND', 'GOLD', 'CASH', 'DEPOSIT', 'FUND', 'OTHER']);
+const HOLDING_ACTIONS = new Set(['HELD', 'BOUGHT', 'SOLD']);
+
+function normalizeHoldingKind(v: unknown): string {
+  const s = String(v ?? 'OTHER').toUpperCase().trim();
+  if (HOLDING_KINDS.has(s)) return s;
+  if (/اوراق|bond|صکوک|اخزا/i.test(String(v))) return 'BOND';
+  if (/طلا|gold|عیار/i.test(String(v))) return 'GOLD';
+  if (/نقد|cash|وجه/i.test(String(v))) return 'CASH';
+  if (/سپرده|deposit|بانک/i.test(String(v))) return 'DEPOSIT';
+  if (/صندوق|fund|etf/i.test(String(v))) return 'FUND';
+  if (/سهام|stock|share/i.test(String(v))) return 'STOCK';
+  return 'OTHER';
+}
+
+function normalizeHoldingAction(v: unknown): string {
+  const s = String(v ?? 'HELD').toUpperCase().trim();
+  if (HOLDING_ACTIONS.has(s)) return s;
+  if (/خرید|buy|bought/i.test(String(v))) return 'BOUGHT';
+  if (/فروش|sell|sold/i.test(String(v))) return 'SOLD';
+  return 'HELD';
+}
+
+function normalizeSymbol(symbol?: string, nameFa?: string): string {
+  const raw = (symbol || nameFa || '').trim();
+  return raw.replace(/\s+/g, ' ').slice(0, 64) || 'UNKNOWN';
+}
 
 function clampScore(n: unknown): number | null {
   const v = Number(n);
@@ -96,7 +135,15 @@ export class FundsService {
     return this.prisma.fundReport.findMany({
       where: { userId },
       orderBy: [{ reportYear: 'desc' }, { reportMonthNum: 'desc' }, { createdAt: 'desc' }],
-      include: { lessons: true, fundDefinition: true },
+      include: {
+        lessons: true,
+        fundDefinition: true,
+        holdings: {
+          orderBy: [{ action: 'asc' }, { weightPct: 'desc' }],
+          take: 60,
+        },
+        _count: { select: { holdings: true } },
+      },
     });
   }
 
@@ -232,18 +279,157 @@ export class FundsService {
       });
     }
 
+    await this.persistHoldings(userId, report.id, fundDefinitionId, reportYear, reportMonthNum, analysis.holdings);
+
     await this.analyzeTimeline(userId, fundDefinitionId).catch(() => undefined);
 
     return this.prisma.fundReport.findUnique({
       where: { id: report.id },
-      include: { lessons: true, fundDefinition: true },
+      include: { lessons: true, fundDefinition: true, holdings: true },
     });
+  }
+
+  private async persistHoldings(
+    userId: string,
+    fundReportId: string,
+    fundDefinitionId: string | null | undefined,
+    reportYear: number | null | undefined,
+    reportMonthNum: number | null | undefined,
+    holdings: FundHoldingInput[] | undefined,
+  ) {
+    const list = Array.isArray(holdings) ? holdings : [];
+    const rows = list
+      .map((h) => {
+        const nameFa = String(h.nameFa ?? h.symbol ?? '').trim();
+        const symbol = normalizeSymbol(h.symbol, h.nameFa);
+        if (!nameFa && symbol === 'UNKNOWN') return null;
+        const weightPct = h.weightPct != null ? Number(h.weightPct) : null;
+        const amountRial = h.amountRial != null ? Number(h.amountRial) : null;
+        const quantity = h.quantity != null ? Number(h.quantity) : null;
+        return {
+          fundReportId,
+          fundDefinitionId: fundDefinitionId || null,
+          userId,
+          symbol,
+          nameFa: nameFa || symbol,
+          assetKind: normalizeHoldingKind(h.assetKind),
+          action: normalizeHoldingAction(h.action),
+          weightPct: weightPct != null && Number.isFinite(weightPct) ? weightPct : null,
+          amountRial: amountRial != null && Number.isFinite(amountRial) ? amountRial : null,
+          quantity: quantity != null && Number.isFinite(quantity) ? quantity : null,
+          reportYear: reportYear ?? null,
+          reportMonthNum: reportMonthNum ?? null,
+        };
+      })
+      .filter((x): x is NonNullable<typeof x> => Boolean(x))
+      .slice(0, 80);
+
+    await this.prisma.fundHolding.deleteMany({ where: { fundReportId } });
+    if (!rows.length) return;
+    await this.prisma.fundHolding.createMany({ data: rows });
+  }
+
+  async listReportHoldings(userId: string, reportId: string) {
+    const report = await this.prisma.fundReport.findFirst({ where: { id: reportId, userId } });
+    if (!report) throw new NotFoundException('گزارش یافت نشد');
+    return this.prisma.fundHolding.findMany({
+      where: { fundReportId: reportId, userId },
+      orderBy: [{ action: 'asc' }, { weightPct: 'desc' }, { amountRial: 'desc' }],
+    });
+  }
+
+  async listFundHoldings(userId: string, fundDefinitionId: string, reportId?: string) {
+    await this.requireDefinition(userId, fundDefinitionId);
+    if (reportId) {
+      return this.listReportHoldings(userId, reportId);
+    }
+    const latest = await this.prisma.fundReport.findFirst({
+      where: { userId, fundDefinitionId },
+      orderBy: [{ reportYear: 'desc' }, { reportMonthNum: 'desc' }],
+    });
+    if (!latest) return [];
+    return this.listReportHoldings(userId, latest.id);
+  }
+
+  /** روند یک نماد در سبد صندوق طی ماه‌ها (وزن موجودی HELD) */
+  async symbolTrend(userId: string, fundDefinitionId: string, symbol: string) {
+    await this.requireDefinition(userId, fundDefinitionId);
+    const key = normalizeSymbol(symbol);
+    if (!symbol?.trim() || key === 'UNKNOWN') {
+      return { symbol: '', trend: 'unknown' as const, points: [] };
+    }
+    const rows = await this.prisma.fundHolding.findMany({
+      where: {
+        userId,
+        fundDefinitionId,
+        symbol: { equals: key, mode: 'insensitive' },
+        action: 'HELD',
+      },
+      orderBy: [{ reportYear: 'asc' }, { reportMonthNum: 'asc' }],
+      include: {
+        fundReport: { select: { id: true, reportMonth: true, reportYear: true, reportMonthNum: true } },
+      },
+    });
+    const points = rows.map((r) => ({
+      reportId: r.fundReportId,
+      symbol: r.symbol,
+      nameFa: r.nameFa,
+      weightPct: r.weightPct,
+      amountRial: r.amountRial,
+      quantity: r.quantity,
+      reportYear: r.reportYear,
+      reportMonthNum: r.reportMonthNum,
+      reportMonth: r.fundReport.reportMonth,
+    }));
+    let trend: 'up' | 'down' | 'flat' | 'unknown' = 'unknown';
+    const weights = points.map((p) => p.weightPct).filter((w): w is number => w != null && w >= 0);
+    if (weights.length >= 2) {
+      const first = weights[0];
+      const last = weights[weights.length - 1];
+      const delta = last - first;
+      if (Math.abs(delta) < 0.15) trend = 'flat';
+      else trend = delta > 0 ? 'up' : 'down';
+    }
+    return { symbol: key, trend, points };
+  }
+
+  async listTrackedSymbols(userId: string, fundDefinitionId: string) {
+    await this.requireDefinition(userId, fundDefinitionId);
+    const rows = await this.prisma.fundHolding.findMany({
+      where: { userId, fundDefinitionId, action: 'HELD' },
+      distinct: ['symbol'],
+      select: { symbol: true, nameFa: true },
+      orderBy: { symbol: 'asc' },
+      take: 200,
+    });
+    return rows;
+  }
+
+  private async requireDefinition(userId: string, fundDefinitionId: string) {
+    const def = await this.prisma.fundDefinition.findFirst({
+      where: { id: fundDefinitionId, userId },
+    });
+    if (!def) throw new NotFoundException('صندوق یافت نشد');
+    return def;
   }
 
   async analyzeTimeline(userId: string, fundDefinitionId: string) {
     const reports = await this.prisma.fundReport.findMany({
       where: { userId, fundDefinitionId },
       orderBy: [{ reportYear: 'asc' }, { reportMonthNum: 'asc' }],
+      include: {
+        holdings: {
+          select: {
+            symbol: true,
+            nameFa: true,
+            assetKind: true,
+            action: true,
+            weightPct: true,
+            amountRial: true,
+          },
+          take: 50,
+        },
+      },
     });
     if (reports.length < 2) {
       return { ok: false, reason: 'حداقل دو گزارش ماهانه لازم است' };
@@ -270,14 +456,16 @@ export class FundsService {
           from: {
             month: prev.reportMonth,
             strategy: prev.guessedStrategyFa,
+            holdings: prev.holdings,
             sheets: this.sheetNamesFromJson(prev.extractedSheetsJson),
-            excerpt: (prev.extractedText ?? '').slice(0, 8000),
+            excerpt: (prev.extractedText ?? '').slice(0, 6000),
           },
           to: {
             month: curr.reportMonth,
             strategy: curr.guessedStrategyFa,
+            holdings: curr.holdings,
             sheets: this.sheetNamesFromJson(curr.extractedSheetsJson),
-            excerpt: (curr.extractedText ?? '').slice(0, 8000),
+            excerpt: (curr.extractedText ?? '').slice(0, 6000),
           },
         }),
         userId,
@@ -348,6 +536,7 @@ ${extractedText || 'متن استخراج نشد'}`,
       );
       if (!analysis.guessedStrategyFa) throw new Error('فیلد guessedStrategyFa نبود');
       analysis.lessons = Array.isArray(analysis.lessons) ? analysis.lessons : [];
+      analysis.holdings = Array.isArray(analysis.holdings) ? analysis.holdings : [];
       analysis.rating = clampScore(analysis.rating) ?? 5;
       analysis.managerTechnicalScore = clampScore(analysis.managerTechnicalScore) ?? undefined;
       analysis.riskAppetiteScore = clampScore(analysis.riskAppetiteScore) ?? undefined;
@@ -386,6 +575,7 @@ ${extractedText || 'متن استخراج نشد'}`,
         rating: 5,
         useInSuggestions: false,
         lessons: [],
+        holdings: [],
         managerTechnicalScore: undefined,
         riskAppetiteScore: undefined,
         professionalismScore: undefined,

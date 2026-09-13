@@ -129,10 +129,10 @@ export class NewsService {
     });
   }
 
-  /** اخبار اخیر برای پیشنهاد سبد — از مخزن مشترک admin */
-  async getForPortfolioContext(userId: string, limit = 12) {
+  /** اخبار اخیر برای پیشنهاد سبد — از مخزن مشترک admin (پیش‌فرض حدود یک ماه) */
+  async getForPortfolioContext(userId: string, limit = 40, days = 30) {
     const ownerId = await this.platformOwnerId(userId);
-    const since = daysAgoDateKey(5);
+    const since = daysAgoDateKey(days);
     return this.prisma.economicNewsItem.findMany({
       where: {
         userId: ownerId,

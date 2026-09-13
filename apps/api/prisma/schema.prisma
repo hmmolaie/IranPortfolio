@@ -193,7 +193,10 @@ model SnapshotItem {
   quantity   Float
   amountRial Float
   reasonFa   String
+  /// قیمت لحظه‌ای/بازار در زمان ساخت اسنپ‌شات
   unitPrice  Float?
+  /// میانگین قیمت خرید (برای سود/زیان در طول زمان)
+  avgBuyPrice Float?
 
   snapshot   PortfolioSnapshot @relation(fields: [snapshotId], references: [id], onDelete: Cascade)
   instrument Instrument?       @relation(fields: [instrumentId], references: [id])
@@ -230,6 +233,7 @@ model FundDefinition {
   user     User                  @relation(fields: [userId], references: [id], onDelete: Cascade)
   reports  FundReport[]
   insights FundTimelineInsight[]
+  holdings FundHolding[]
 
   @@unique([userId, nameFa])
   @@index([userId])
@@ -258,9 +262,39 @@ model FundReport {
   user           User            @relation(fields: [userId], references: [id], onDelete: Cascade)
   fundDefinition FundDefinition? @relation(fields: [fundDefinitionId], references: [id], onDelete: SetNull)
   lessons        Lesson[]
+  holdings       FundHolding[]
 
   @@index([userId])
   @@index([fundDefinitionId])
+}
+
+/// دارایی‌های گزارش ماهانه صندوق (موجود / خرید / فروش)
+model FundHolding {
+  id               String   @id @default(cuid())
+  fundReportId     String
+  fundDefinitionId String?
+  userId           String
+  /// نماد نرمال‌شده برای روند (مثلاً فولاد)
+  symbol           String
+  nameFa           String
+  /// STOCK | BOND | GOLD | CASH | DEPOSIT | FUND | OTHER
+  assetKind        String   @default("STOCK")
+  /// HELD | BOUGHT | SOLD
+  action           String   @default("HELD")
+  weightPct        Float?
+  amountRial       Float?
+  quantity         Float?
+  reportYear       Int?
+  reportMonthNum   Int?
+  createdAt        DateTime @default(now())
+
+  fundReport     FundReport      @relation(fields: [fundReportId], references: [id], onDelete: Cascade)
+  fundDefinition FundDefinition? @relation(fields: [fundDefinitionId], references: [id], onDelete: SetNull)
+
+  @@index([fundReportId])
+  @@index([fundDefinitionId, symbol])
+  @@index([userId, symbol])
+  @@index([symbol])
 }
 
 model FundTimelineInsight {

@@ -9,6 +9,7 @@ import { PrismaService } from '../prisma/prisma.service';
 import { LlmService } from '../llm/llm.service';
 import { NewsService } from '../news/news.service';
 import { UsersService } from '../users/users.service';
+import { daysAgoDateKey } from '../news/tehran-date';
 
 @Injectable()
 export class PortfoliosService {
@@ -50,7 +51,63 @@ export class PortfoliosService {
     });
     if (!p) throw new NotFoundException('سبد یافت نشد');
     if (!isAdmin && p.userId !== userId) throw new ForbiddenException();
-    return p;
+    return this.enrichPortfolioMarketFields(p);
+  }
+
+  /** آخرین قیمت بازار + میانگین خرید + سود/زیان برای نمایش جدول سبد */
+  private async enrichPortfolioMarketFields<
+    T extends {
+      snapshots: Array<{
+        items: Array<{
+          symbol: string;
+          quantity: number;
+          amountRial: number;
+          unitPrice: number | null;
+          avgBuyPrice?: number | null;
+        }>;
+      }>;
+    },
+  >(portfolio: T) {
+    const universe = await this.buildUniverse();
+    const lastBySymbol = new Map(
+      universe.map((u) => [u.symbol.trim(), u.lastPrice] as const),
+    );
+
+    return {
+      ...portfolio,
+      snapshots: portfolio.snapshots.map((snap) => ({
+        ...snap,
+        items: snap.items.map((item) => {
+          const lastPrice =
+            lastBySymbol.get(item.symbol.trim()) ??
+            (item.unitPrice != null && item.unitPrice > 0 ? item.unitPrice : null);
+          const avgBuyPrice =
+            item.avgBuyPrice != null && item.avgBuyPrice > 0
+              ? item.avgBuyPrice
+              : item.unitPrice != null && item.unitPrice > 0
+                ? item.unitPrice
+                : lastPrice;
+          const qty = Number(item.quantity) || 0;
+          const costBasisRial =
+            avgBuyPrice != null && qty > 0 ? avgBuyPrice * qty : Number(item.amountRial) || 0;
+          const marketValueRial =
+            lastPrice != null && qty > 0 ? lastPrice * qty : Number(item.amountRial) || 0;
+          const pnlRial =
+            avgBuyPrice != null && lastPrice != null ? (lastPrice - avgBuyPrice) * qty : 0;
+
+          return {
+            ...item,
+            avgBuyPrice,
+            lastPrice,
+            costBasisRial,
+            marketValueRial,
+            pnlRial,
+            /** ارزش روز برای وزن٪ و جمع تخصیص */
+            amountRial: marketValueRial,
+          };
+        }),
+      })),
+    };
   }
 
   async create(
@@ -122,9 +179,27 @@ export class PortfoliosService {
     const lessons = await this.prisma.lesson.findMany({
       where: { userId: platformUserId },
       orderBy: { createdAt: 'desc' },
-      take: 10,
+      take: 20,
     });
-    const economicNews = await this.news.getForPortfolioContext(userId, 12);
+    const economicNews = await this.news.getForPortfolioContext(userId, 40, 30);
+    const fxHistory = await this.prisma.spotPriceDaily.findMany({
+      where: { dateKey: { gte: daysAgoDateKey(30) } },
+      orderBy: { dateKey: 'asc' },
+      select: { dateKey: true, usdIrr: true, goldGramRial: true },
+      take: 35,
+    });
+    const fundReportIds = funds.map((f) => f.id);
+    const fundHoldingsRaw =
+      fundReportIds.length > 0
+        ? await this.prisma.fundHolding.findMany({
+            where: { fundReportId: { in: fundReportIds } },
+            orderBy: [{ weightPct: 'desc' }, { amountRial: 'desc' }],
+            take: 120,
+            include: {
+              fundReport: { select: { fundName: true, reportMonth: true } },
+            },
+          })
+        : [];
 
     const system = await this.llm.getSystemPrompt(userId, 'portfolio_suggest_multi');
 
@@ -160,6 +235,7 @@ export class PortfoliosService {
           relevance: n.relevanceScore,
           sectors: n.sectorsFa,
         })),
+        fxHistory,
         topFunds: funds.map((f) => ({
           fundName: f.fundName,
           month: f.reportMonth,
@@ -169,9 +245,20 @@ export class PortfoliosService {
           professionalismScore: f.professionalismScore,
           guessedStrategyFa: f.guessedStrategyFa,
         })),
+        fundHoldings: fundHoldingsRaw.map((h) => ({
+          fundName: h.fundReport.fundName,
+          month: h.fundReport.reportMonth,
+          symbol: h.symbol,
+          nameFa: h.nameFa,
+          assetKind: h.assetKind,
+          action: h.action,
+          weightPct: h.weightPct,
+          amountRial: h.amountRial,
+        })),
         fundTimelineInsights: fundInsights.map((i) => ({
           summaryFa: i.summaryFa,
           strategyChangeFa: i.strategyChangeFa,
+          holdingsDiffFa: i.holdingsDiffFa,
           llmReasoningFa: i.llmReasoningFa,
         })),
         lessons: lessons.map((l) => ({ title: l.titleFa, body: l.bodyFa })),
@@ -179,9 +266,11 @@ export class PortfoliosService {
           ? `این ایجاد اولیه سبد است. سرمایه کل ${portfolio.capitalRial} ریال و استراتژی ${portfolio.strategy} است.
 فقط weightPct بده (جمع ≈ ۱۰۰). جمع ارزش سبد نباید از ${portfolio.capitalRial} ریال بیشتر شود.
 سهامی پیشنهاد نکن که قیمت یک واحدش از سهم بودجه‌اش بیشتر باشد.
-از درس‌آموخته‌ها، اخبار، بازار و صندوق‌ها استفاده کن. PHYSICAL_GOLD / PHYSICAL_USD در صورت مناسب بودن مجاز است.`
+حتماً lessons، fundHoldings (موجودی/خرید/فروش صندوق‌ها)، economicNews (~۳۰ روز) و fxHistory (دلار/طلا ~۳۰ روز) را در تصمیم و در reasonFa/strategySummaryFa منعکس کن.
+PHYSICAL_GOLD / PHYSICAL_USD در صورت مناسب بودن مجاز است.`
           : `چند استراتژی متفاوت پیشنهاد بده. سرمایه کل ${portfolio.capitalRial} ریال است.
-weightPct فقط درصد از همین سرمایه است (جمع هر استراتژی ≈ ۱۰۰). ارزش کل هر استراتژی مساوی همین سرمایه است و نباید بیشتر شود.`,
+weightPct فقط درصد از همین سرمایه است (جمع هر استراتژی ≈ ۱۰۰). ارزش کل هر استراتژی مساوی همین سرمایه است و نباید بیشتر شود.
+حتماً lessons، fundHoldings، economicNews (~۳۰ روز) و fxHistory را لحاظ کن و در توضیحات ارجاع بده.`,
       },
       null,
       2,
@@ -493,6 +582,22 @@ ${historyText}`,
       const weightPct = i.weightPct;
       const amountRial = (weightPct / 100) * portfolio.capitalRial;
       const quantity = i.quantity ?? (price ? amountRial / price : 0);
+
+      const prevQty = prev?.quantity ?? 0;
+      const prevAvg =
+        (prev as { avgBuyPrice?: number | null } | undefined)?.avgBuyPrice ??
+        prev?.unitPrice ??
+        price;
+      let avgBuyPrice = price;
+      if (prev && prevQty > 0) {
+        if (quantity > prevQty + 1e-9) {
+          const added = quantity - prevQty;
+          avgBuyPrice = (prevQty * prevAvg + added * price) / quantity;
+        } else {
+          avgBuyPrice = prevAvg;
+        }
+      }
+
       return {
         symbol: i.symbol.trim(),
         assetType: i.assetType ?? prev?.assetType ?? u?.assetType ?? AssetType.STOCK,
@@ -500,6 +605,7 @@ ${historyText}`,
         quantity,
         amountRial,
         unitPrice: price,
+        avgBuyPrice,
         reasonFa: i.reasonFa ?? prev?.reasonFa ?? 'ویرایش دستی کاربر',
         instrumentId: u?.id && !u.id.startsWith('synthetic-') ? u.id : undefined,
       };
@@ -621,7 +727,19 @@ ${historyText}`,
 
     const universe = await this.buildUniverse();
     const macro = await this.prisma.macroSnapshot.findFirst({ orderBy: { asOfDate: 'desc' } });
-    const economicNews = await this.news.getForPortfolioContext(userId, 12);
+    const economicNews = await this.news.getForPortfolioContext(userId, 40, 30);
+    const fxHistory = await this.prisma.spotPriceDaily.findMany({
+      where: { dateKey: { gte: daysAgoDateKey(30) } },
+      orderBy: { dateKey: 'asc' },
+      select: { dateKey: true, usdIrr: true, goldGramRial: true },
+      take: 35,
+    });
+    const platformUserId = (await this.users.getAdminUserId()) ?? userId;
+    const lessons = await this.prisma.lesson.findMany({
+      where: { userId: platformUserId },
+      orderBy: { createdAt: 'desc' },
+      take: 15,
+    });
     const profile = await this.prisma.userProfile.findUnique({ where: { userId } });
 
     const pricedItems = latest.items.map((i) => {
@@ -661,6 +779,8 @@ ${historyText}`,
           relevance: n.relevanceScore,
           sectors: n.sectorsFa,
         })),
+        fxHistory,
+        lessons: lessons.map((l) => ({ title: l.titleFa, body: l.bodyFa })),
       },
       null,
       2,
@@ -793,6 +913,7 @@ ${historyText}`,
       quantity: number;
       amountRial: number;
       unitPrice: number;
+      avgBuyPrice: number;
       reasonFa: string;
       instrumentId?: string;
     };
@@ -863,6 +984,7 @@ ${historyText}`,
         quantity,
         amountRial,
         unitPrice,
+        avgBuyPrice: unitPrice,
         reasonFa: i.reasonFa,
         instrumentId: u?.id && !u.id.startsWith('synthetic-') ? u.id : undefined,
       });
@@ -908,6 +1030,7 @@ ${historyText}`,
         existingCash.amountRial += leftover;
         existingCash.quantity = existingCash.amountRial;
         existingCash.unitPrice = 1;
+        existingCash.avgBuyPrice = 1;
       } else {
         rows.push({
           symbol: 'CASH',
@@ -916,6 +1039,7 @@ ${historyText}`,
           quantity: leftover,
           amountRial: leftover,
           unitPrice: 1,
+          avgBuyPrice: 1,
           reasonFa: 'ماندهٔ نقد پس از تخصیص قابل‌خرید',
         });
       }

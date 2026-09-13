@@ -128,6 +128,38 @@ export class FundsController {
     return this.funds.analyzeTimeline(req.user.userId, fundDefinitionId);
   }
 
+  /** دارایی‌های آخرین گزارش (یا گزارش مشخص با reportId) */
+  @Get('definitions/:id/holdings')
+  listHoldings(
+    @Req() req: { user: { userId: string } },
+    @Param('id') id: string,
+    @Query('reportId') reportId?: string,
+  ) {
+    return this.funds.listFundHoldings(req.user.userId, id, reportId);
+  }
+
+  @Get('definitions/:id/symbols')
+  listSymbols(@Req() req: { user: { userId: string } }, @Param('id') id: string) {
+    return this.funds.listTrackedSymbols(req.user.userId, id);
+  }
+
+  @Get('definitions/:id/symbol-trend')
+  symbolTrend(
+    @Req() req: { user: { userId: string } },
+    @Param('id') id: string,
+    @Query('symbol') symbol?: string,
+  ) {
+    return this.funds.symbolTrend(req.user.userId, id, symbol ?? '');
+  }
+
+  @Get('reports/:reportId/holdings')
+  reportHoldings(
+    @Req() req: { user: { userId: string } },
+    @Param('reportId') reportId: string,
+  ) {
+    return this.funds.listReportHoldings(req.user.userId, reportId);
+  }
+
   @Get()
   list(@Req() req: { user: { userId: string } }) {
     return this.funds.list(req.user.userId);

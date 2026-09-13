@@ -16,6 +16,12 @@ type Item = {
   quantity: number;
   amountRial: number;
   reasonFa: string;
+  unitPrice?: number | null;
+  avgBuyPrice?: number | null;
+  lastPrice?: number | null;
+  costBasisRial?: number | null;
+  marketValueRial?: number | null;
+  pnlRial?: number | null;
 };
 
 type Snapshot = {
@@ -72,7 +78,6 @@ export default function PortfolioDetailPage() {
   const toast = useToast();
   const [p, setP] = useState<Portfolio | null>(null);
   const [busy, setBusy] = useState('');
-  const [editWeights, setEditWeights] = useState<Record<string, string>>({});
   const [cashAmount, setCashAmount] = useState('100000000');
 
   const [chat, setChat] = useState<ChatMessage[]>([]);
@@ -94,14 +99,12 @@ export default function PortfolioDetailPage() {
   async function load() {
     const data = await api<Portfolio>(`/portfolios/${id}`);
     setP(data);
-    const latest = data.snapshots[0];
-    if (latest) {
-      const map: Record<string, string> = {};
-      latest.items.forEach((i) => {
-        map[i.symbol] = String(Math.round(i.weightPct * 10) / 10);
-      });
-      setEditWeights(map);
-    }
+  }
+
+  /** وزن٪ نمایشی: سهم مبلغ از کل ارزش تخصیص‌یافته سبد */
+  function displayWeightPct(amountRial: number, totalRial: number) {
+    if (!totalRial || totalRial <= 0) return 0;
+    return Math.round((amountRial / totalRial) * 1000) / 10;
   }
 
   async function loadChat() {
@@ -135,15 +138,6 @@ export default function PortfolioDetailPage() {
     } finally {
       setBusy('');
     }
-  }
-
-  async function saveAdjust() {
-    if (!p?.snapshots[0]) return;
-    const items = Object.entries(editWeights).map(([symbol, weightPct]) => ({
-      symbol,
-      weightPct: Number(weightPct),
-    }));
-    await run('adjust', `/portfolios/${id}/adjust`, { items });
   }
 
   async function addSymbol(e: FormEvent) {
@@ -302,7 +296,17 @@ export default function PortfolioDetailPage() {
   if (!p) return <p className="text-navy-800/60">در حال بارگذاری...</p>;
   const latest = p.snapshots[0];
   const itemsTotal = latest
-    ? latest.items.reduce((s, i) => s + (i.amountRial || 0), 0)
+    ? latest.items.reduce((s, i) => s + (i.marketValueRial ?? i.amountRial ?? 0), 0)
+    : 0;
+  const costBasisTotal = latest
+    ? latest.items.reduce((s, i) => {
+        const avg = i.avgBuyPrice ?? i.unitPrice;
+        const cost = i.costBasisRial ?? (avg != null ? avg * i.quantity : 0);
+        return s + (cost || 0);
+      }, 0)
+    : 0;
+  const pnlTotal = latest
+    ? latest.items.reduce((s, i) => s + (i.pnlRial ?? 0), 0)
     : 0;
 
   return (
@@ -469,7 +473,12 @@ export default function PortfolioDetailPage() {
 
           <div>
             <h3 className="mb-3 text-sm font-semibold">ترکیب سبد</h3>
-            <PortfolioPieChart items={latest.items} />
+            <PortfolioPieChart
+              items={latest.items.map((i) => ({
+                symbol: i.symbol,
+                weightPct: displayWeightPct(i.amountRial, itemsTotal),
+              }))}
+            />
           </div>
 
           <div className="overflow-x-auto">
@@ -480,50 +489,86 @@ export default function PortfolioDetailPage() {
                   <th className="py-2 pe-4 font-medium">نوع</th>
                   <th className="py-2 pe-4 font-medium">وزن٪</th>
                   <th className="py-2 pe-4 font-medium">مقدار</th>
-                  <th className="py-2 pe-4 font-medium">مبلغ</th>
+                  <th className="py-2 pe-4 font-medium">میانگین خرید</th>
+                  <th className="py-2 pe-4 font-medium">آخرین قیمت</th>
+                  <th className="py-2 pe-4 font-medium">سود/زیان</th>
                   <th className="py-2 pe-4 font-medium">دلیل</th>
                   <th className="py-2 font-medium">عملیات</th>
                 </tr>
               </thead>
               <tbody>
-                {latest.items.map((i) => (
-                  <tr key={i.id} className="border-b border-navy-900/5 align-top">
-                    <td className="py-3 pe-4 font-medium">{i.symbol}</td>
-                    <td className="py-3 pe-4 text-xs text-navy-800/60">
-                      {ASSET_TYPE_LABELS_FA[i.assetType as AssetType] ?? i.assetType}
-                    </td>
-                    <td className="py-3 pe-4">
-                      <input
-                        className="input w-20"
-                        value={editWeights[i.symbol] ?? ''}
-                        onChange={(e) =>
-                          setEditWeights((prev) => ({ ...prev, [i.symbol]: e.target.value }))
-                        }
-                      />
-                    </td>
-                    <td className="py-3 pe-4">{formatNum(i.quantity)}</td>
-                    <td className="py-3 pe-4">{formatRial(i.amountRial)}</td>
-                    <td className="py-3 pe-4 leading-6 text-navy-800/75">{i.reasonFa}</td>
-                    <td className="py-3">
-                      <button
-                        type="button"
-                        className="text-xs text-red-700 hover:underline"
-                        disabled={!!busy}
-                        onClick={() => removeSymbol(i.symbol)}
+                {latest.items.map((i) => {
+                  const market = i.marketValueRial ?? i.amountRial;
+                  const avg = i.avgBuyPrice ?? i.unitPrice ?? null;
+                  const last = i.lastPrice ?? null;
+                  const pnl = i.pnlRial ?? (avg != null && last != null ? (last - avg) * i.quantity : 0);
+                  return (
+                    <tr key={i.id} className="border-b border-navy-900/5 align-top">
+                      <td className="py-3 pe-4 font-medium">{i.symbol}</td>
+                      <td className="py-3 pe-4 text-xs text-navy-800/60">
+                        {ASSET_TYPE_LABELS_FA[i.assetType as AssetType] ?? i.assetType}
+                      </td>
+                      <td className="py-3 pe-4 tabular-nums text-navy-800/90">
+                        {formatNum(displayWeightPct(market, itemsTotal))}٪
+                      </td>
+                      <td className="py-3 pe-4 tabular-nums">{formatNum(i.quantity)}</td>
+                      <td className="py-3 pe-4 tabular-nums">
+                        {avg != null ? formatRial(avg) : '—'}
+                      </td>
+                      <td className="py-3 pe-4 tabular-nums">
+                        {last != null ? formatRial(last) : '—'}
+                      </td>
+                      <td
+                        className={`py-3 pe-4 tabular-nums font-medium ${
+                          pnl > 0 ? 'text-emerald-800' : pnl < 0 ? 'text-red-700' : 'text-navy-800/70'
+                        }`}
                       >
-                        حذف
-                      </button>
-                    </td>
-                  </tr>
-                ))}
+                        {formatRial(pnl)}
+                      </td>
+                      <td className="py-3 pe-4 leading-6 text-navy-800/75">{i.reasonFa}</td>
+                      <td className="py-3">
+                        <button
+                          type="button"
+                          className="text-xs text-red-700 hover:underline"
+                          disabled={!!busy}
+                          onClick={() => removeSymbol(i.symbol)}
+                        >
+                          حذف
+                        </button>
+                      </td>
+                    </tr>
+                  );
+                })}
               </tbody>
               <tfoot>
                 <tr className="border-t-2 border-navy-900/15 bg-navy-50/60">
-                  <td className="py-3 pe-4 font-semibold" colSpan={4}>
-                    جمع مبلغ کل سبد
+                  <td className="py-3 pe-4 font-semibold" colSpan={2}>
+                    جمع
                   </td>
-                  <td className="py-3 pe-4 font-semibold text-navy-900">
+                  <td className="py-3 pe-4 font-semibold tabular-nums">
+                    {itemsTotal > 0 ? `${formatNum(100)}٪` : '—'}
+                  </td>
+                  <td className="py-3 pe-4 font-semibold tabular-nums">
+                    {formatNum(latest.items.reduce((s, i) => s + (i.quantity || 0), 0))}
+                  </td>
+                  <td className="py-3 pe-4 font-semibold tabular-nums text-navy-900">
+                    <div className="text-[10px] font-normal text-navy-800/45">بهای تمام‌شده</div>
+                    {formatRial(costBasisTotal)}
+                  </td>
+                  <td className="py-3 pe-4 font-semibold tabular-nums text-navy-900">
+                    <div className="text-[10px] font-normal text-navy-800/45">ارزش روز</div>
                     {formatRial(itemsTotal)}
+                  </td>
+                  <td
+                    className={`py-3 pe-4 font-semibold tabular-nums ${
+                      pnlTotal > 0
+                        ? 'text-emerald-800'
+                        : pnlTotal < 0
+                          ? 'text-red-700'
+                          : 'text-navy-900'
+                    }`}
+                  >
+                    {formatRial(pnlTotal)}
                   </td>
                   <td className="py-3 pe-4 text-xs text-navy-800/55" colSpan={2}>
                     سقف سرمایه: {formatRial(p.capitalRial)}
@@ -531,12 +576,6 @@ export default function PortfolioDetailPage() {
                 </tr>
               </tfoot>
             </table>
-          </div>
-
-          <div className="flex flex-wrap gap-2">
-            <button className="btn-secondary" onClick={saveAdjust} disabled={!!busy}>
-              ذخیره تغییرات وزن
-            </button>
           </div>
 
           <form
