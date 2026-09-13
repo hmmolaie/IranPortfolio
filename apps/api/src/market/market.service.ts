@@ -92,8 +92,10 @@ export class MarketService {
     private readonly llm: LlmService,
   ) {}
 
-  @Cron('0 30 15 * * 0-4') // تقریبی پایان بازار ایران (سرور ممکن است UTC باشد)
+  /** هر روز ۲۲:۰۰ به وقت ایران ≈ ۱۸:۳۰ UTC */
+  @Cron('0 30 18 * * *')
   async scheduledIngest() {
+    this.logger.log('بروزرسانی زمان‌بندی‌شده بازار از TSETMC (۲۲ شب ایران)');
     try {
       await this.ingestCatchUp();
     } catch (e) {

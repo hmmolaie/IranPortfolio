@@ -25,14 +25,15 @@ type LlmPrompt = {
   isCustom: boolean;
 };
 
-type SettingsTab = 'profile' | 'funds' | 'prompts' | 'llm' | 'spotPrices';
+type SettingsTab = 'profile' | 'password' | 'funds' | 'prompts' | 'llm' | 'spotPrices';
 
-const TABS: { id: SettingsTab; label: string }[] = [
+const TABS: { id: SettingsTab; label: string; adminOnly?: boolean }[] = [
   { id: 'profile', label: 'پروفایل' },
-  { id: 'funds', label: 'صندوق‌ها' },
-  { id: 'prompts', label: 'پرامپت‌ها' },
-  { id: 'llm', label: 'API مدل زبانی' },
-  { id: 'spotPrices', label: 'API قیمت لحظه‌ای دلار و طلا' },
+  { id: 'password', label: 'تغییر رمز عبور' },
+  { id: 'funds', label: 'صندوق‌ها', adminOnly: true },
+  { id: 'prompts', label: 'پرامپت‌ها', adminOnly: true },
+  { id: 'llm', label: 'API مدل زبانی', adminOnly: true },
+  { id: 'spotPrices', label: 'API قیمت لحظه‌ای دلار و طلا', adminOnly: true },
 ];
 
 const PROVIDERS: Record<
@@ -120,7 +121,7 @@ export default function SettingsPage() {
     goldGramRial?: number | null;
   } | null>(null);
 
-  const visibleTabs = TABS.filter((t) => t.id === 'profile' || isAdmin);
+  const visibleTabs = TABS.filter((t) => !t.adminOnly || isAdmin);
 
   async function loadPrompts() {
     const list = await api<LlmPrompt[]>('/llm/prompts');
@@ -268,7 +269,7 @@ export default function SettingsPage() {
   }
 
   useEffect(() => {
-    if (!isAdmin && tab !== 'profile') setTab('profile');
+    if (!isAdmin && tab !== 'profile' && tab !== 'password') setTab('profile');
   }, [isAdmin, tab]);
 
   function applyProvider(next: ProviderId) {
@@ -521,28 +522,29 @@ export default function SettingsPage() {
         <p className="mt-2 text-navy-800/70">پروفایل، پرامپت‌ها، صندوق‌ها و اتصال به مدل زبانی</p>
       </div>
 
-      <div className="border-b border-navy-900/10">
-        <nav className="-mb-px flex gap-1 overflow-x-auto">
+      <div className="flex flex-col gap-6 lg:flex-row lg:items-start">
+        <nav
+          className="flex shrink-0 gap-1 overflow-x-auto rounded-xl border border-navy-900/10 bg-white p-1.5 lg:w-56 lg:flex-col lg:overflow-visible"
+          aria-label="بخش‌های تنظیمات"
+        >
           {visibleTabs.map((t) => (
             <button
               key={t.id}
               type="button"
-              onClick={() => {
-                setTab(t.id);
-              }}
+              onClick={() => setTab(t.id)}
               className={clsx(
-                'whitespace-nowrap border-b-2 px-4 py-3 text-sm font-medium transition',
+                'whitespace-nowrap rounded-lg px-3 py-2.5 text-start text-sm font-medium transition',
                 tab === t.id
-                  ? 'border-navy-900 text-navy-900'
-                  : 'border-transparent text-navy-800/55 hover:border-navy-900/20 hover:text-navy-800',
+                  ? 'bg-navy-900 text-white shadow-sm'
+                  : 'text-navy-800/65 hover:bg-navy-50 hover:text-navy-900',
               )}
             >
               {t.label}
             </button>
           ))}
         </nav>
-      </div>
 
+        <div className="min-w-0 flex-1">
       {tab === 'profile' && (
         <div className="space-y-6">
           <section className="card max-w-2xl space-y-4">
@@ -552,52 +554,6 @@ export default function SettingsPage() {
               <input className="input bg-navy-50/80" value={email} readOnly dir="ltr" />
             </div>
           </section>
-
-          <form onSubmit={savePassword} className="card grid max-w-2xl gap-4">
-            <h2 className="text-lg font-semibold">تغییر رمز عبور</h2>
-            <div>
-              <label className="label">رمز عبور فعلی</label>
-              <input
-                className="input"
-                type="password"
-                value={passwordForm.currentPassword}
-                onChange={(e) =>
-                  setPasswordForm({ ...passwordForm, currentPassword: e.target.value })
-                }
-                required
-                autoComplete="current-password"
-              />
-            </div>
-            <div>
-              <label className="label">رمز عبور جدید</label>
-              <input
-                className="input"
-                type="password"
-                minLength={6}
-                value={passwordForm.newPassword}
-                onChange={(e) => setPasswordForm({ ...passwordForm, newPassword: e.target.value })}
-                required
-                autoComplete="new-password"
-              />
-            </div>
-            <div>
-              <label className="label">تکرار رمز عبور جدید</label>
-              <input
-                className="input"
-                type="password"
-                minLength={6}
-                value={passwordForm.confirmPassword}
-                onChange={(e) =>
-                  setPasswordForm({ ...passwordForm, confirmPassword: e.target.value })
-                }
-                required
-                autoComplete="new-password"
-              />
-            </div>
-            <button type="submit" className="btn-primary w-fit" disabled={passwordBusy}>
-              {passwordBusy ? 'در حال ذخیره...' : 'تغییر رمز عبور'}
-            </button>
-          </form>
 
           <form onSubmit={saveProfile} className="card grid max-w-2xl gap-4">
             <h2 className="text-lg font-semibold">پروفایل سرمایه‌گذاری</h2>
@@ -653,6 +609,54 @@ export default function SettingsPage() {
             </button>
           </form>
         </div>
+      )}
+
+      {tab === 'password' && (
+        <form onSubmit={savePassword} className="card grid max-w-2xl gap-4">
+          <h2 className="text-lg font-semibold">تغییر رمز عبور</h2>
+          <div>
+            <label className="label">رمز عبور فعلی</label>
+            <input
+              className="input"
+              type="password"
+              value={passwordForm.currentPassword}
+              onChange={(e) =>
+                setPasswordForm({ ...passwordForm, currentPassword: e.target.value })
+              }
+              required
+              autoComplete="current-password"
+            />
+          </div>
+          <div>
+            <label className="label">رمز عبور جدید</label>
+            <input
+              className="input"
+              type="password"
+              minLength={6}
+              value={passwordForm.newPassword}
+              onChange={(e) => setPasswordForm({ ...passwordForm, newPassword: e.target.value })}
+              required
+              autoComplete="new-password"
+            />
+          </div>
+          <div>
+            <label className="label">تکرار رمز عبور جدید</label>
+            <input
+              className="input"
+              type="password"
+              minLength={6}
+              value={passwordForm.confirmPassword}
+              onChange={(e) =>
+                setPasswordForm({ ...passwordForm, confirmPassword: e.target.value })
+              }
+              required
+              autoComplete="new-password"
+            />
+          </div>
+          <button type="submit" className="btn-primary w-fit" disabled={passwordBusy}>
+            {passwordBusy ? 'در حال ذخیره...' : 'تغییر رمز عبور'}
+          </button>
+        </form>
       )}
 
       {tab === 'funds' && isAdmin && (
@@ -1056,6 +1060,8 @@ export default function SettingsPage() {
           )}
         </form>
       )}
+        </div>
+      </div>
     </div>
   );
 }

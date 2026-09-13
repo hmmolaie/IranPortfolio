@@ -16,7 +16,6 @@ const allLinks = [
   { href: '/macro', label: 'اقتصاد ایران', adminOnly: true },
   { href: '/news', label: 'اخبار اقتصادی ایران', adminOnly: false },
   { href: '/admin/users', label: 'مدیریت کاربران', adminOnly: true },
-  { href: '/settings', label: 'تنظیمات', adminOnly: false },
 ];
 
 export function AppShell({ children }: { children: React.ReactNode }) {
@@ -31,6 +30,7 @@ export function AppShell({ children }: { children: React.ReactNode }) {
     setAuthed(Boolean(token));
     if (!token) {
       setRole(null);
+      setUserLabel('');
       return;
     }
     const cached = getUserRole();
@@ -53,7 +53,6 @@ export function AppShell({ children }: { children: React.ReactNode }) {
     setAuthed(false);
     setRole(null);
     setUserLabel('');
-    // ریدایرکت کامل تا state کلاینت و کش Route پاک شود
     window.location.assign('/');
   }
 
@@ -67,68 +66,67 @@ export function AppShell({ children }: { children: React.ReactNode }) {
 
   return (
     <ToastProvider>
-    <div className="min-h-screen lg:grid lg:grid-cols-[260px_1fr]">
-      <aside className="border-b border-navy-900/10 bg-navy-900 text-white lg:border-b-0 lg:border-e lg:border-navy-800">
-        <div className="px-6 py-7">
-          <Link href="/dashboard" className="block">
-            <div className="text-2xl font-bold tracking-tight">سبدیار</div>
-            <div className="mt-1 text-xs text-white/60">بانک خصوصی سبد شما</div>
-          </Link>
-        </div>
-        <nav className="flex gap-1 overflow-x-auto px-3 pb-4 lg:flex-col lg:overflow-visible">
-          {links.map((l) => (
-            <Link
-              key={l.href}
-              href={l.href}
-              className={clsx(
-                'whitespace-nowrap rounded-lg px-3 py-2.5 text-sm transition',
-                pathname.startsWith(l.href)
-                  ? 'bg-white/15 text-white'
-                  : 'text-white/70 hover:bg-white/10 hover:text-white',
-              )}
-            >
-              {l.label}
+      <div className="min-h-screen lg:grid lg:grid-cols-[260px_1fr]">
+        <aside className="border-b border-navy-900/10 bg-navy-900 text-white lg:border-b-0 lg:border-e lg:border-navy-800">
+          <div className="px-6 py-7">
+            <Link href="/dashboard" className="block">
+              <div className="text-2xl font-bold tracking-tight">سبدیار</div>
+              <div className="mt-1 text-xs text-white/60">بانک خصوصی سبد شما</div>
             </Link>
-          ))}
-        </nav>
-        {authed && (
-          <div className="hidden px-6 pb-6 lg:block">
-            {userLabel && (
-              <p className="mb-3 truncate text-xs text-white/60" title={userLabel}>
-                {userLabel}
-              </p>
-            )}
-            <button
-              type="button"
-              onClick={logout}
-              className="text-sm text-white/50 hover:text-white"
-            >
-              خروج
-            </button>
           </div>
-        )}
-      </aside>
-      <div className="min-w-0">
-        <header className="flex items-center justify-between border-b border-navy-900/8 bg-white/70 px-6 py-4 backdrop-blur">
-          <p className="text-sm text-navy-800/70">خروجی سایت مشاوره سرمایه‌گذاری رسمی نیست.</p>
-          <div className="flex items-center gap-4 lg:hidden">
-            {authed && userLabel && (
-              <span className="text-sm text-navy-800/70">{userLabel}</span>
-            )}
-            {authed && (
-              <button
-                type="button"
-                onClick={logout}
-                className="text-sm text-navy-800/60 hover:text-navy-900"
+          <nav className="flex gap-1 overflow-x-auto px-3 pb-4 lg:flex-col lg:overflow-visible">
+            {links.map((l) => (
+              <Link
+                key={l.href}
+                href={l.href}
+                className={clsx(
+                  'whitespace-nowrap rounded-lg px-3 py-2.5 text-sm transition',
+                  pathname.startsWith(l.href)
+                    ? 'bg-white/15 text-white'
+                    : 'text-white/70 hover:bg-white/10 hover:text-white',
+                )}
               >
-                خروج
-              </button>
+                {l.label}
+              </Link>
+            ))}
+          </nav>
+        </aside>
+        <div className="min-w-0">
+          <header className="flex flex-wrap items-center justify-between gap-3 border-b border-navy-900/8 bg-white/70 px-6 py-4 backdrop-blur">
+            <p className="text-sm text-navy-800/70">
+              خروجی سایت مشاوره سرمایه‌گذاری رسمی نیست.
+            </p>
+            {authed && (
+              <div className="flex items-center gap-3 text-sm">
+                {userLabel && (
+                  <span className="max-w-[10rem] truncate font-medium text-navy-900" title={userLabel}>
+                    {userLabel}
+                  </span>
+                )}
+                <Link
+                  href="/settings"
+                  className={clsx(
+                    'rounded-lg px-2.5 py-1.5 transition',
+                    pathname.startsWith('/settings')
+                      ? 'bg-navy-900/10 font-medium text-navy-900'
+                      : 'text-navy-800/65 hover:bg-navy-900/5 hover:text-navy-900',
+                  )}
+                >
+                  تنظیمات
+                </Link>
+                <button
+                  type="button"
+                  onClick={logout}
+                  className="rounded-lg px-2.5 py-1.5 text-navy-800/55 transition hover:bg-navy-900/5 hover:text-navy-900"
+                >
+                  خروج
+                </button>
+              </div>
             )}
-          </div>
-        </header>
-        <main className="px-4 py-8 sm:px-8">{children}</main>
+          </header>
+          <main className="px-4 py-8 sm:px-8">{children}</main>
+        </div>
       </div>
-    </div>
     </ToastProvider>
   );
 }

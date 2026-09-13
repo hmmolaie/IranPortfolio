@@ -341,7 +341,12 @@ weightPct فقط درصد از همین سرمایه است (جمع هر است�
       reply = await this.llm.chatText(
         'portfolio_chat',
         chatSystem,
-        `${context}\n\nگفتگو:\n${historyText}`,
+        `${context}
+
+یادآوری محدوده: فقط به سؤالات مالی مربوط به همین سبد پاسخ بده. اگر سؤال نامرتبط بود، رد کن و به محدودهٔ سبد برگردان.
+
+گفتگو:
+${historyText}`,
         userId,
       );
     } catch (e) {
