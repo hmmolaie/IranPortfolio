@@ -173,7 +173,7 @@ export default function MacroPricesPage() {
 
   useEffect(() => {
     if (!getToken()) {
-      router.replace('/login');
+      router.replace('/');
       return;
     }
     api<{ role?: string }>('/users/me')

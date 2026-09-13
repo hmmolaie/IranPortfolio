@@ -72,7 +72,7 @@ export default function NewsPage() {
 
   useEffect(() => {
     if (!getToken()) {
-      router.replace('/login');
+      router.replace('/');
       return;
     }
     const cached = getUserRole();

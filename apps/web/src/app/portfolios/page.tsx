@@ -53,10 +53,10 @@ export default function PortfoliosPage() {
 
   useEffect(() => {
     if (!getToken()) {
-      router.replace('/login');
+      router.replace('/');
       return;
     }
-    load().catch(() => router.replace('/login'));
+    load().catch(() => router.replace('/'));
   }, [router]);
 
   function onCapitalChange(raw: string) {

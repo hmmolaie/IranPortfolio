@@ -1,7 +1,7 @@
 'use client';
 
 import Link from 'next/link';
-import { usePathname, useRouter } from 'next/navigation';
+import { usePathname } from 'next/navigation';
 import { getToken, clearSession, api, getUserRole, setUserRole, UserRole } from '@/lib/api';
 import { useEffect, useState } from 'react';
 import clsx from 'clsx';
@@ -21,7 +21,6 @@ const allLinks = [
 
 export function AppShell({ children }: { children: React.ReactNode }) {
   const pathname = usePathname();
-  const router = useRouter();
   const [authed, setAuthed] = useState(false);
   const [role, setRole] = useState<UserRole | null>(null);
   const [userLabel, setUserLabel] = useState('');
@@ -52,7 +51,10 @@ export function AppShell({ children }: { children: React.ReactNode }) {
   function logout() {
     clearSession();
     setAuthed(false);
-    router.push('/login');
+    setRole(null);
+    setUserLabel('');
+    // ریدایرکت کامل تا state کلاینت و کش Route پاک شود
+    window.location.assign('/');
   }
 
   if (isAuthPage) {
@@ -96,7 +98,11 @@ export function AppShell({ children }: { children: React.ReactNode }) {
                 {userLabel}
               </p>
             )}
-            <button onClick={logout} className="text-sm text-white/50 hover:text-white">
+            <button
+              type="button"
+              onClick={logout}
+              className="text-sm text-white/50 hover:text-white"
+            >
               خروج
             </button>
           </div>
@@ -106,10 +112,18 @@ export function AppShell({ children }: { children: React.ReactNode }) {
         <header className="flex items-center justify-between border-b border-navy-900/8 bg-white/70 px-6 py-4 backdrop-blur">
           <p className="text-sm text-navy-800/70">خروجی سایت مشاوره سرمایه‌گذاری رسمی نیست.</p>
           <div className="flex items-center gap-4 lg:hidden">
-            {userLabel && <span className="text-sm text-navy-800/70">{userLabel}</span>}
-            <button onClick={logout} className="text-sm text-navy-800/60 hover:text-navy-900">
-              خروج
-            </button>
+            {authed && userLabel && (
+              <span className="text-sm text-navy-800/70">{userLabel}</span>
+            )}
+            {authed && (
+              <button
+                type="button"
+                onClick={logout}
+                className="text-sm text-navy-800/60 hover:text-navy-900"
+              >
+                خروج
+              </button>
+            )}
           </div>
         </header>
         <main className="px-4 py-8 sm:px-8">{children}</main>

@@ -155,7 +155,7 @@ export default function MarketPage() {
 
   useEffect(() => {
     if (!getToken()) {
-      router.replace('/login');
+      router.replace('/');
       return;
     }
     api<{ role?: UserRole }>('/users/me')

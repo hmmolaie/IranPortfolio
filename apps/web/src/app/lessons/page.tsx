@@ -18,7 +18,7 @@ export default function LessonsPage() {
 
   useEffect(() => {
     if (!getToken()) {
-      router.replace('/login');
+      router.replace('/');
       return;
     }
     api<Lesson[]>('/lessons').then(setLessons).catch(() => undefined);

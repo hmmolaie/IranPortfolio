@@ -1,8 +1,8 @@
 'use client';
 
-import { FormEvent, useState } from 'react';
+import { FormEvent, useEffect, useState } from 'react';
 import { useRouter } from 'next/navigation';
-import { api, setToken, setUserRole } from '@/lib/api';
+import { api, getToken, setToken, setUserRole } from '@/lib/api';
 
 const FEATURES = [
   'پیشنهاد سبد با هوش مصنوعی',
@@ -16,6 +16,12 @@ export default function HomePage() {
   const [password, setPassword] = useState('');
   const [error, setError] = useState('');
   const [loading, setLoading] = useState(false);
+
+  useEffect(() => {
+    if (getToken()) {
+      router.replace('/dashboard');
+    }
+  }, [router]);
 
   async function onSubmit(e: FormEvent) {
     e.preventDefault();

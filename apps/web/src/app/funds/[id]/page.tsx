@@ -181,7 +181,7 @@ export default function FundTrendPage() {
 
   useEffect(() => {
     if (!getToken()) {
-      router.replace('/login');
+      router.replace('/');
       return;
     }
     api<{ fund: FundDefinition; reports: FundReport[] }>(`/funds/timeline/${id}`)

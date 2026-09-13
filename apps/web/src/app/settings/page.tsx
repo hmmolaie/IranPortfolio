@@ -156,7 +156,7 @@ export default function SettingsPage() {
 
   useEffect(() => {
     if (!getToken()) {
-      router.replace('/login');
+      router.replace('/');
       return;
     }
     api<{

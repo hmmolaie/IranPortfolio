@@ -268,7 +268,7 @@ export default function MarketInstrumentPage() {
 
   useEffect(() => {
     if (!getToken()) {
-      router.replace('/login');
+      router.replace('/');
       return;
     }
     Promise.all([

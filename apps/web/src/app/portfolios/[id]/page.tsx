@@ -111,7 +111,7 @@ export default function PortfolioDetailPage() {
 
   useEffect(() => {
     if (!getToken()) {
-      router.replace('/login');
+      router.replace('/');
       return;
     }
     Promise.all([load(), loadChat()]).catch(() => router.replace('/portfolios'));

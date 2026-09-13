@@ -34,7 +34,7 @@ export default function AdminUsersPage() {
 
   useEffect(() => {
     if (!getToken()) {
-      router.replace('/login');
+      router.replace('/');
       return;
     }
     api<{ role?: string }>('/users/me')

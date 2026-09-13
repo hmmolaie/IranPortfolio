@@ -162,7 +162,7 @@ export default function FundsPage() {
 
   useEffect(() => {
     if (!getToken()) {
-      router.replace('/login');
+      router.replace('/');
       return;
     }
     load().catch(() => undefined);

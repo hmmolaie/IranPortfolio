@@ -35,7 +35,7 @@ export default function DashboardPage() {
 
   useEffect(() => {
     if (!getToken()) {
-      router.replace('/login');
+      router.replace('/');
       return;
     }
     api<{ name?: string; role?: UserRole }>('/users/me')
@@ -52,7 +52,7 @@ export default function DashboardPage() {
         }
         return loadPortfolios();
       })
-      .catch(() => router.replace('/login'));
+      .catch(() => router.replace('/'));
   }, [router]);
 
   useEffect(() => {
