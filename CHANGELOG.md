@@ -8,7 +8,7 @@
 ### Added
 
 - جمع‌آوری خودکار اخبار و فرصت‌های خرد مؤثر بر سبد، هر روز ۸ صبح به وقت ایران
-- ربات تلگرام ۸:۳۰: نمودار سبد جاری، پیشنهاد بهبود با دادهٔ بورس/ارز/اخبار، و فرصت‌های خرد
+- ربات تلگرام ۸:۳۰ از [`https://t.me/sabadyaar_bot`](https://t.me/sabadyaar_bot): نمودار سبد جاری، پیشنهاد بهبود با دادهٔ بورس/ارز/اخبار، و فرصت‌های خرد
 - GitHub Actions: استقرار خودکار سرور تست (`.github/workflows/deploy-test.yml`) + اسکریپت `scripts/deploy-test-server.sh`
 - استک کامل Docker (`docker-compose.yml` + `Dockerfile.api` / `Dockerfile.web`) برای دسترسی از راه دور
 - نمونه env سرور: `docker/env.production.example` (IP پیش‌فرض `46.249.100.230`)

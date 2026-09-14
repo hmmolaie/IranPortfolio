@@ -4,6 +4,8 @@ import { FormEvent, useEffect, useState } from 'react';
 import { useRouter } from 'next/navigation';
 import clsx from 'clsx';
 import { api, getToken } from '@/lib/api';
+import { TELEGRAM_BOT_USERNAME } from '@/lib/telegram';
+import { TelegramBotLink } from '@/components/TelegramBotLink';
 import { useToast } from '@/components/Toast';
 
 type ProviderId = 'openrouter' | 'openai' | 'custom';
@@ -123,8 +125,8 @@ export default function SettingsPage() {
     goldGramRial?: number | null;
   } | null>(null);
   const [tgForm, setTgForm] = useState({
-    botNameFa: '',
-    botUsername: '',
+    botNameFa: 'سبدیار',
+    botUsername: TELEGRAM_BOT_USERNAME,
     botToken: '',
     enabled: true,
   });
@@ -213,8 +215,8 @@ export default function SettingsPage() {
         } | null;
       }>('/telegram/config');
       setTgForm({
-        botNameFa: c.botNameFa ?? '',
-        botUsername: c.botUsername ?? '',
+        botNameFa: c.botNameFa?.trim() || 'سبدیار',
+        botUsername: c.botUsername?.trim() || TELEGRAM_BOT_USERNAME,
         botToken: '',
         enabled: c.enabled ?? true,
       });
@@ -743,7 +745,10 @@ export default function SettingsPage() {
               />
               <p className="mt-1 text-xs text-navy-800/55">
                 با ثبت موبایل، خلاصهٔ ۸:۳۰ صبح فقط وقتی می‌رسد که ربات تلگرام را با همین شماره
-                وصل کرده باشید.
+                وصل کرده باشید. لینک ربات:
+              </p>
+              <p className="mt-1 text-xs">
+                <TelegramBotLink href={tgMe?.deepLink} />
               </p>
             </div>
             <div>
@@ -792,35 +797,26 @@ export default function SettingsPage() {
 
           <section className="card max-w-2xl space-y-3">
             <h2 className="text-lg font-semibold">پیام تلگرام ساعت ۸:۳۰</h2>
-            {!tgMe?.configured ? (
+            <p className="text-sm leading-7 text-navy-800/75">
+              ۱. موبایل را در همین صفحه ذخیره کنید.
+              <br />
+              ۲. ربات را در تلگرام باز کنید، /start بزنید و همان شماره را بفرستید.
+              <br />
+              هر روز ۸:۳۰ نمودار سبد، پیشنهاد بهبود با دادهٔ بورس و ارز و اخبار، و فرصت‌های خرد
+              برایتان می‌آید.
+            </p>
+            <p className="text-sm">
+              لینک ربات:
+              <br />
+              <TelegramBotLink href={tgMe?.deepLink} />
+            </p>
+            {isAdmin && tgMe && !tgMe.configured && (
               <p className="text-sm text-navy-800/70">
-                ربات تلگرام هنوز توسط مدیر پیکربندی نشده است.
+                ارسال خودکار ۸:۳۰ بعد از ذخیرهٔ توکن در تب ربات تلگرام فعال می‌شود.
               </p>
-            ) : (
+            )}
+            {tgMe && (
               <>
-                <p className="text-sm leading-7 text-navy-800/75">
-                  ۱. موبایل را در همین صفحه ذخیره کنید.
-                  <br />
-                  ۲. ربات را در تلگرام باز کنید، /start بزنید و همان شماره را بفرستید.
-                  <br />
-                  هر روز ۸:۳۰ نمودار سبد، پیشنهاد بهبود با دادهٔ بورس و ارز و اخبار، و فرصت‌های
-                  خرد برایتان می‌آید.
-                </p>
-                {tgMe.deepLink && (
-                  <p className="text-sm">
-                    لینک ربات:
-                    <br />
-                    <a
-                      className="font-mono text-navy-900 underline"
-                      href={tgMe.deepLink}
-                      target="_blank"
-                      rel="noreferrer"
-                      dir="ltr"
-                    >
-                      {tgMe.deepLink}
-                    </a>
-                  </p>
-                )}
                 <p className="text-sm">
                   وضعیت اتصال:{' '}
                   <strong>{tgMe.linked ? 'وصل شده' : 'هنوز وصل نشده'}</strong>
@@ -1294,10 +1290,13 @@ export default function SettingsPage() {
       {tab === 'telegram' && isAdmin && (
         <form onSubmit={saveTelegram} className="card grid max-w-2xl gap-4">
           <p className="text-sm leading-7 text-navy-800/75">
-            ربات را در BotFather بسازید، بعد نام و نام کاربری و توکن را اینجا بگذارید. سرویس
-            API باید روشن بماند تا ساعت ۸:۳۰ پیام برود (نمودار سبد + پیشنهاد بهبود + اخبار).
-            کاربر باید موبایل را در پروفایل ثبت کند و ربات را استارت کند؛ تلگرام با شماره
-            به‌تنهایی پیام نمی‌فرستد.
+            ربات عمومی سبدیار همین است:
+            <br />
+            <TelegramBotLink />
+            <br />
+            نام کاربری پیش‌فرض را عوض نکنید مگر ربات دیگری می‌سازید. توکن را از BotFather بگیرید و
+            ذخیره کنید. سرویس API باید روشن بماند تا ساعت ۸:۳۰ پیام برود. کاربر باید موبایل را در
+            پروفایل ثبت کند و ربات را استارت کند؛ تلگرام با شماره به‌تنهایی پیام نمی‌فرستد.
           </p>
           <div>
             <label className="label">نام ربات (برای متن پیام)</label>
@@ -1314,7 +1313,7 @@ export default function SettingsPage() {
               className="input"
               value={tgForm.botUsername}
               onChange={(e) => setTgForm({ ...tgForm, botUsername: e.target.value })}
-              placeholder="sabadyar_bot"
+              placeholder={TELEGRAM_BOT_USERNAME}
               dir="ltr"
             />
           </div>

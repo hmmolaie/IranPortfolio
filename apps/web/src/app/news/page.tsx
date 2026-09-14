@@ -3,6 +3,7 @@
 import { useEffect, useState } from 'react';
 import { useRouter } from 'next/navigation';
 import { api, formatNum, getToken, getUserRole, setUserRole, UserRole } from '@/lib/api';
+import { TelegramBotLink } from '@/components/TelegramBotLink';
 import { useToast } from '@/components/Toast';
 
 type NewsItem = {
@@ -133,6 +134,11 @@ export default function NewsPage() {
               ? ' در صورت نیاز می‌توانید همین امروز را دستی هم به‌روز کنید.'
               : ''}
           </p>
+          <p className="mt-2 text-sm text-navy-800/70">
+            ربات تلگرام:
+            <br />
+            <TelegramBotLink />
+          </p>
           {data?.todayLabelFa && (
             <p className="mt-1 text-sm text-navy-800/50">امروز: {data.todayLabelFa}</p>
           )}
@@ -148,7 +154,9 @@ export default function NewsPage() {
         <p className="rounded-lg bg-navy-50 px-4 py-3 text-sm text-navy-800/75">
           اتصال مستقیم به شبکه X در سبدیار نیست. جمع‌آوری ۸ صبح و پیام تلگرام ۸:۳۰ از مدل
           زبانی و ربات تنظیم‌شده در صفحهٔ تنظیمات استفاده می‌کنند. برای دریافت پیام، کاربر باید
-          موبایل را در پروفایل بگذارد و ربات را استارت کند.
+          موبایل را در پروفایل بگذارد و ربات را از لینک زیر استارت کند.
+          <br />
+          <TelegramBotLink />
         </p>
       )}
 

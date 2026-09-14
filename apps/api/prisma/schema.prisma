@@ -430,7 +430,7 @@ model AiTrace {
   @@index([purpose])
 }
 
-/** تنظیمات تک‌ردیفی ربات تلگرام (توکن رمزنگاری‌شده) */
+/** تنظیمات تک‌ردیفی ربات تلگرام (توکن رمزنگاری‌شده). نام کاربری پیش‌فرض: sabadyaar_bot */
 model TelegramBotConfig {
   id                String   @id @default("default")
   botNameFa         String?

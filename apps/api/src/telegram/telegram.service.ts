@@ -9,6 +9,11 @@ import { PortfoliosService } from '../portfolios/portfolios.service';
 import { NewsService } from '../news/news.service';
 import { UsersService } from '../users/users.service';
 import { renderPortfolioPiePng } from './pie-chart-png';
+import {
+  DEFAULT_TELEGRAM_BOT_NAME_FA,
+  DEFAULT_TELEGRAM_BOT_URL,
+  DEFAULT_TELEGRAM_BOT_USERNAME,
+} from './constants';
 
 type NewsItemRow = {
   titleFa: string;
@@ -77,6 +82,21 @@ export class TelegramService implements OnModuleInit {
     return this.config.get<string>('LLM_TOKEN_ENCRYPTION_KEY') ?? '0123456789abcdef0123456789abcdef';
   }
 
+  private resolveBotUsername(stored?: string | null) {
+    const username = (stored ?? '').trim().replace(/^@/, '');
+    return username || DEFAULT_TELEGRAM_BOT_USERNAME;
+  }
+
+  private resolveBotNameFa(stored?: string | null) {
+    return (stored ?? '').trim() || DEFAULT_TELEGRAM_BOT_NAME_FA;
+  }
+
+  private botDeepLink(username: string) {
+    return username === DEFAULT_TELEGRAM_BOT_USERNAME
+      ? DEFAULT_TELEGRAM_BOT_URL
+      : `https://t.me/${username}`;
+  }
+
   async getPublicConfig() {
     const row = await this.prisma.telegramBotConfig.findUnique({ where: { id: CONFIG_ID } });
     const linkedCount = await this.prisma.userProfile.count({
@@ -85,9 +105,11 @@ export class TelegramService implements OnModuleInit {
     const lastDigest = await this.prisma.telegramDigestLog.findFirst({
       orderBy: { dateKey: 'desc' },
     });
+    const botUsername = this.resolveBotUsername(row?.botUsername);
     return {
-      botNameFa: row?.botNameFa ?? '',
-      botUsername: row?.botUsername ?? '',
+      botNameFa: this.resolveBotNameFa(row?.botNameFa),
+      botUsername,
+      deepLink: this.botDeepLink(botUsername),
       enabled: row?.enabled ?? true,
       hasToken: Boolean(row?.botTokenEncrypted),
       linkedCount,
@@ -98,14 +120,14 @@ export class TelegramService implements OnModuleInit {
   async getUserStatus(userId: string) {
     const row = await this.prisma.telegramBotConfig.findUnique({ where: { id: CONFIG_ID } });
     const profile = await this.prisma.userProfile.findUnique({ where: { userId } });
-    const username = (row?.botUsername ?? '').replace(/^@/, '');
-    const configured = Boolean(row?.botTokenEncrypted && username && row.enabled);
+    const username = this.resolveBotUsername(row?.botUsername);
+    const configured = Boolean(row?.botTokenEncrypted && row.enabled !== false);
     return {
       configured,
       enabled: row?.enabled ?? false,
-      botNameFa: row?.botNameFa ?? '',
+      botNameFa: this.resolveBotNameFa(row?.botNameFa),
       botUsername: username,
-      deepLink: username ? `https://t.me/${username}` : null,
+      deepLink: this.botDeepLink(username),
       mobilePhone: profile?.mobilePhone ?? null,
       linked: Boolean(profile?.telegramChatId),
       telegramUsername: profile?.telegramUsername ?? null,
@@ -119,11 +141,16 @@ export class TelegramService implements OnModuleInit {
     enabled?: boolean;
   }) {
     const current = await this.prisma.telegramBotConfig.findUnique({ where: { id: CONFIG_ID } });
-    let botUsername = (data.botUsername ?? current?.botUsername ?? '').trim().replace(/^@/, '');
-    if (botUsername && !/^[A-Za-z0-9_]{5,32}$/.test(botUsername)) {
+    let botUsername = (data.botUsername ?? current?.botUsername ?? DEFAULT_TELEGRAM_BOT_USERNAME)
+      .trim()
+      .replace(/^@/, '');
+    if (!botUsername) botUsername = DEFAULT_TELEGRAM_BOT_USERNAME;
+    if (!/^[A-Za-z0-9_]{5,32}$/.test(botUsername)) {
       throw new BadRequestException('نام کاربری ربات نامعتبر است (بدون @، فقط حروف و عدد و _)');
     }
-    const botNameFa = (data.botNameFa ?? current?.botNameFa ?? '').trim() || null;
+    const botNameFa =
+      (data.botNameFa ?? current?.botNameFa ?? DEFAULT_TELEGRAM_BOT_NAME_FA).trim() ||
+      DEFAULT_TELEGRAM_BOT_NAME_FA;
     let botTokenEncrypted = current?.botTokenEncrypted ?? null;
     if (data.botToken?.trim()) {
       const token = data.botToken.trim();
@@ -139,13 +166,13 @@ export class TelegramService implements OnModuleInit {
       create: {
         id: CONFIG_ID,
         botNameFa,
-        botUsername: botUsername || null,
+        botUsername,
         botTokenEncrypted,
         enabled,
       },
       update: {
         botNameFa,
-        botUsername: botUsername || null,
+        botUsername,
         botTokenEncrypted,
         enabled,
         ...(data.botToken?.trim() ? { lastUpdateId: null } : {}),
@@ -360,7 +387,7 @@ export class TelegramService implements OnModuleInit {
           telegramLinkedAt: new Date(),
         },
       });
-      const name = botNameFa?.trim() || 'سبدیار';
+      const name = this.resolveBotNameFa(botNameFa);
       await this.tg(token, 'sendMessage', {
         chat_id: chatId,
         text: `اتصال برقرار شد. هر روز ساعت ۸:۳۰ صبح، نمودار سبد، پیشنهاد بهبود و خلاصهٔ اخبار ${name} برایتان می‌آید.`,

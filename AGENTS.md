@@ -53,7 +53,7 @@ Node `>=20`. با Docker دیتابیس PostgreSQL است؛ `NEXT_PUBLIC_API_URL
 
 اندپوینت‌های مهم سبد: `POST :id/suggest` · `rebalance` · `monthly-evaluate` · `adjust` · `cash`.
 اخبار روزانه: کرون ۸ صبح تهران در `news` (`POST /api/news/refresh` دستی برای admin).
-تلگرام: تنظیمات ادمین در `telegram`؛ پیام ۸:۳۰ به کاربرانی که موبایل پروفایل دارند و ربات را وصل کرده‌اند.
+تلگرام: ربات عمومی `https://t.me/sabadyaar_bot`؛ تنظیمات ادمین در `telegram`؛ پیام ۸:۳۰ به کاربرانی که موبایل پروفایل دارند و ربات را وصل کرده‌اند.
 
 ## سبک کد
 
