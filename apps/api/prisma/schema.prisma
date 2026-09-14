@@ -90,8 +90,8 @@ model UserProfile {
   telegramLinkedAt        DateTime?
   user                    User      @relation(fields: [userId], references: [id], onDelete: Cascade)
 
-  @@unique([mobilePhone])
-  @@unique([telegramChatId])
+  @@index([mobilePhone])
+  @@index([telegramChatId])
 }
 
 model LlmSetting {

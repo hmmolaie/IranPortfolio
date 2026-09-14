@@ -9,7 +9,6 @@ import { PortfoliosService } from '../portfolios/portfolios.service';
 import { NewsService } from '../news/news.service';
 import { UsersService } from '../users/users.service';
 import { renderPortfolioPiePng } from './pie-chart-png';
-import { STRATEGY_LABELS_FA } from '@sabadyar/shared';
 
 type NewsItemRow = {
   titleFa: string;
@@ -42,6 +41,15 @@ type TelegramUpdate = {
 
 const CONFIG_ID = 'default';
 const TG_API = 'https://api.telegram.org';
+
+const STRATEGY_FA: Record<string, string> = {
+  GROWTH: 'رشدی',
+  VALUE: 'ارزشی',
+  INCOME: 'درآمدی / سود تقسیمی',
+  HEDGED: 'پوششی',
+  CONSERVATIVE: 'محافظه‌کار',
+  CUSTOM: 'سفارشی',
+};
 
 @Injectable()
 export class TelegramService implements OnModuleInit {
@@ -435,8 +443,7 @@ export class TelegramService implements OnModuleInit {
     { hasPortfolio: true }
   >): string {
     const name = escapeHtml(briefing.name);
-    const strategy =
-      STRATEGY_LABELS_FA[briefing.strategy as keyof typeof STRATEGY_LABELS_FA] ?? briefing.strategy;
+    const strategy = STRATEGY_FA[briefing.strategy] ?? briefing.strategy;
     const lines: string[] = [
       `<b>نمودار سبد «${name}»</b>`,
       `استراتژی: ${escapeHtml(strategy)}`,
@@ -559,7 +566,7 @@ export class TelegramService implements OnModuleInit {
   private async findProfileByMobile(phone: string) {
     const normalized = normalizeIranMobile(phone);
     if (!normalized) return null;
-    return this.prisma.userProfile.findUnique({ where: { mobilePhone: normalized } });
+    return this.prisma.userProfile.findFirst({ where: { mobilePhone: normalized } });
   }
 
   private async readToken(): Promise<string | null> {

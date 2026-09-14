@@ -22,4 +22,8 @@ async function bootstrap() {
   console.log(`سبدیار API روی پورت ${port}`);
 }
 
-bootstrap();
+bootstrap().catch((err) => {
+  // eslint-disable-next-line no-console
+  console.error('API bootstrap failed', err);
+  process.exit(1);
+});
