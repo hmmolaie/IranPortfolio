@@ -1,7 +1,7 @@
 'use client';
 
 import Link from 'next/link';
-import { usePathname } from 'next/navigation';
+import { usePathname, useRouter } from 'next/navigation';
 import { getToken, clearSession, api, getUserRole, setUserRole, UserRole } from '@/lib/api';
 import { useEffect, useState } from 'react';
 import clsx from 'clsx';
@@ -20,6 +20,8 @@ const allLinks = [
 
 export function AppShell({ children }: { children: React.ReactNode }) {
   const pathname = usePathname();
+  const router = useRouter();
+  const [ready, setReady] = useState(false);
   const [authed, setAuthed] = useState(false);
   const [role, setRole] = useState<UserRole | null>(null);
   const [userLabel, setUserLabel] = useState('');
@@ -27,12 +29,21 @@ export function AppShell({ children }: { children: React.ReactNode }) {
 
   useEffect(() => {
     const token = getToken();
-    setAuthed(Boolean(token));
-    if (!token) {
+    const hasToken = Boolean(token);
+    setAuthed(hasToken);
+    setReady(true);
+
+    if (!isAuthPage && !hasToken) {
+      router.replace('/');
+      return;
+    }
+
+    if (!hasToken) {
       setRole(null);
       setUserLabel('');
       return;
     }
+
     const cached = getUserRole();
     if (cached) setRole(cached);
     api<{ role?: UserRole; email?: string; name?: string | null }>('/users/me')
@@ -43,8 +54,14 @@ export function AppShell({ children }: { children: React.ReactNode }) {
         }
         setUserLabel(u.name?.trim() || u.email || '');
       })
-      .catch(() => undefined);
-  }, [pathname]);
+      .catch(() => {
+        clearSession();
+        setAuthed(false);
+        setRole(null);
+        setUserLabel('');
+        if (!isAuthPage) router.replace('/');
+      });
+  }, [pathname, router, isAuthPage]);
 
   const links = allLinks.filter((l) => !l.adminOnly || role === 'ADMIN');
 
@@ -60,6 +77,16 @@ export function AppShell({ children }: { children: React.ReactNode }) {
     return (
       <ToastProvider>
         <main className="min-h-screen">{children}</main>
+      </ToastProvider>
+    );
+  }
+
+  if (!ready || !authed) {
+    return (
+      <ToastProvider>
+        <main className="flex min-h-screen items-center justify-center text-navy-800/60">
+          در حال بررسی ورود...
+        </main>
       </ToastProvider>
     );
   }
@@ -96,33 +123,31 @@ export function AppShell({ children }: { children: React.ReactNode }) {
             <p className="text-sm text-navy-800/70">
               خروجی سایت مشاوره سرمایه‌گذاری رسمی نیست.
             </p>
-            {authed && (
-              <div className="flex items-center gap-3 text-sm">
-                {userLabel && (
-                  <span className="max-w-[10rem] truncate font-medium text-navy-900" title={userLabel}>
-                    {userLabel}
-                  </span>
+            <div className="flex items-center gap-3 text-sm">
+              {userLabel && (
+                <span className="max-w-[10rem] truncate font-medium text-navy-900" title={userLabel}>
+                  {userLabel}
+                </span>
+              )}
+              <Link
+                href="/settings"
+                className={clsx(
+                  'rounded-lg px-2.5 py-1.5 transition',
+                  pathname.startsWith('/settings')
+                    ? 'bg-navy-900/10 font-medium text-navy-900'
+                    : 'text-navy-800/65 hover:bg-navy-900/5 hover:text-navy-900',
                 )}
-                <Link
-                  href="/settings"
-                  className={clsx(
-                    'rounded-lg px-2.5 py-1.5 transition',
-                    pathname.startsWith('/settings')
-                      ? 'bg-navy-900/10 font-medium text-navy-900'
-                      : 'text-navy-800/65 hover:bg-navy-900/5 hover:text-navy-900',
-                  )}
-                >
-                  تنظیمات
-                </Link>
-                <button
-                  type="button"
-                  onClick={logout}
-                  className="rounded-lg px-2.5 py-1.5 text-navy-800/55 transition hover:bg-navy-900/5 hover:text-navy-900"
-                >
-                  خروج
-                </button>
-              </div>
-            )}
+              >
+                تنظیمات
+              </Link>
+              <button
+                type="button"
+                onClick={logout}
+                className="rounded-lg px-2.5 py-1.5 text-navy-800/55 transition hover:bg-navy-900/5 hover:text-navy-900"
+              >
+                خروج
+              </button>
+            </div>
           </header>
           <main className="px-4 py-8 sm:px-8">{children}</main>
         </div>

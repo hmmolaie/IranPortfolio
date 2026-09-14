@@ -1,14 +1,36 @@
 export const API_URL = process.env.NEXT_PUBLIC_API_URL ?? 'http://localhost:3001';
 
+/** پرچم حضور جلسه برای middleware (JWT در localStorage می‌ماند) */
+export const AUTH_COOKIE = 'sabadyar_auth';
+
+function writeAuthCookie(present: boolean) {
+  if (typeof document === 'undefined') return;
+  if (present) {
+    document.cookie = `${AUTH_COOKIE}=1; Path=/; SameSite=Lax; Max-Age=${60 * 60 * 24 * 30}`;
+  } else {
+    document.cookie = `${AUTH_COOKIE}=; Path=/; SameSite=Lax; Max-Age=0`;
+  }
+}
+
 export function getToken(): string | null {
   if (typeof window === 'undefined') return null;
-  return localStorage.getItem('sabadyar_token');
+  const token = localStorage.getItem('sabadyar_token');
+  // همگام‌سازی کوکی برای کاربرانی که قبل از این تغییر لاگین بوده‌اند
+  if (token && !document.cookie.includes(`${AUTH_COOKIE}=1`)) {
+    writeAuthCookie(true);
+  }
+  return token;
 }
 
 export function setToken(token: string | null) {
   if (typeof window === 'undefined') return;
-  if (token) localStorage.setItem('sabadyar_token', token);
-  else localStorage.removeItem('sabadyar_token');
+  if (token) {
+    localStorage.setItem('sabadyar_token', token);
+    writeAuthCookie(true);
+  } else {
+    localStorage.removeItem('sabadyar_token');
+    writeAuthCookie(false);
+  }
 }
 
 export type UserRole = 'ADMIN' | 'USER';

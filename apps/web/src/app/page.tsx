@@ -10,6 +10,17 @@ const FEATURES = [
   'تحلیل صندوق‌ها و اخبار اقتصادی',
 ];
 
+function safeNextPath(raw: string | null): string {
+  if (!raw || !raw.startsWith('/') || raw.startsWith('//')) return '/dashboard';
+  if (raw === '/' || raw === '/login' || raw === '/register') return '/dashboard';
+  return raw;
+}
+
+function nextFromUrl(): string {
+  if (typeof window === 'undefined') return '/dashboard';
+  return safeNextPath(new URLSearchParams(window.location.search).get('next'));
+}
+
 export default function HomePage() {
   const router = useRouter();
   const [username, setUsername] = useState('');
@@ -19,7 +30,7 @@ export default function HomePage() {
 
   useEffect(() => {
     if (getToken()) {
-      router.replace('/dashboard');
+      router.replace(nextFromUrl());
     }
   }, [router]);
 
@@ -35,7 +46,7 @@ export default function HomePage() {
       });
       setToken(res.accessToken);
       setUserRole(res.user.role);
-      router.push('/dashboard');
+      router.push(nextFromUrl());
     } catch (err) {
       setError((err as Error).message);
     } finally {

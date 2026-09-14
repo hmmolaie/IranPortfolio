@@ -22,6 +22,7 @@ class AskDto {
 }
 
 @Controller('market')
+@UseGuards(JwtAuthGuard)
 export class MarketController {
   constructor(private readonly market: MarketService) {}
 
@@ -58,7 +59,6 @@ export class MarketController {
   }
 
   @Post('instruments/:id/ask')
-  @UseGuards(JwtAuthGuard)
   ask(
     @Req() req: { user: { userId: string } },
     @Param('id') id: string,
@@ -68,7 +68,7 @@ export class MarketController {
   }
 
   @Post('ingest')
-  @UseGuards(JwtAuthGuard, AdminGuard)
+  @UseGuards(AdminGuard)
   ingest() {
     return this.market.ingestCatchUp();
   }
