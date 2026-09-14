@@ -169,6 +169,19 @@ export default function SettingsPage() {
     }
   }
 
+  async function loadSpotLatest() {
+    try {
+      const p = await api<{
+        dateKey?: string;
+        usdIrr?: number | null;
+        goldGramRial?: number | null;
+      } | null>('/prices/latest');
+      setSpotLatest(p);
+    } catch {
+      /* ignore */
+    }
+  }
+
   async function loadTelegramMe() {
     try {
       const s = await api<{
