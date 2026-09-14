@@ -76,14 +76,22 @@ model User {
 }
 
 model UserProfile {
-  id                      String  @id @default(cuid())
-  userId                  String  @unique
-  riskTolerance           Int     @default(5)
-  horizonMonths           Int     @default(12)
+  id                      String    @id @default(cuid())
+  userId                  String    @unique
+  riskTolerance           Int       @default(5)
+  horizonMonths           Int       @default(12)
   notes                   String?
   investmentPreferencesFa String?
   constraintsFa           String?
-  user                    User    @relation(fields: [userId], references: [id], onDelete: Cascade)
+  /// موبایل ایران نرمال‌شده مثل 09121234567
+  mobilePhone             String?
+  telegramChatId          String?
+  telegramUsername        String?
+  telegramLinkedAt        DateTime?
+  user                    User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([mobilePhone])
+  @@unique([telegramChatId])
 }
 
 model LlmSetting {
@@ -390,6 +398,14 @@ model EconomicNewsItem {
   relevanceScore  Float?
   sectorsFa       String?
   xSourceHintFa   String?
+  /// macro | opportunity
+  category        String?
+  /// ipo | auto_sale | coin_auction | sukuk | housing | fund | deposit | other
+  opportunityKind String?
+  participateHowFa String?
+  deadlineFa      String?
+  officialSourceFa String?
+  isRetailActionable Boolean @default(false)
   sortOrder       Int      @default(0)
   createdAt       DateTime @default(now())
 
@@ -412,6 +428,27 @@ model AiTrace {
 
   @@index([userId])
   @@index([purpose])
+}
+
+/** تنظیمات تک‌ردیفی ربات تلگرام (توکن رمزنگاری‌شده) */
+model TelegramBotConfig {
+  id                String   @id @default("default")
+  botNameFa         String?
+  botUsername       String?
+  botTokenEncrypted String?
+  enabled           Boolean  @default(true)
+  lastUpdateId      String?
+  createdAt         DateTime @default(now())
+  updatedAt         DateTime @updatedAt
+}
+
+model TelegramDigestLog {
+  id              String   @id @default(cuid())
+  dateKey         String   @unique
+  sentCount       Int      @default(0)
+  failedCount     Int      @default(0)
+  skippedReasonFa String?
+  createdAt       DateTime @default(now())
 }
 
 /** تنظیمات تک‌ردیفی آدرس API قیمت لحظه‌ای دلار و طلا */

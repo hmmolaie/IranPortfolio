@@ -25,7 +25,7 @@ type LlmPrompt = {
   isCustom: boolean;
 };
 
-type SettingsTab = 'profile' | 'password' | 'funds' | 'prompts' | 'llm' | 'spotPrices';
+type SettingsTab = 'profile' | 'password' | 'funds' | 'prompts' | 'llm' | 'spotPrices' | 'telegram';
 
 const TABS: { id: SettingsTab; label: string; adminOnly?: boolean }[] = [
   { id: 'profile', label: 'پروفایل' },
@@ -34,6 +34,7 @@ const TABS: { id: SettingsTab; label: string; adminOnly?: boolean }[] = [
   { id: 'prompts', label: 'پرامپت‌ها', adminOnly: true },
   { id: 'llm', label: 'API مدل زبانی', adminOnly: true },
   { id: 'spotPrices', label: 'API قیمت لحظه‌ای دلار و طلا', adminOnly: true },
+  { id: 'telegram', label: 'ربات تلگرام', adminOnly: true },
 ];
 
 const PROVIDERS: Record<
@@ -79,6 +80,7 @@ export default function SettingsPage() {
     notes: '',
     investmentPreferencesFa: '',
     constraintsFa: '',
+    mobilePhone: '',
   });
   const [provider, setProvider] = useState<ProviderId>('openrouter');
   const [llm, setLlm] = useState({
@@ -120,6 +122,31 @@ export default function SettingsPage() {
     usdIrr?: number | null;
     goldGramRial?: number | null;
   } | null>(null);
+  const [tgForm, setTgForm] = useState({
+    botNameFa: '',
+    botUsername: '',
+    botToken: '',
+    enabled: true,
+  });
+  const [tgMeta, setTgMeta] = useState({
+    hasToken: false,
+    linkedCount: 0,
+    lastDigest: null as null | {
+      dateKey: string;
+      sentCount: number;
+      failedCount: number;
+      skippedReasonFa?: string | null;
+    },
+  });
+  const [tgMe, setTgMe] = useState<{
+    configured: boolean;
+    botNameFa: string;
+    botUsername: string;
+    deepLink: string | null;
+    linked: boolean;
+  } | null>(null);
+  const [tgBusy, setTgBusy] = useState(false);
+  const [tgFeedback, setTgFeedback] = useState<{ ok: boolean; text: string } | null>(null);
 
   const visibleTabs = TABS.filter((t) => !t.adminOnly || isAdmin);
 
@@ -142,16 +169,49 @@ export default function SettingsPage() {
     }
   }
 
-  async function loadSpotLatest() {
+  async function loadTelegramMe() {
     try {
-      const p = await api<{
-        dateKey?: string;
-        usdIrr?: number | null;
-        goldGramRial?: number | null;
-      } | null>('/prices/latest');
-      setSpotLatest(p);
+      const s = await api<{
+        configured: boolean;
+        botNameFa: string;
+        botUsername: string;
+        deepLink: string | null;
+        linked: boolean;
+      }>('/telegram/me');
+      setTgMe(s);
     } catch {
       /* ignore */
+    }
+  }
+
+  async function loadTelegramConfig() {
+    try {
+      const c = await api<{
+        botNameFa?: string;
+        botUsername?: string;
+        enabled?: boolean;
+        hasToken?: boolean;
+        linkedCount?: number;
+        lastDigest?: {
+          dateKey: string;
+          sentCount: number;
+          failedCount: number;
+          skippedReasonFa?: string | null;
+        } | null;
+      }>('/telegram/config');
+      setTgForm({
+        botNameFa: c.botNameFa ?? '',
+        botUsername: c.botUsername ?? '',
+        botToken: '',
+        enabled: c.enabled ?? true,
+      });
+      setTgMeta({
+        hasToken: Boolean(c.hasToken),
+        linkedCount: c.linkedCount ?? 0,
+        lastDigest: c.lastDigest ?? null,
+      });
+    } catch {
+      /* non-admin */
     }
   }
 
@@ -170,6 +230,7 @@ export default function SettingsPage() {
         notes?: string | null;
         investmentPreferencesFa?: string | null;
         constraintsFa?: string | null;
+        mobilePhone?: string | null;
       };
     }>('/users/me').then((u) => {
       const admin = u.role === 'ADMIN';
@@ -182,10 +243,13 @@ export default function SettingsPage() {
         notes: u.profile?.notes ?? '',
         investmentPreferencesFa: u.profile?.investmentPreferencesFa ?? '',
         constraintsFa: u.profile?.constraintsFa ?? '',
+        mobilePhone: u.profile?.mobilePhone ?? '',
       });
+      loadTelegramMe().catch(() => undefined);
       if (admin) {
         loadSpotConfig().catch(() => undefined);
         loadSpotLatest().catch(() => undefined);
+        loadTelegramConfig().catch(() => undefined);
       }
     });
     api<{
@@ -214,6 +278,9 @@ export default function SettingsPage() {
     if (tab === 'spotPrices' && isAdmin) {
       loadSpotConfig().catch(() => undefined);
       loadSpotLatest().catch(() => undefined);
+    }
+    if (tab === 'telegram' && isAdmin) {
+      loadTelegramConfig().catch(() => undefined);
     }
   }, [tab, isAdmin]);
 
@@ -295,9 +362,95 @@ export default function SettingsPage() {
           notes: profile.notes,
           investmentPreferencesFa: profile.investmentPreferencesFa,
           constraintsFa: profile.constraintsFa,
+          mobilePhone: profile.mobilePhone,
         }),
       });
       toast.success('پروفایل ذخیره شد.');
+      loadTelegramMe().catch(() => undefined);
+    } catch (err) {
+      toast.error((err as Error).message);
+    } finally {
+      setProfileBusy(false);
+    }
+  }
+
+  async function saveTelegram(e: FormEvent) {
+    e.preventDefault();
+    setTgBusy(true);
+    setTgFeedback(null);
+    try {
+      await api('/telegram/config', {
+        method: 'PUT',
+        body: JSON.stringify({
+          botNameFa: tgForm.botNameFa.trim(),
+          botUsername: tgForm.botUsername.trim().replace(/^@/, ''),
+          enabled: tgForm.enabled,
+          ...(tgForm.botToken.trim() ? { botToken: tgForm.botToken.trim() } : {}),
+        }),
+      });
+      setTgForm((p) => ({ ...p, botToken: '' }));
+      await loadTelegramConfig();
+      await loadTelegramMe();
+      const text = 'تنظیمات ربات تلگرام ذخیره شد.';
+      setTgFeedback({ ok: true, text });
+      toast.success(text);
+    } catch (err) {
+      const text = (err as Error).message || 'ذخیره ربات ناموفق بود.';
+      setTgFeedback({ ok: false, text });
+      toast.error(text);
+    } finally {
+      setTgBusy(false);
+    }
+  }
+
+  async function testTelegram() {
+    setTgBusy(true);
+    setTgFeedback(null);
+    try {
+      const res = await api<{ ok: boolean; messageFa?: string; botUsername?: string }>(
+        '/telegram/test',
+        { method: 'POST' },
+      );
+      const text = res.messageFa ?? 'اتصال برقرار است.';
+      setTgFeedback({ ok: true, text });
+      toast.success(text);
+    } catch (err) {
+      const text = (err as Error).message || 'تست ربات ناموفق بود.';
+      setTgFeedback({ ok: false, text });
+      toast.error(text);
+    } finally {
+      setTgBusy(false);
+    }
+  }
+
+  async function sendTelegramToday() {
+    setTgBusy(true);
+    setTgFeedback(null);
+    try {
+      const res = await api<{ ok: boolean; messageFa?: string }>('/telegram/send-today', {
+        method: 'POST',
+        body: JSON.stringify({ force: true }),
+      });
+      const text = res.messageFa ?? 'ارسال انجام شد.';
+      setTgFeedback({ ok: Boolean(res.ok), text });
+      if (res.ok) toast.success(text);
+      else toast.error(text);
+      await loadTelegramConfig();
+    } catch (err) {
+      const text = (err as Error).message || 'ارسال ناموفق بود.';
+      setTgFeedback({ ok: false, text });
+      toast.error(text);
+    } finally {
+      setTgBusy(false);
+    }
+  }
+
+  async function unlinkTelegram() {
+    setProfileBusy(true);
+    try {
+      await api('/telegram/unlink', { method: 'POST' });
+      await loadTelegramMe();
+      toast.success('اتصال تلگرام قطع شد.');
     } catch (err) {
       toast.error((err as Error).message);
     } finally {
@@ -519,7 +672,7 @@ export default function SettingsPage() {
     <div className="space-y-6">
       <div>
         <h1 className="text-3xl font-bold">تنظیمات</h1>
-        <p className="mt-2 text-navy-800/70">پروفایل، پرامپت‌ها، صندوق‌ها و اتصال به مدل زبانی</p>
+        <p className="mt-2 text-navy-800/70">پروفایل، پرامپت‌ها، صندوق‌ها، اتصال مدل زبانی و ربات تلگرام</p>
       </div>
 
       <div className="flex flex-col gap-6 lg:flex-row lg:items-start">
@@ -566,6 +719,21 @@ export default function SettingsPage() {
               />
             </div>
             <div>
+              <label className="label">موبایل (برای پیام تلگرام)</label>
+              <input
+                className="input"
+                value={profile.mobilePhone}
+                onChange={(e) => setProfile({ ...profile, mobilePhone: e.target.value })}
+                placeholder="09121234567"
+                dir="ltr"
+                inputMode="tel"
+              />
+              <p className="mt-1 text-xs text-navy-800/55">
+                با ثبت موبایل، خلاصهٔ ۸:۳۰ صبح فقط وقتی می‌رسد که ربات تلگرام را با همین شماره
+                وصل کرده باشید.
+              </p>
+            </div>
+            <div>
               <label className="label">تحمل ریسک (۱–۱۰)</label>
               <input
                 className="input"
@@ -608,6 +776,55 @@ export default function SettingsPage() {
               {profileBusy ? 'در حال ذخیره...' : 'ذخیره پروفایل'}
             </button>
           </form>
+
+          <section className="card max-w-2xl space-y-3">
+            <h2 className="text-lg font-semibold">پیام تلگرام ساعت ۸:۳۰</h2>
+            {!tgMe?.configured ? (
+              <p className="text-sm text-navy-800/70">
+                ربات تلگرام هنوز توسط مدیر پیکربندی نشده است.
+              </p>
+            ) : (
+              <>
+                <p className="text-sm leading-7 text-navy-800/75">
+                  ۱. موبایل را در همین صفحه ذخیره کنید.
+                  <br />
+                  ۲. ربات را در تلگرام باز کنید، /start بزنید و همان شماره را بفرستید.
+                  <br />
+                  هر روز ۸:۳۰ نمودار سبد، پیشنهاد بهبود با دادهٔ بورس و ارز و اخبار، و فرصت‌های
+                  خرد برایتان می‌آید.
+                </p>
+                {tgMe.deepLink && (
+                  <p className="text-sm">
+                    لینک ربات:
+                    <br />
+                    <a
+                      className="font-mono text-navy-900 underline"
+                      href={tgMe.deepLink}
+                      target="_blank"
+                      rel="noreferrer"
+                      dir="ltr"
+                    >
+                      {tgMe.deepLink}
+                    </a>
+                  </p>
+                )}
+                <p className="text-sm">
+                  وضعیت اتصال:{' '}
+                  <strong>{tgMe.linked ? 'وصل شده' : 'هنوز وصل نشده'}</strong>
+                </p>
+                {tgMe.linked && (
+                  <button
+                    type="button"
+                    className="btn-secondary w-fit"
+                    disabled={profileBusy}
+                    onClick={unlinkTelegram}
+                  >
+                    قطع اتصال تلگرام
+                  </button>
+                )}
+              </>
+            )}
+          </section>
         </div>
       )}
 
@@ -1056,6 +1273,104 @@ export default function SettingsPage() {
             >
               {spotFeedback.ok ? '✓ ' : '! '}
               {spotFeedback.text}
+            </div>
+          )}
+        </form>
+      )}
+
+      {tab === 'telegram' && isAdmin && (
+        <form onSubmit={saveTelegram} className="card grid max-w-2xl gap-4">
+          <p className="text-sm leading-7 text-navy-800/75">
+            ربات را در BotFather بسازید، بعد نام و نام کاربری و توکن را اینجا بگذارید. سرویس
+            API باید روشن بماند تا ساعت ۸:۳۰ پیام برود (نمودار سبد + پیشنهاد بهبود + اخبار).
+            کاربر باید موبایل را در پروفایل ثبت کند و ربات را استارت کند؛ تلگرام با شماره
+            به‌تنهایی پیام نمی‌فرستد.
+          </p>
+          <div>
+            <label className="label">نام ربات (برای متن پیام)</label>
+            <input
+              className="input"
+              value={tgForm.botNameFa}
+              onChange={(e) => setTgForm({ ...tgForm, botNameFa: e.target.value })}
+              placeholder="سبدیار"
+            />
+          </div>
+          <div>
+            <label className="label">نام کاربری ربات (بدون @)</label>
+            <input
+              className="input"
+              value={tgForm.botUsername}
+              onChange={(e) => setTgForm({ ...tgForm, botUsername: e.target.value })}
+              placeholder="sabadyar_bot"
+              dir="ltr"
+            />
+          </div>
+          <div>
+            <label className="label">توکن ربات</label>
+            <input
+              className="input"
+              type="password"
+              value={tgForm.botToken}
+              onChange={(e) => setTgForm({ ...tgForm, botToken: e.target.value })}
+              placeholder={tgMeta.hasToken ? 'برای جایگزینی توکن جدید وارد کنید' : 'از BotFather'}
+              dir="ltr"
+            />
+          </div>
+          <label className="flex items-center gap-2 text-sm">
+            <input
+              type="checkbox"
+              checked={tgForm.enabled}
+              onChange={(e) => setTgForm({ ...tgForm, enabled: e.target.checked })}
+            />
+            ارسال خودکار ۸:۳۰ فعال باشد
+          </label>
+          <div className="rounded-lg border border-navy-100 bg-white px-3 py-3 text-sm text-navy-800/80">
+            <div>توکن ذخیره شده: {tgMeta.hasToken ? 'بله' : 'خیر'}</div>
+            <div className="mt-1">
+              کاربران وصل‌شده:{' '}
+              {tgMeta.linkedCount.toLocaleString('fa-IR')}
+            </div>
+            {tgMeta.lastDigest && (
+              <div className="mt-1">
+                آخرین ارسال: {tgMeta.lastDigest.dateKey} — موفق{' '}
+                {tgMeta.lastDigest.sentCount.toLocaleString('fa-IR')}
+                {tgMeta.lastDigest.skippedReasonFa
+                  ? ` — ${tgMeta.lastDigest.skippedReasonFa}`
+                  : ''}
+              </div>
+            )}
+          </div>
+          <div className="flex flex-wrap gap-2">
+            <button type="submit" className="btn-primary w-fit" disabled={tgBusy}>
+              {tgBusy ? 'در حال ذخیره...' : 'ذخیره ربات'}
+            </button>
+            <button
+              type="button"
+              className="btn-secondary w-fit"
+              disabled={tgBusy || !tgMeta.hasToken}
+              onClick={testTelegram}
+            >
+              تست اتصال
+            </button>
+            <button
+              type="button"
+              className="btn-secondary w-fit"
+              disabled={tgBusy || !tgMeta.hasToken}
+              onClick={sendTelegramToday}
+            >
+              ارسال خلاصهٔ امروز
+            </button>
+          </div>
+          {tgFeedback && (
+            <div
+              className={clsx(
+                'rounded-lg px-3 py-3 text-sm leading-7',
+                tgFeedback.ok ? 'bg-emerald-50 text-emerald-900' : 'bg-red-50 text-red-800',
+              )}
+              role={tgFeedback.ok ? 'status' : 'alert'}
+            >
+              {tgFeedback.ok ? '✓ ' : '! '}
+              {tgFeedback.text}
             </div>
           )}
         </form>

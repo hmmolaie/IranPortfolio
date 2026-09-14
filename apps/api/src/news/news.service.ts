@@ -1,8 +1,9 @@
-import { Injectable } from '@nestjs/common';
+import { Injectable, Logger, OnModuleInit } from '@nestjs/common';
+import { Cron } from '@nestjs/schedule';
 import { PrismaService } from '../prisma/prisma.service';
 import { LlmService } from '../llm/llm.service';
 import { UsersService } from '../users/users.service';
-import { daysAgoDateKey, tehranDateFa, tehranDateKey } from './tehran-date';
+import { daysAgoDateKey, tehranDateFa, tehranDateKey, tehranHour } from './tehran-date';
 
 type NewsLlmItem = {
   titleFa: string;
@@ -12,6 +13,12 @@ type NewsLlmItem = {
   relevanceScore?: number;
   sectorsFa?: string;
   xSourceHintFa?: string;
+  category?: string;
+  opportunityKind?: string;
+  participateHowFa?: string;
+  deadlineFa?: string;
+  officialSourceFa?: string;
+  isRetailActionable?: boolean;
 };
 
 type NewsLlmOut = {
@@ -21,12 +28,75 @@ type NewsLlmOut = {
 };
 
 @Injectable()
-export class NewsService {
+export class NewsService implements OnModuleInit {
+  private readonly logger = new Logger(NewsService.name);
+  private refreshInFlight = false;
+
   constructor(
     private readonly prisma: PrismaService,
     private readonly llm: LlmService,
     private readonly users: UsersService,
   ) {}
+
+  onModuleInit() {
+    if (process.env.NODE_ENV !== 'production') return;
+    setTimeout(() => {
+      void this.catchUpAfterRestart();
+    }, 20_000);
+  }
+
+  /** هر روز ۸:۰۰ صبح به وقت ایران */
+  @Cron('0 0 8 * * *', { timeZone: 'Asia/Tehran', name: 'economic-news-0800' })
+  async scheduledRefresh() {
+    this.logger.log('بروزرسانی زمان‌بندی‌شده اخبار اقتصادی (۸ صبح ایران)');
+    await this.runScheduledRefresh({ overwriteExisting: true });
+  }
+
+  /** اگر ۸ صبح از دست رفت یا مدل خالی برگرداند، ۹ و ۱۰ صبح دوباره تلاش می‌کند */
+  @Cron('0 0 9,10 * * *', { timeZone: 'Asia/Tehran', name: 'economic-news-retry' })
+  async scheduledRetry() {
+    await this.runScheduledRefresh({ overwriteExisting: false });
+  }
+
+  private async catchUpAfterRestart() {
+    if (tehranHour() >= 8) {
+      this.logger.log('پس از راه‌اندازی: اگر اخبار امروز خالی باشد جمع می‌شود');
+      await this.runScheduledRefresh({ overwriteExisting: false });
+    }
+  }
+
+  private async runScheduledRefresh(opts: { overwriteExisting: boolean }) {
+    if (this.refreshInFlight) {
+      this.logger.log('کرون اخبار در حال اجراست؛ درخواست هم‌زمان رد شد');
+      return;
+    }
+    this.refreshInFlight = true;
+    try {
+      const adminId = await this.users.getAdminUserId();
+      if (!adminId) {
+        this.logger.warn('کاربر admin یافت نشد؛ کرون اخبار رد شد');
+        return;
+      }
+      const newsDateKey = tehranDateKey();
+      if (!opts.overwriteExisting) {
+        const existing = await this.prisma.economicNewsBatch.findUnique({
+          where: { userId_newsDateKey: { userId: adminId, newsDateKey } },
+          include: { _count: { select: { items: true } } },
+        });
+        if (existing && existing._count.items > 0) {
+          return;
+        }
+        this.logger.log(`تلاش مجدد اخبار ${newsDateKey} (ساعت تهران ${tehranHour()})`);
+      }
+      const batch = await this.refresh(adminId, { persistEmpty: false });
+      const n = batch?.items?.length ?? 0;
+      this.logger.log(`کرون اخبار ${newsDateKey}: ${n} خبر ذخیره شد`);
+    } catch (e) {
+      this.logger.error(`کرون اخبار ناموفق: ${(e as Error).message}`);
+    } finally {
+      this.refreshInFlight = false;
+    }
+  }
 
   /** اخبار مشترک پلتفرم (ذخیره‌شده توسط admin) */
   private async platformOwnerId(fallbackUserId: string) {
@@ -48,9 +118,11 @@ export class NewsService {
     };
   }
 
-  async refresh(userId: string) {
+  async refresh(userId: string, opts?: { persistEmpty?: boolean }) {
     const ownerId = await this.platformOwnerId(userId);
     const newsDateKey = tehranDateKey();
+    const persistEmpty = opts?.persistEmpty !== false;
+    const includeItems = { items: { orderBy: { sortOrder: 'asc' as const } } };
     const macro = await this.prisma.macroSnapshot.findFirst({ orderBy: { asOfDate: 'desc' } });
     const recentBatches = await this.prisma.economicNewsBatch.findMany({
       where: { userId: ownerId },
@@ -71,7 +143,7 @@ export class NewsService {
           topItems: b.items.map((i) => i.titleFa),
         })),
         instruction:
-          'با دسترسی خود به X، اخبار و بحث‌های اقتصادی امروز ایران را مرور کن و اخبار با اثر محتمل فردا روی بورس تهران را لیست کن. فقط نتیجهٔ JSON را برگردان.',
+          'فضای X و منابع رسمی ایران را مرور کن. علاوه بر کلان اقتصادی، فرصت‌های واقعی سرمایه‌گذار خرد را هم بیاور: عرضه اولیه بورس، ثبت‌نام خودروسازان معتبر، حراج سکه بانک مرکزی، اوراق/صکوک قابل خرید، صندوق یا گواهی قابل ثبت‌نام. شایعه نده؛ فقط موارد معتبر و قابل اقدام. تکراری نسبت به روزهای اخیر نده. فقط JSON برگردان.',
       },
       null,
       2,
@@ -93,11 +165,23 @@ export class NewsService {
       };
     }
 
-    const items = Array.isArray(out.items) ? out.items : [];
-
+    const items = (Array.isArray(out.items) ? out.items : []).filter(
+      (i) => Boolean(i.titleFa?.trim() || i.summaryFa?.trim()),
+    );
     const existing = await this.prisma.economicNewsBatch.findUnique({
       where: { userId_newsDateKey: { userId: ownerId, newsDateKey } },
     });
+
+    if (!items.length && !persistEmpty) {
+      this.logger.warn(`مدل برای ${newsDateKey} خبری برنگرداند؛ ذخیره نشد`);
+      return existing
+        ? this.prisma.economicNewsBatch.findUnique({
+            where: { id: existing.id },
+            include: includeItems,
+          })
+        : null;
+    }
+
     if (existing) {
       await this.prisma.economicNewsItem.deleteMany({ where: { batchId: existing.id } });
       await this.prisma.economicNewsBatch.update({
@@ -157,6 +241,12 @@ export class NewsService {
         relevanceScore: this.clampRelevance(item.relevanceScore),
         sectorsFa: item.sectorsFa?.trim() || null,
         xSourceHintFa: item.xSourceHintFa?.trim() || null,
+        category: this.normalizeCategory(item.category, item.isRetailActionable),
+        opportunityKind: this.normalizeOpportunityKind(item.opportunityKind),
+        participateHowFa: item.participateHowFa?.trim() || null,
+        deadlineFa: item.deadlineFa?.trim() || null,
+        officialSourceFa: item.officialSourceFa?.trim() || null,
+        isRetailActionable: Boolean(item.isRetailActionable) || this.normalizeCategory(item.category, item.isRetailActionable) === 'opportunity',
         sortOrder: idx,
       })),
     });
@@ -169,6 +259,29 @@ export class NewsService {
     if (/مثبت|صعود/.test(dir)) return 'bullish';
     if (/منفی|نزول/.test(dir)) return 'bearish';
     return 'neutral';
+  }
+
+  private normalizeCategory(cat?: string, actionable?: boolean): string | null {
+    const c = (cat ?? '').toLowerCase().trim();
+    if (c === 'opportunity' || c === 'فرصت') return 'opportunity';
+    if (c === 'macro' || c === 'کلان') return 'macro';
+    if (actionable) return 'opportunity';
+    return 'macro';
+  }
+
+  private normalizeOpportunityKind(kind?: string): string | null {
+    if (!kind) return null;
+    const k = kind.toLowerCase().trim();
+    const allowed = ['ipo', 'auto_sale', 'coin_auction', 'sukuk', 'housing', 'fund', 'deposit', 'other'];
+    if (allowed.includes(k)) return k;
+    if (/عرضه.?اولیه|ipo/.test(k)) return 'ipo';
+    if (/خودرو/.test(k)) return 'auto_sale';
+    if (/سکه|حراج/.test(k)) return 'coin_auction';
+    if (/صکوک|اوراق/.test(k)) return 'sukuk';
+    if (/مسکن/.test(k)) return 'housing';
+    if (/صندوق|etf/.test(k)) return 'fund';
+    if (/سپرد|گواهی/.test(k)) return 'deposit';
+    return 'other';
   }
 
   private clampRelevance(n?: number): number | null {

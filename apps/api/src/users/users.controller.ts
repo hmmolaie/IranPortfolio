@@ -32,6 +32,10 @@ class UpdateProfileDto {
   @IsOptional()
   @IsString()
   constraintsFa?: string;
+
+  @IsOptional()
+  @IsString()
+  mobilePhone?: string;
 }
 
 class CreateUserDto {

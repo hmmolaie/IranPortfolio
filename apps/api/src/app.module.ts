@@ -12,6 +12,7 @@ import { MacroModule } from './macro/macro.module';
 import { LessonsModule } from './lessons/lessons.module';
 import { NewsModule } from './news/news.module';
 import { PricesModule } from './prices/prices.module';
+import { TelegramModule } from './telegram/telegram.module';
 
 @Module({
   imports: [
@@ -28,6 +29,7 @@ import { PricesModule } from './prices/prices.module';
     LessonsModule,
     NewsModule,
     PricesModule,
+    TelegramModule,
   ],
 })
 export class AppModule {}

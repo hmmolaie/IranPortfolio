@@ -9,5 +9,6 @@ import { UsersModule } from '../users/users.module';
   imports: [LlmModule, NewsModule, UsersModule],
   providers: [PortfoliosService],
   controllers: [PortfoliosController],
+  exports: [PortfoliosService],
 })
 export class PortfoliosModule {}

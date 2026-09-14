@@ -234,6 +234,12 @@ export class PortfoliosService {
           direction: n.impactDirection,
           relevance: n.relevanceScore,
           sectors: n.sectorsFa,
+          category: n.category,
+          opportunityKind: n.opportunityKind,
+          participateHow: n.participateHowFa,
+          deadline: n.deadlineFa,
+          officialSource: n.officialSourceFa,
+          isRetailActionable: n.isRetailActionable,
         })),
         fxHistory,
         topFunds: funds.map((f) => ({
@@ -720,6 +726,73 @@ ${historyText}`,
     return snapshot;
   }
 
+  /**
+   * خلاصهٔ سبد برای پیام روزانه تلگرام: ترکیب فعلی + آنالیز با بازار/ارز/اخبار
+   */
+  async telegramPortfolioBriefing(userId: string) {
+    const portfolios = await this.prisma.portfolio.findMany({
+      where: { userId },
+      orderBy: { updatedAt: 'desc' },
+      select: { id: true, name: true },
+    });
+    if (!portfolios.length) {
+      return { hasPortfolio: false as const };
+    }
+
+    const main = portfolios[0];
+    const enriched = await this.get(userId, main.id);
+    const latest = enriched.snapshots[0];
+    const rawItems = latest?.items ?? [];
+    const totalValue = rawItems.reduce((s, i) => s + (Number(i.amountRial) || 0), 0);
+    const items = rawItems
+      .map((i) => {
+        const amountRial = Number(i.amountRial) || 0;
+        const weightPct =
+          totalValue > 0 ? (amountRial / totalValue) * 100 : Number(i.weightPct) || 0;
+        return {
+          symbol: i.symbol,
+          weightPct,
+          amountRial,
+          pnlRial: Number((i as { pnlRial?: number }).pnlRial) || 0,
+          assetType: i.assetType,
+        };
+      })
+      .sort((a, b) => b.weightPct - a.weightPct);
+
+    const fx = await this.prisma.spotPriceDaily.findFirst({ orderBy: { dateKey: 'desc' } });
+
+    let analysis: Awaited<ReturnType<PortfoliosService['analyzeCurrent']>> | null = null;
+    if (latest) {
+      try {
+        analysis = await this.analyzeCurrent(userId, main.id);
+      } catch (e) {
+        analysis = {
+          score: 50,
+          summaryFa: `آنالیز امروز در دسترس نبود. (${(e as Error).message.slice(0, 120)})`,
+          strengthsFa: [],
+          weaknessesFa: [],
+          suggestions: [],
+          analyzedAt: new Date().toISOString(),
+        };
+      }
+    }
+
+    return {
+      hasPortfolio: true as const,
+      name: enriched.name,
+      strategy: enriched.strategy,
+      capitalRial: enriched.capitalRial,
+      cashRial: enriched.cashRial,
+      totalValueRial: totalValue || enriched.capitalRial,
+      otherNames: portfolios.slice(1).map((p) => p.name),
+      items,
+      fx: fx
+        ? { dateKey: fx.dateKey, usdIrr: fx.usdIrr, goldGramRial: fx.goldGramRial }
+        : null,
+      analysis,
+    };
+  }
+
   async analyzeCurrent(userId: string, portfolioId: string) {
     const portfolio = await this.get(userId, portfolioId);
     const latest = portfolio.snapshots[0];
@@ -778,6 +851,12 @@ ${historyText}`,
           direction: n.impactDirection,
           relevance: n.relevanceScore,
           sectors: n.sectorsFa,
+          category: n.category,
+          opportunityKind: n.opportunityKind,
+          participateHow: n.participateHowFa,
+          deadline: n.deadlineFa,
+          officialSource: n.officialSourceFa,
+          isRetailActionable: n.isRetailActionable,
         })),
         fxHistory,
         lessons: lessons.map((l) => ({ title: l.titleFa, body: l.bodyFa })),

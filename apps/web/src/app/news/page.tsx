@@ -14,6 +14,12 @@ type NewsItem = {
   relevanceScore?: number | null;
   sectorsFa?: string | null;
   xSourceHintFa?: string | null;
+  category?: string | null;
+  opportunityKind?: string | null;
+  participateHowFa?: string | null;
+  deadlineFa?: string | null;
+  officialSourceFa?: string | null;
+  isRetailActionable?: boolean | null;
 };
 
 type NewsBatch = {
@@ -43,6 +49,17 @@ const DIRECTION_CLASS: Record<string, string> = {
   bearish: 'bg-red-100 text-red-800',
   neutral: 'bg-navy-100 text-navy-800',
   mixed: 'bg-amber-100 text-amber-800',
+};
+
+const KIND_FA: Record<string, string> = {
+  ipo: 'عرضه اولیه',
+  auto_sale: 'ثبت‌نام خودرو',
+  coin_auction: 'حراج سکه',
+  sukuk: 'اوراق / صکوک',
+  housing: 'مسکن',
+  fund: 'صندوق',
+  deposit: 'گواهی سپرده',
+  other: 'سایر فرصت‌ها',
 };
 
 function formatDateKey(key: string) {
@@ -109,9 +126,12 @@ export default function NewsPage() {
         <div>
           <h1 className="text-3xl font-bold">اخبار اقتصادی ایران</h1>
           <p className="mt-2 text-navy-800/70">
+            هر روز راس ساعت ۸ صبح، فرصت‌های خرد و اخبار مؤثر بر سبد جمع می‌شود. راس ۸:۳۰ برای
+            کاربران وصل‌شده به تلگرام، نمودار سبد، پیشنهاد بهبود با دادهٔ بورس و ارز و اخبار، و
+            همان خلاصه ارسال می‌شود.
             {isAdmin
-              ? 'با زدن «به‌روزرسانی اخبار»، از مدل زبانی اخبار اقتصادی امروز مرور و ذخیره می‌شود؛ همه کاربران همان اخبار را می‌بینند و در پیشنهاد سبد لحاظ می‌شود.'
-              : 'اخبار اقتصادی ثبت‌شده در سیستم را مشاهده کنید. این اخبار در پیشنهاد سبد نیز استفاده می‌شوند.'}
+              ? ' در صورت نیاز می‌توانید همین امروز را دستی هم به‌روز کنید.'
+              : ''}
           </p>
           {data?.todayLabelFa && (
             <p className="mt-1 text-sm text-navy-800/50">امروز: {data.todayLabelFa}</p>
@@ -126,9 +146,9 @@ export default function NewsPage() {
 
       {isAdmin && (
         <p className="rounded-lg bg-navy-50 px-4 py-3 text-sm text-navy-800/75">
-          اتصال مستقیم به X در سبدیار نیست؛ درخواست به همان LLM تنظیم‌شده در{' '}
-          <strong>تنظیمات</strong> ارسال می‌شود. متن پرامپت را از{' '}
-          <strong>پرامپت‌های LLM → به‌روزرسانی اخبار اقتصادی</strong> می‌توانید تغییر دهید.
+          اتصال مستقیم به شبکه X در سبدیار نیست. جمع‌آوری ۸ صبح و پیام تلگرام ۸:۳۰ از مدل
+          زبانی و ربات تنظیم‌شده در صفحهٔ تنظیمات استفاده می‌کنند. برای دریافت پیام، کاربر باید
+          موبایل را در پروفایل بگذارد و ربات را استارت کند.
         </p>
       )}
 
@@ -147,8 +167,8 @@ export default function NewsPage() {
       {data && data.batches.length === 0 && (
         <p className="text-sm text-navy-800/60">
           {isAdmin
-            ? 'هنوز خبری ثبت نشده. دکمه «به‌روزرسانی اخبار» را بزنید.'
-            : 'هنوز خبری در سیستم ثبت نشده است.'}
+            ? 'هنوز خبری ثبت نشده. راس ۸ صبح خودکار می‌آید؛ یا دکمه «به‌روزرسانی اخبار» را بزنید.'
+            : 'هنوز خبری در سیستم ثبت نشده است. جمع‌آوری بعدی راس ساعت ۸ صبح است.'}
         </p>
       )}
 
@@ -167,6 +187,11 @@ export default function NewsPage() {
                   <div className="flex flex-wrap items-start justify-between gap-2">
                     <h3 className="text-base font-semibold">{item.titleFa}</h3>
                     <div className="flex flex-wrap gap-2 text-xs">
+                      {(item.category === 'opportunity' || item.isRetailActionable) && (
+                        <span className="rounded bg-gold-400/25 px-2 py-0.5 text-gold-500">
+                          {KIND_FA[item.opportunityKind ?? ''] ?? 'فرصت قابل اقدام'}
+                        </span>
+                      )}
                       {item.impactDirection && (
                         <span
                           className={`rounded px-2 py-0.5 ${DIRECTION_CLASS[item.impactDirection] ?? 'bg-navy-50'}`}
@@ -184,10 +209,21 @@ export default function NewsPage() {
                   <p className="mt-2 text-sm leading-7 text-navy-800/80">{item.summaryFa}</p>
                   {item.marketImpactFa && (
                     <p className="mt-2 text-sm leading-7">
-                      <strong>اثر احتمالی فردا:</strong> {item.marketImpactFa}
+                      <strong>اثر محتمل روی سبد:</strong> {item.marketImpactFa}
+                    </p>
+                  )}
+                  {item.participateHowFa && (
+                    <p className="mt-2 text-sm leading-7">
+                      <strong>چطور شرکت کنید:</strong> {item.participateHowFa}
+                    </p>
+                  )}
+                  {item.deadlineFa && (
+                    <p className="mt-1 text-sm leading-7">
+                      <strong>مهلت:</strong> {item.deadlineFa}
                     </p>
                   )}
                   <div className="mt-2 flex flex-wrap gap-3 text-xs text-navy-800/55">
+                    {item.officialSourceFa && <span>منبع رسمی: {item.officialSourceFa}</span>}
                     {item.sectorsFa && <span>بخش‌ها: {item.sectorsFa}</span>}
                     {item.xSourceHintFa && <span>X: {item.xSourceHintFa}</span>}
                   </div>

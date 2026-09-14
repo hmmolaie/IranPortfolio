@@ -1,0 +1,626 @@
+import { BadRequestException, Injectable, Logger, OnModuleInit } from '@nestjs/common';
+import { Cron, Interval } from '@nestjs/schedule';
+import { ConfigService } from '@nestjs/config';
+import { PrismaService } from '../prisma/prisma.service';
+import { decryptSecret, encryptSecret } from '../common/secret-box';
+import { normalizeIranMobile } from '../common/iran-mobile';
+import { tehranDateFa, tehranDateKey, tehranTimeParts } from '../news/tehran-date';
+import { PortfoliosService } from '../portfolios/portfolios.service';
+import { NewsService } from '../news/news.service';
+import { UsersService } from '../users/users.service';
+import { renderPortfolioPiePng } from './pie-chart-png';
+import { STRATEGY_LABELS_FA } from '@sabadyar/shared';
+
+type NewsItemRow = {
+  titleFa: string;
+  summaryFa: string;
+  marketImpactFa?: string | null;
+  category?: string | null;
+  opportunityKind?: string | null;
+  participateHowFa?: string | null;
+  deadlineFa?: string | null;
+  officialSourceFa?: string | null;
+  isRetailActionable?: boolean | null;
+  relevanceScore?: number | null;
+};
+
+type NewsBatchRow = {
+  newsDateKey: string;
+  summaryFa?: string | null;
+  items: NewsItemRow[];
+};
+
+type TelegramUpdate = {
+  update_id: number;
+  message?: {
+    from?: { id: number };
+    chat: { id: number; username?: string };
+    text?: string;
+    contact?: { phone_number: string; user_id?: number };
+  };
+};
+
+const CONFIG_ID = 'default';
+const TG_API = 'https://api.telegram.org';
+
+@Injectable()
+export class TelegramService implements OnModuleInit {
+  private readonly logger = new Logger(TelegramService.name);
+  private pollInFlight = false;
+  private sendInFlight = false;
+  private skippedBacklog = false;
+
+  constructor(
+    private readonly prisma: PrismaService,
+    private readonly config: ConfigService,
+    private readonly portfolios: PortfoliosService,
+    private readonly news: NewsService,
+    private readonly users: UsersService,
+  ) {}
+
+  onModuleInit() {
+    if (process.env.NODE_ENV !== 'production') return;
+    setTimeout(() => {
+      void this.catchUpIfNeeded();
+    }, 25_000);
+  }
+
+  private encKey() {
+    return this.config.get<string>('LLM_TOKEN_ENCRYPTION_KEY') ?? '0123456789abcdef0123456789abcdef';
+  }
+
+  async getPublicConfig() {
+    const row = await this.prisma.telegramBotConfig.findUnique({ where: { id: CONFIG_ID } });
+    const linkedCount = await this.prisma.userProfile.count({
+      where: { telegramChatId: { not: null }, mobilePhone: { not: null } },
+    });
+    const lastDigest = await this.prisma.telegramDigestLog.findFirst({
+      orderBy: { dateKey: 'desc' },
+    });
+    return {
+      botNameFa: row?.botNameFa ?? '',
+      botUsername: row?.botUsername ?? '',
+      enabled: row?.enabled ?? true,
+      hasToken: Boolean(row?.botTokenEncrypted),
+      linkedCount,
+      lastDigest,
+    };
+  }
+
+  async getUserStatus(userId: string) {
+    const row = await this.prisma.telegramBotConfig.findUnique({ where: { id: CONFIG_ID } });
+    const profile = await this.prisma.userProfile.findUnique({ where: { userId } });
+    const username = (row?.botUsername ?? '').replace(/^@/, '');
+    const configured = Boolean(row?.botTokenEncrypted && username && row.enabled);
+    return {
+      configured,
+      enabled: row?.enabled ?? false,
+      botNameFa: row?.botNameFa ?? '',
+      botUsername: username,
+      deepLink: username ? `https://t.me/${username}` : null,
+      mobilePhone: profile?.mobilePhone ?? null,
+      linked: Boolean(profile?.telegramChatId),
+      telegramUsername: profile?.telegramUsername ?? null,
+    };
+  }
+
+  async saveConfig(data: {
+    botNameFa?: string;
+    botUsername?: string;
+    botToken?: string;
+    enabled?: boolean;
+  }) {
+    const current = await this.prisma.telegramBotConfig.findUnique({ where: { id: CONFIG_ID } });
+    let botUsername = (data.botUsername ?? current?.botUsername ?? '').trim().replace(/^@/, '');
+    if (botUsername && !/^[A-Za-z0-9_]{5,32}$/.test(botUsername)) {
+      throw new BadRequestException('نام کاربری ربات نامعتبر است (بدون @، فقط حروف و عدد و _)');
+    }
+    const botNameFa = (data.botNameFa ?? current?.botNameFa ?? '').trim() || null;
+    let botTokenEncrypted = current?.botTokenEncrypted ?? null;
+    if (data.botToken?.trim()) {
+      const token = data.botToken.trim();
+      if (token.length < 30 || !token.includes(':')) {
+        throw new BadRequestException('توکن ربات نامعتبر است (از BotFather کپی کنید)');
+      }
+      botTokenEncrypted = encryptSecret(this.encKey(), token);
+    }
+    const enabled = data.enabled ?? current?.enabled ?? true;
+
+    return this.prisma.telegramBotConfig.upsert({
+      where: { id: CONFIG_ID },
+      create: {
+        id: CONFIG_ID,
+        botNameFa,
+        botUsername: botUsername || null,
+        botTokenEncrypted,
+        enabled,
+      },
+      update: {
+        botNameFa,
+        botUsername: botUsername || null,
+        botTokenEncrypted,
+        enabled,
+        ...(data.botToken?.trim() ? { lastUpdateId: null } : {}),
+      },
+    }).then(async () => {
+      this.skippedBacklog = false;
+      return this.getPublicConfig();
+    });
+  }
+
+  async testConnection() {
+    const token = await this.readToken();
+    if (!token) throw new BadRequestException('ابتدا توکن ربات را ذخیره کنید');
+    const me = await this.tg<{ username?: string; first_name?: string }>(token, 'getMe');
+    return {
+      ok: true,
+      messageFa: 'اتصال به ربات برقرار است.',
+      botUsername: me.username ?? '',
+      botName: me.first_name ?? '',
+    };
+  }
+
+  async unlink(userId: string) {
+    await this.prisma.userProfile.updateMany({
+      where: { userId },
+      data: { telegramChatId: null, telegramUsername: null, telegramLinkedAt: null },
+    });
+    return { ok: true };
+  }
+
+  /** هر روز ۸:۳۰ صبح ایران — از NewsService صدا زده می‌شود؛ این کرون پشتیبان است اگر batch آماده باشد */
+  @Cron('0 30 8 * * *', { timeZone: 'Asia/Tehran', name: 'telegram-news-0830' })
+  async scheduledDigest() {
+    this.logger.log('ارسال زمان‌بندی‌شده تلگرام (۸:۳۰ ایران)');
+    await this.deliverToday({ force: false });
+  }
+
+  @Cron('0 45 8 * * *', { timeZone: 'Asia/Tehran', name: 'telegram-news-0845' })
+  async scheduledDigestRetry() {
+    await this.deliverToday({ force: false });
+  }
+
+  async catchUpIfNeeded() {
+    const { hour, minute } = tehranTimeParts();
+    if (hour > 8 || (hour === 8 && minute >= 30)) {
+      await this.deliverToday({ force: false });
+    }
+  }
+
+  async deliverToday(opts: { force?: boolean; batch?: NewsBatchRow | null }) {
+    if (this.sendInFlight) {
+      return { ok: false, messageFa: 'ارسال قبلی هنوز تمام نشده است.' };
+    }
+    this.sendInFlight = true;
+    try {
+      const dateKey = tehranDateKey();
+      if (!opts.force) {
+        const already = await this.prisma.telegramDigestLog.findUnique({ where: { dateKey } });
+        if (already && already.sentCount > 0) {
+          return { ok: true, messageFa: 'پیام امروز قبلاً ارسال شده است.', ...already };
+        }
+      }
+
+      const cfg = await this.prisma.telegramBotConfig.findUnique({ where: { id: CONFIG_ID } });
+      const token = await this.readToken();
+      if (!cfg?.enabled || !token) {
+        await this.upsertLog(dateKey, 0, 0, 'ربات غیرفعال است یا توکن ذخیره نشده');
+        return { ok: false, messageFa: 'ربات تلگرام پیکربندی نشده یا غیرفعال است.' };
+      }
+
+      let batch =
+        opts.batch ??
+        (await this.prisma.economicNewsBatch.findFirst({
+          where: { newsDateKey: dateKey },
+          orderBy: { createdAt: 'desc' },
+          include: { items: { orderBy: { sortOrder: 'asc' } } },
+        }));
+      if (!batch?.items?.length) {
+        const adminId = await this.users.getAdminUserId();
+        if (adminId) {
+          try {
+            batch = await this.news.refresh(adminId, { persistEmpty: false });
+          } catch (e) {
+            this.logger.warn(`رفرش اخبار قبل از تلگرام ناموفق: ${(e as Error).message.slice(0, 160)}`);
+          }
+        }
+      }
+
+      const recipients = await this.prisma.userProfile.findMany({
+        where: {
+          telegramChatId: { not: null },
+          mobilePhone: { not: null },
+          user: { isActive: true },
+        },
+        select: { telegramChatId: true, userId: true },
+      });
+      if (!recipients.length) {
+        await this.upsertLog(dateKey, 0, 0, 'هیچ کاربری ربات را با موبایل پروفایل وصل نکرده');
+        return { ok: false, messageFa: 'کاربر متصل به ربات یافت نشد.' };
+      }
+
+      const newsText = this.formatNewsSection(cfg.botNameFa, batch);
+      let sentCount = 0;
+      let failedCount = 0;
+      for (const r of recipients) {
+        if (!r.telegramChatId) continue;
+        try {
+          await this.sendPersonalized(token, r.telegramChatId, r.userId, newsText);
+          sentCount += 1;
+        } catch (e) {
+          failedCount += 1;
+          this.logger.warn(
+            `ارسال تلگرام به ${r.userId} ناموفق: ${(e as Error).message.slice(0, 160)}`,
+          );
+        }
+        await sleep(80);
+      }
+      const log = await this.upsertLog(dateKey, sentCount, failedCount, null);
+      this.logger.log(`تلگرام ${dateKey}: ارسال ${sentCount}، ناموفق ${failedCount}`);
+      return { ok: sentCount > 0, messageFa: `ارسال شد: ${sentCount} موفق، ${failedCount} ناموفق`, ...log };
+    } finally {
+      this.sendInFlight = false;
+    }
+  }
+
+  @Interval(4000)
+  async pollUpdates() {
+    if (this.pollInFlight) return;
+    this.pollInFlight = true;
+    try {
+      const token = await this.readToken();
+      const cfg = await this.prisma.telegramBotConfig.findUnique({ where: { id: CONFIG_ID } });
+      if (!token || !cfg?.enabled) return;
+
+      const offset = cfg.lastUpdateId ? Number(cfg.lastUpdateId) + 1 : undefined;
+      const updates = await this.tg<TelegramUpdate[]>(token, 'getUpdates', {
+        offset,
+        timeout: 0,
+        allowed_updates: ['message'],
+      });
+      if (!Array.isArray(updates) || updates.length === 0) return;
+
+      const maxId = Math.max(...updates.map((u) => u.update_id));
+      if (!cfg.lastUpdateId && !this.skippedBacklog) {
+        this.skippedBacklog = true;
+        await this.prisma.telegramBotConfig.update({
+          where: { id: CONFIG_ID },
+          data: { lastUpdateId: String(maxId) },
+        });
+        return;
+      }
+
+      for (const u of updates) {
+        await this.handleUpdate(token, cfg.botNameFa, u);
+      }
+      await this.prisma.telegramBotConfig.update({
+        where: { id: CONFIG_ID },
+        data: { lastUpdateId: String(maxId) },
+      });
+    } catch (e) {
+      this.logger.warn(`poll تلگرام: ${(e as Error).message.slice(0, 180)}`);
+    } finally {
+      this.pollInFlight = false;
+    }
+  }
+
+  private async handleUpdate(token: string, botNameFa: string | null, update: TelegramUpdate) {
+    const msg = update.message;
+    if (!msg?.chat?.id) return;
+    const chatId = String(msg.chat.id);
+    const username = msg.chat.username ?? null;
+    const text = (msg.text ?? '').trim();
+    const contact = msg.contact;
+
+    if (text === '/stop') {
+      await this.prisma.userProfile.updateMany({
+        where: { telegramChatId: chatId },
+        data: { telegramChatId: null, telegramUsername: null, telegramLinkedAt: null },
+      });
+      await this.tg(token, 'sendMessage', {
+        chat_id: chatId,
+        text: 'اتصال تلگرام سبدیار قطع شد. برای وصل دوباره /start را بزنید.',
+      });
+      return;
+    }
+
+    if (contact?.phone_number) {
+      if (contact.user_id && msg.from?.id && contact.user_id !== msg.from.id) {
+        await this.tg(token, 'sendMessage', {
+          chat_id: chatId,
+          text: 'فقط شمارهٔ موبایل خودتان را بفرستید.',
+        });
+        return;
+      }
+      const profile = await this.findProfileByMobile(contact.phone_number);
+      if (!profile) {
+        await this.tg(token, 'sendMessage', {
+          chat_id: chatId,
+          text: 'این شماره در پروفایل سبدیار ثبت نشده. اول موبایل را در تنظیمات سایت ذخیره کنید، بعد دوباره شماره را بفرستید.',
+        });
+        return;
+      }
+      await this.prisma.userProfile.updateMany({
+        where: { telegramChatId: chatId, NOT: { id: profile.id } },
+        data: { telegramChatId: null, telegramUsername: null, telegramLinkedAt: null },
+      });
+      await this.prisma.userProfile.update({
+        where: { id: profile.id },
+        data: {
+          telegramChatId: chatId,
+          telegramUsername: username,
+          telegramLinkedAt: new Date(),
+        },
+      });
+      const name = botNameFa?.trim() || 'سبدیار';
+      await this.tg(token, 'sendMessage', {
+        chat_id: chatId,
+        text: `اتصال برقرار شد. هر روز ساعت ۸:۳۰ صبح، نمودار سبد، پیشنهاد بهبود و خلاصهٔ اخبار ${name} برایتان می‌آید.`,
+        reply_markup: { remove_keyboard: true },
+      });
+      return;
+    }
+
+    if (text.startsWith('/start') || text === '/link') {
+      await this.tg(token, 'sendMessage', {
+        chat_id: chatId,
+        text: 'برای دریافت خلاصهٔ روزانه، همان موبایلی که در پروفایل سبدیار ثبت کرده‌اید را با دکمهٔ زیر بفرستید.',
+        reply_markup: {
+          keyboard: [[{ text: 'ارسال شماره موبایل', request_contact: true }]],
+          resize_keyboard: true,
+          one_time_keyboard: true,
+        },
+      });
+    }
+  }
+
+  private async sendPersonalized(
+    token: string,
+    chatId: string,
+    userId: string,
+    newsText: string,
+  ) {
+    const briefing = await this.portfolios.telegramPortfolioBriefing(userId);
+    if (briefing.hasPortfolio && briefing.items.length) {
+      const caption = this.formatChartCaption(briefing);
+      try {
+        const png = renderPortfolioPiePng(briefing.items.map((i) => ({ pct: i.weightPct })));
+        await this.sendPhoto(token, chatId, png, caption);
+      } catch (e) {
+        this.logger.warn(`ارسال نمودار ناموفق، متن جایگزین: ${(e as Error).message.slice(0, 120)}`);
+        await this.tg(token, 'sendMessage', {
+          chat_id: chatId,
+          text: caption,
+          parse_mode: 'HTML',
+          disable_web_page_preview: true,
+        });
+      }
+      const advice = this.formatAdvice(briefing);
+      if (advice) {
+        await this.tg(token, 'sendMessage', {
+          chat_id: chatId,
+          text: advice,
+          parse_mode: 'HTML',
+          disable_web_page_preview: true,
+        });
+      }
+    } else if (briefing.hasPortfolio) {
+      await this.tg(token, 'sendMessage', {
+        chat_id: chatId,
+        text: `<b>سبد «${escapeHtml(briefing.name)}»</b>\nهنوز نمادی در این سبد ثبت نشده. بعد از تشکیل ترکیب، نمودار صبحگاهی فعال می‌شود.`,
+        parse_mode: 'HTML',
+        disable_web_page_preview: true,
+      });
+    } else {
+      await this.tg(token, 'sendMessage', {
+        chat_id: chatId,
+        text: '<b>سبد سهام</b>\nهنوز سبدی در سایت ثبت نشده. بعد از ساخت سبد، نمودار و پیشنهاد بهبود هم در پیام صبح می‌آید.',
+        parse_mode: 'HTML',
+        disable_web_page_preview: true,
+      });
+    }
+
+    if (newsText) {
+      await this.tg(token, 'sendMessage', {
+        chat_id: chatId,
+        text: newsText,
+        parse_mode: 'HTML',
+        disable_web_page_preview: true,
+      });
+    }
+  }
+
+  private formatChartCaption(briefing: Extract<
+    Awaited<ReturnType<PortfoliosService['telegramPortfolioBriefing']>>,
+    { hasPortfolio: true }
+  >): string {
+    const name = escapeHtml(briefing.name);
+    const strategy =
+      STRATEGY_LABELS_FA[briefing.strategy as keyof typeof STRATEGY_LABELS_FA] ?? briefing.strategy;
+    const lines: string[] = [
+      `<b>نمودار سبد «${name}»</b>`,
+      `استراتژی: ${escapeHtml(strategy)}`,
+      `ارزش روز: ${faNum(briefing.totalValueRial)} ریال`,
+      '',
+    ];
+    const pnl = briefing.items.reduce((s, i) => s + i.pnlRial, 0);
+    if (pnl !== 0) {
+      lines.splice(3, 0, `سود/زیان تقریبی: ${faNum(pnl)} ریال`);
+    }
+    if (briefing.fx?.usdIrr) {
+      lines.push(`دلار: ${faNum(briefing.fx.usdIrr)} ریال`);
+    }
+    if (briefing.fx?.goldGramRial) {
+      lines.push(`طلا (گرم): ${faNum(briefing.fx.goldGramRial)} ریال`);
+    }
+    if (briefing.fx?.usdIrr || briefing.fx?.goldGramRial) lines.push('');
+
+    briefing.items.slice(0, 12).forEach((item, idx) => {
+      const bar = pctBar(item.weightPct);
+      const n = faNum(item.weightPct, 1);
+      lines.push(`${toFaDigit(idx + 1)}) ${escapeHtml(item.symbol)}  ${bar}  ${n}٪`);
+    });
+    if (briefing.otherNames.length) {
+      lines.push('', `سبدهای دیگر: ${escapeHtml(briefing.otherNames.join('، '))}`);
+    }
+    let text = lines.join('\n').trim();
+    if (text.length > 1000) text = `${text.slice(0, 990)}…`;
+    return text;
+  }
+
+  private formatAdvice(briefing: Extract<
+    Awaited<ReturnType<PortfoliosService['telegramPortfolioBriefing']>>,
+    { hasPortfolio: true }
+  >): string | null {
+    const a = briefing.analysis;
+    if (!a) return null;
+    const lines: string[] = [
+      '<b>پیشنهاد بهبود سبد</b>',
+      'بر اساس قیمت بورس، نرخ ارز/طلا و اخبار امروز',
+      `امتیاز فعلی: ${toFaDigit(a.score)} از ۱۰۰`,
+      '',
+    ];
+    if (a.summaryFa?.trim()) {
+      lines.push(escapeHtml(a.summaryFa.trim()), '');
+    }
+    const suggestions = (a.suggestions ?? []).slice(0, 5);
+    if (suggestions.length) {
+      lines.push('<b>اقدام‌های پیشنهادی</b>');
+      suggestions.forEach((s, idx) => {
+        lines.push(`${toFaDigit(idx + 1)}) <b>${escapeHtml(s.titleFa)}</b>`);
+        if (s.bodyFa) lines.push(escapeHtml(s.bodyFa));
+        lines.push('');
+      });
+    }
+    lines.push('این پیام مشاورهٔ سرمایه‌گذاری قطعی نیست.');
+    let text = lines.join('\n').trim();
+    if (text.length > 3900) text = `${text.slice(0, 3890)}…`;
+    return text;
+  }
+
+  private formatNewsSection(botNameFa: string | null, batch: NewsBatchRow | null | undefined): string {
+    if (!batch?.items?.length) return '';
+    const brand = escapeHtml((botNameFa ?? '').trim() || 'سبدیار');
+    const dateLabel = escapeHtml(tehranDateFa());
+    const lines: string[] = [`<b>${brand}</b> — فرصت‌ها و اخبار ${dateLabel}`, ''];
+    if (batch.summaryFa?.trim()) {
+      lines.push(escapeHtml(batch.summaryFa.trim()), '');
+    }
+
+    const opportunities = batch.items.filter((i) => i.category === 'opportunity' || i.isRetailActionable);
+    const macros = batch.items.filter((i) => !opportunities.includes(i));
+
+    if (opportunities.length) {
+      lines.push('<b>فرصت‌های قابل اقدام برای سرمایه‌گذار خرد</b>');
+      for (const [idx, item] of opportunities.slice(0, 6).entries()) {
+        lines.push(`${toFaDigit(idx + 1)}) <b>${escapeHtml(item.titleFa)}</b>`);
+        if (item.deadlineFa) lines.push(`مهلت: ${escapeHtml(item.deadlineFa)}`);
+        if (item.participateHowFa) lines.push(`چطور: ${escapeHtml(item.participateHowFa)}`);
+        if (item.officialSourceFa) lines.push(`منبع رسمی: ${escapeHtml(item.officialSourceFa)}`);
+        lines.push('');
+      }
+    }
+
+    if (macros.length) {
+      lines.push('<b>اخبار مؤثر بر سبد</b>');
+      for (const [idx, item] of macros.slice(0, 4).entries()) {
+        lines.push(`${toFaDigit(idx + 1)}) <b>${escapeHtml(item.titleFa)}</b>`);
+        const body = item.marketImpactFa || item.summaryFa;
+        if (body) lines.push(escapeHtml(body));
+        lines.push('');
+      }
+    }
+
+    lines.push('این پیام مشاورهٔ سرمایه‌گذاری قطعی نیست.');
+    let text = lines.join('\n').trim();
+    if (text.length > 3900) text = `${text.slice(0, 3890)}…`;
+    return text;
+  }
+
+  private async sendPhoto(token: string, chatId: string, png: Buffer, caption: string) {
+    const form = new FormData();
+    form.append('chat_id', chatId);
+    form.append('photo', new Blob([new Uint8Array(png)], { type: 'image/png' }), 'portfolio.png');
+    if (caption) {
+      form.append('caption', caption.slice(0, 1024));
+      form.append('parse_mode', 'HTML');
+    }
+    const res = await fetch(`${TG_API}/bot${token}/sendPhoto`, {
+      method: 'POST',
+      body: form,
+      signal: AbortSignal.timeout(40_000),
+    });
+    const json = (await res.json()) as { ok?: boolean; description?: string };
+    if (!res.ok || !json.ok) {
+      throw new Error(json.description || `خطای ارسال تصویر ${res.status}`);
+    }
+  }
+
+  private async findProfileByMobile(phone: string) {
+    const normalized = normalizeIranMobile(phone);
+    if (!normalized) return null;
+    return this.prisma.userProfile.findUnique({ where: { mobilePhone: normalized } });
+  }
+
+  private async readToken(): Promise<string | null> {
+    const row = await this.prisma.telegramBotConfig.findUnique({ where: { id: CONFIG_ID } });
+    if (!row?.botTokenEncrypted) return null;
+    try {
+      return decryptSecret(this.encKey(), row.botTokenEncrypted);
+    } catch {
+      this.logger.error('رمزگشایی توکن تلگرام ناموفق بود');
+      return null;
+    }
+  }
+
+  private async upsertLog(
+    dateKey: string,
+    sentCount: number,
+    failedCount: number,
+    skippedReasonFa: string | null,
+  ) {
+    return this.prisma.telegramDigestLog.upsert({
+      where: { dateKey },
+      create: { dateKey, sentCount, failedCount, skippedReasonFa },
+      update: { sentCount, failedCount, skippedReasonFa },
+    });
+  }
+
+  private async tg<T>(token: string, method: string, body?: Record<string, unknown>): Promise<T> {
+    const res = await fetch(`${TG_API}/bot${token}/${method}`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(body ?? {}),
+      signal: AbortSignal.timeout(20_000),
+    });
+    const json = (await res.json()) as { ok?: boolean; result?: T; description?: string };
+    if (!res.ok || !json.ok) {
+      throw new Error(json.description || `خطای تلگرام ${res.status}`);
+    }
+    return json.result as T;
+  }
+}
+
+function escapeHtml(s: string): string {
+  return s.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+}
+
+function faNum(n: number, digits = 0): string {
+  return n.toLocaleString('fa-IR', {
+    maximumFractionDigits: digits,
+    minimumFractionDigits: 0,
+  });
+}
+
+function toFaDigit(n: number): string {
+  return String(n).replace(/\d/g, (d) => '۰۱۲۳۴۵۶۷۸۹'[Number(d)]);
+}
+
+function pctBar(pct: number): string {
+  const filled = Math.max(0, Math.min(10, Math.round(pct / 10)));
+  return '█'.repeat(filled) + '░'.repeat(10 - filled);
+}
+
+function sleep(ms: number) {
+  return new Promise((r) => setTimeout(r, ms));
+}

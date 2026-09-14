@@ -1,7 +1,8 @@
-import { Injectable, NotFoundException, UnauthorizedException } from '@nestjs/common';
-import { UserRole } from '@prisma/client';
+import { Injectable, NotFoundException, UnauthorizedException, BadRequestException } from '@nestjs/common';
+import { Prisma, UserRole } from '@prisma/client';
 import { PrismaService } from '../prisma/prisma.service';
 import * as bcrypt from 'bcryptjs';
+import { normalizeIranMobile } from '../common/iran-mobile';
 
 @Injectable()
 export class UsersService {
@@ -25,7 +26,14 @@ export class UsersService {
     return this.prisma.user.findMany({
       where: { role: UserRole.USER },
       orderBy: { createdAt: 'desc' },
-      select: { id: true, email: true, name: true, createdAt: true, isActive: true },
+      select: {
+        id: true,
+        email: true,
+        name: true,
+        createdAt: true,
+        isActive: true,
+        profile: { select: { mobilePhone: true, telegramChatId: true } },
+      },
     });
   }
 
@@ -120,16 +128,50 @@ export class UsersService {
       notes?: string;
       investmentPreferencesFa?: string;
       constraintsFa?: string;
+      mobilePhone?: string;
     },
   ) {
-    const { name, ...profile } = data;
+    const { name, mobilePhone, ...profile } = data;
     if (name !== undefined) {
       await this.prisma.user.update({ where: { id: userId }, data: { name } });
     }
-    return this.prisma.userProfile.upsert({
-      where: { userId },
-      create: { userId, ...profile },
-      update: profile,
-    });
+
+    let mobile: string | null | undefined;
+    if (mobilePhone !== undefined) {
+      const trimmed = mobilePhone.trim();
+      if (!trimmed) mobile = null;
+      else {
+        const n = normalizeIranMobile(trimmed);
+        if (!n) throw new BadRequestException('شماره موبایل نامعتبر است (مثال: 09121234567)');
+        mobile = n;
+      }
+    }
+
+    const current = await this.prisma.userProfile.findUnique({ where: { userId } });
+    const mobileChanged = mobile !== undefined && mobile !== (current?.mobilePhone ?? null);
+    const unlinkTelegram = Boolean(mobileChanged);
+
+    try {
+      return await this.prisma.userProfile.upsert({
+        where: { userId },
+        create: {
+          userId,
+          ...profile,
+          ...(mobile !== undefined ? { mobilePhone: mobile } : {}),
+        },
+        update: {
+          ...profile,
+          ...(mobile !== undefined ? { mobilePhone: mobile } : {}),
+          ...(unlinkTelegram
+            ? { telegramChatId: null, telegramUsername: null, telegramLinkedAt: null }
+            : {}),
+        },
+      });
+    } catch (e) {
+      if (e instanceof Prisma.PrismaClientKnownRequestError && e.code === 'P2002') {
+        throw new BadRequestException('این شماره موبایل قبلاً برای حساب دیگری ثبت شده است');
+      }
+      throw e;
+    }
   }
 }
