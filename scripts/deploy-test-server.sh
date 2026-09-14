@@ -35,7 +35,7 @@ WEB_PORT="${WEB_HOST_PORT:-3000}"
 
 echo "==> Wait for API on :$API_PORT"
 for i in $(seq 1 40); do
-  if curl -fsS "http://127.0.0.1:$API_PORT/api/market/quotes?take=1" >/dev/null 2>&1; then
+  if curl -fsS "http://127.0.0.1:$API_PORT/api/health" >/dev/null 2>&1; then
     echo "API is healthy"
     break
   fi

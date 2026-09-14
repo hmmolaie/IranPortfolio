@@ -37,7 +37,7 @@ EOF
 
 echo "Applying Prisma schema..."
 cd /app/apps/api
-npx prisma db push --skip-generate
+CI=true npx prisma db push --skip-generate
 
 echo "Starting API..."
 exec node dist/main.js

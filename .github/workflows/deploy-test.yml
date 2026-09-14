@@ -60,7 +60,7 @@ jobs:
 
             echo "==> Wait for API health"
             for i in $(seq 1 40); do
-              if curl -fsS "http://127.0.0.1:${API_HOST_PORT:-3001}/api/market/quotes?take=1" >/dev/null 2>&1; then
+              if curl -fsS "http://127.0.0.1:${API_HOST_PORT:-3001}/api/health" >/dev/null 2>&1; then
                 echo "API is healthy"
                 break
               fi
