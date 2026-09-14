@@ -13,6 +13,7 @@ import {
   DEFAULT_TELEGRAM_BOT_NAME_FA,
   DEFAULT_TELEGRAM_BOT_URL,
   DEFAULT_TELEGRAM_BOT_USERNAME,
+  resolveTelegramBotUsername,
 } from './constants';
 
 type NewsItemRow = {
@@ -72,6 +73,7 @@ export class TelegramService implements OnModuleInit {
   ) {}
 
   onModuleInit() {
+    void this.ensureCanonicalBotUsername();
     if (process.env.NODE_ENV !== 'production') return;
     setTimeout(() => {
       void this.catchUpIfNeeded();
@@ -83,18 +85,31 @@ export class TelegramService implements OnModuleInit {
   }
 
   private resolveBotUsername(stored?: string | null) {
-    const username = (stored ?? '').trim().replace(/^@/, '');
-    return username || DEFAULT_TELEGRAM_BOT_USERNAME;
+    return resolveTelegramBotUsername(stored);
   }
 
   private resolveBotNameFa(stored?: string | null) {
     return (stored ?? '').trim() || DEFAULT_TELEGRAM_BOT_NAME_FA;
   }
 
-  private botDeepLink(username: string) {
-    return username === DEFAULT_TELEGRAM_BOT_USERNAME
-      ? DEFAULT_TELEGRAM_BOT_URL
-      : `https://t.me/${username}`;
+  private botDeepLink() {
+    return DEFAULT_TELEGRAM_BOT_URL;
+  }
+
+  /** اگر قبلاً حساب @sabadyaar ذخیره شده، به ربات @sabadyaar_bot اصلاح می‌شود */
+  private async ensureCanonicalBotUsername() {
+    try {
+      const row = await this.prisma.telegramBotConfig.findUnique({ where: { id: CONFIG_ID } });
+      if (!row) return;
+      const botUsername = this.resolveBotUsername(row.botUsername);
+      if (row.botUsername === botUsername) return;
+      await this.prisma.telegramBotConfig.update({
+        where: { id: CONFIG_ID },
+        data: { botUsername },
+      });
+    } catch (e) {
+      this.logger.warn(`اصلاح نام کاربری ربات: ${(e as Error).message.slice(0, 160)}`);
+    }
   }
 
   async getPublicConfig() {
@@ -109,7 +124,7 @@ export class TelegramService implements OnModuleInit {
     return {
       botNameFa: this.resolveBotNameFa(row?.botNameFa),
       botUsername,
-      deepLink: this.botDeepLink(botUsername),
+      deepLink: this.botDeepLink(),
       enabled: row?.enabled ?? true,
       hasToken: Boolean(row?.botTokenEncrypted),
       linkedCount,
@@ -127,7 +142,7 @@ export class TelegramService implements OnModuleInit {
       enabled: row?.enabled ?? false,
       botNameFa: this.resolveBotNameFa(row?.botNameFa),
       botUsername: username,
-      deepLink: this.botDeepLink(username),
+      deepLink: this.botDeepLink(),
       mobilePhone: profile?.mobilePhone ?? null,
       linked: Boolean(profile?.telegramChatId),
       telegramUsername: profile?.telegramUsername ?? null,
@@ -141,10 +156,9 @@ export class TelegramService implements OnModuleInit {
     enabled?: boolean;
   }) {
     const current = await this.prisma.telegramBotConfig.findUnique({ where: { id: CONFIG_ID } });
-    let botUsername = (data.botUsername ?? current?.botUsername ?? DEFAULT_TELEGRAM_BOT_USERNAME)
-      .trim()
-      .replace(/^@/, '');
-    if (!botUsername) botUsername = DEFAULT_TELEGRAM_BOT_USERNAME;
+    let botUsername = this.resolveBotUsername(
+      data.botUsername ?? current?.botUsername ?? DEFAULT_TELEGRAM_BOT_USERNAME,
+    );
     if (!/^[A-Za-z0-9_]{5,32}$/.test(botUsername)) {
       throw new BadRequestException('نام کاربری ربات نامعتبر است (بدون @، فقط حروف و عدد و _)');
     }

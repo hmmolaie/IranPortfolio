@@ -748,7 +748,7 @@ export default function SettingsPage() {
                 وصل کرده باشید. لینک ربات:
               </p>
               <p className="mt-1 text-xs">
-                <TelegramBotLink href={tgMe?.deepLink} />
+                <TelegramBotLink />
               </p>
             </div>
             <div>
@@ -808,7 +808,7 @@ export default function SettingsPage() {
             <p className="text-sm">
               لینک ربات:
               <br />
-              <TelegramBotLink href={tgMe?.deepLink} />
+              <TelegramBotLink />
             </p>
             {isAdmin && tgMe && !tgMe.configured && (
               <p className="text-sm text-navy-800/70">

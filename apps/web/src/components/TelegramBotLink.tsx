@@ -1,16 +1,16 @@
 import { TELEGRAM_BOT_URL } from '@/lib/telegram';
 
-export function TelegramBotLink({ href }: { href?: string | null }) {
-  const url = href?.trim() || TELEGRAM_BOT_URL;
+/** لینک عمومی همیشه ربات است، نه حساب @sabadyaar */
+export function TelegramBotLink() {
   return (
     <a
       className="inline-block font-mono text-navy-900 underline"
-      href={url}
+      href={TELEGRAM_BOT_URL}
       target="_blank"
       rel="noreferrer"
       dir="ltr"
     >
-      {url}
+      {TELEGRAM_BOT_URL}
     </a>
   );
 }
