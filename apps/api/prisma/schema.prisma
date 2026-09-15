@@ -582,6 +582,9 @@ model ForexGraphEdge {
   yahooSymbol String?
   source      String
   inverted    Boolean @default(false)
+  bid         Float?
+  ask         Float?
+  spreadPct   Float?
 
   snapshot ForexSnapshot @relation(fields: [snapshotId], references: [id], onDelete: Cascade)
 

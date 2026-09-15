@@ -1,7 +1,12 @@
 import { currencyMeta, type AssetKind } from './forex-universe';
 import type { QuotedPair } from './forex-quotes';
+import {
+  costModelPublic,
+  settleTrade,
+  type CostModelPublic,
+  type TradePnl,
+} from './forex-costs';
 
-export const MIN_SPREAD = 0.03;
 const MAX_DEPTH = 4;
 const MAX_PATHS_PER_TARGET = 48;
 
@@ -11,6 +16,8 @@ export type GraphHop = {
   rate: number;
   pairSymbol: string;
   inverted: boolean;
+  /** کسر اسپرد بازار (ask-bid)/mid ؛ اگر نباشد هزینهٔ پیش‌فرض */
+  spread: number | null;
 };
 
 export type GraphPath = {
@@ -28,6 +35,8 @@ export type GraphNodeDto = {
 export type GraphEdgeDto = GraphHop & {
   source: string;
   yahooSymbol: string | null;
+  bid: number | null;
+  ask: number | null;
 };
 
 export type SpreadOpportunity = {
@@ -35,8 +44,10 @@ export type SpreadOpportunity = {
   to: string;
   fromNameFa: string;
   toNameFa: string;
+  /** اختلاف ناخالص مسیرها به درصد */
   spreadPct: number;
-  meetsMinSpread: boolean;
+  recommend: boolean;
+  pnl: TradePnl;
   long: GraphPath;
   short: GraphPath;
   longActionsFa: string[];
@@ -49,15 +60,20 @@ export type ArbCycle = {
   hops: GraphHop[];
   product: number;
   profitPct: number;
+  recommend: boolean;
+  pnl: TradePnl;
   actionsFa: string[];
   summaryFa: string;
 };
 
 export type ForexAnalysis = {
-  minSpreadPct: number;
   pathCountCompared: number;
   signalCount: number;
+  averageNetPct: number;
+  costModel: CostModelPublic;
   opportunities: SpreadOpportunity[];
+  watchlist: SpreadOpportunity[];
+  /** سازگاری با اسنپ‌شات‌های قبلی */
   nearMisses: SpreadOpportunity[];
   cycles: ArbCycle[];
   featured: SpreadOpportunity[];
@@ -81,13 +97,19 @@ function pathProduct(hops: GraphHop[]): number {
 }
 
 function formatPct(n: number): string {
-  return `${n.toLocaleString('fa-IR', { maximumFractionDigits: 2 })}٪`;
+  const digits = Math.abs(n) < 1 ? 3 : 2;
+  return `${n.toLocaleString('fa-IR', { maximumFractionDigits: digits, minimumFractionDigits: 0 })}٪`;
 }
 
 function formatRate(n: number): string {
   if (!Number.isFinite(n) || n <= 0) return '—';
   const digits = n >= 1000 ? 2 : n >= 10 ? 3 : n >= 1 ? 5 : 6;
   return n.toLocaleString('en-US', { maximumFractionDigits: digits, minimumFractionDigits: 0 });
+}
+
+function formatUsd(n: number): string {
+  const sign = n < 0 ? '−' : '';
+  return `${sign}${Math.abs(n).toLocaleString('fa-IR', { maximumFractionDigits: 0 })} دلار`;
 }
 
 function hopAction(hop: GraphHop, side: 'long' | 'short'): string {
@@ -99,28 +121,49 @@ function pathLabel(path: GraphPath): string {
   return path.nodes.join(' → ');
 }
 
+function pnlForHops(
+  grossFraction: number,
+  hops: Array<{ hop: GraphHop; side: 'long' | 'short' }>,
+): TradePnl {
+  return settleTrade(
+    grossFraction,
+    hops.map(({ hop, side }) => ({
+      pairSymbol: hop.pairSymbol,
+      side,
+      marketSpread: hop.spread,
+    })),
+  );
+}
+
 function toOpportunity(
   from: string,
   to: string,
   long: GraphPath,
   short: GraphPath,
-  spread: number,
+  grossFraction: number,
 ): SpreadOpportunity {
-  const spreadPct = spread * 100;
+  const pnl = pnlForHops(grossFraction, [
+    ...long.hops.map((hop) => ({ hop, side: 'long' as const })),
+    ...short.hops.map((hop) => ({ hop, side: 'short' as const })),
+  ]);
   const fromNameFa = currencyMeta(from).nameFa;
   const toNameFa = currencyMeta(to).nameFa;
+  const verdict = pnl.recommend
+    ? `سود خالص ${formatPct(pnl.netPct)} ≈ ${formatUsd(pnl.netUsd)} روی ۱۰۰٬۰۰۰ دلار — پیشنهاد معامله.`
+    : `سود ناخالص ${formatPct(pnl.grossPct)} پس از هزینه ${formatPct(pnl.costPct)} می‌شود ${formatPct(pnl.netPct)} — پیشنهاد خرید/فروش نمی‌شود.`;
   return {
     from,
     to,
     fromNameFa,
     toNameFa,
-    spreadPct,
-    meetsMinSpread: spread >= MIN_SPREAD,
+    spreadPct: pnl.grossPct,
+    recommend: pnl.recommend,
+    pnl,
     long,
     short,
     longActionsFa: long.hops.map((h) => hopAction(h, 'long')),
     shortActionsFa: short.hops.map((h) => hopAction(h, 'short')),
-    summaryFa: `تبدیل ${from} به ${to}: مسیر بلند ${pathLabel(long)} معادل ${formatRate(long.product)} و مسیر کوتاه ${pathLabel(short)} معادل ${formatRate(short.product)} است؛ اختلاف ${formatPct(spreadPct)}.`,
+    summaryFa: `تبدیل ${from} به ${to}: مسیر بلند ${pathLabel(long)} در برابر مسیر کوتاه ${pathLabel(short)}. ${verdict}`,
   };
 }
 
@@ -184,19 +227,27 @@ function findCycles(adj: Map<string, GraphHop[]>): ArbCycle[] {
         if (edge.to === start && hops.length >= 2) {
           const allHops = [...hops, edge];
           const product = pathProduct(allHops);
-          const profitPct = (product - 1) * 100;
-          if (product >= 1 + MIN_SPREAD) {
+          const gross = product - 1;
+          if (product > 1 && Number.isFinite(gross)) {
             const ring = [...nodes, start];
             const key = cycleKey(ring);
             if (!seen.has(key)) {
               seen.add(key);
+              const pnl = pnlForHops(
+                gross,
+                allHops.map((hop) => ({ hop, side: 'long' as const })),
+              );
               cycles.push({
                 nodes: ring,
                 hops: allHops,
                 product,
-                profitPct,
+                profitPct: pnl.grossPct,
+                recommend: pnl.recommend,
+                pnl,
                 actionsFa: allHops.map((h) => hopAction(h, 'long')),
-                summaryFa: `حلقه ${ring.join(' → ')} با ضرب نرخ ${formatRate(product)} حدود ${formatPct(profitPct)} سود اسمی می‌دهد.`,
+                summaryFa: pnl.recommend
+                  ? `حلقه ${ring.join(' → ')} پس از هزینه سود خالص ${formatPct(pnl.netPct)} ≈ ${formatUsd(pnl.netUsd)} دارد.`
+                  : `حلقه ${ring.join(' → ')} ناخالص ${formatPct(pnl.grossPct)} است؛ پس از هزینه ${formatPct(pnl.netPct)} می‌ماند و پیشنهاد نمی‌شود.`,
               });
             }
           }
@@ -215,7 +266,7 @@ function findCycles(adj: Map<string, GraphHop[]>): ArbCycle[] {
     walk(start, [], [start], new Set([start]));
   }
 
-  cycles.sort((a, b) => b.profitPct - a.profitPct);
+  cycles.sort((a, b) => b.pnl.netPct - a.pnl.netPct || b.profitPct - a.profitPct);
   return cycles.slice(0, 12);
 }
 
@@ -243,43 +294,46 @@ function buildNarrative(
   analysis: Omit<ForexAnalysis, 'narrativeFa'>,
 ): string[] {
   const lines: string[] = [];
+  const n = analysis.costModel.notionalUsd.toLocaleString('fa-IR');
   lines.push(
-    `گراف با ${nodeCount.toLocaleString('fa-IR')} رأس (ارز/دارایی) و ${pairCount.toLocaleString('fa-IR')} جفت‌نرخ ساخته شد. هر یال جهت‌دار یک تبدیل است: وزن یال همان نرخ است.`,
+    `گراف با ${nodeCount.toLocaleString('fa-IR')} رأس و ${pairCount.toLocaleString('fa-IR')} جفت‌نرخ. سود ناخالص = اختلاف حاصل‌ضرب مسیر بلند و کوتاه (نرخ میانی).`,
   );
   lines.push(
-    `ایدهٔ معامله: بین دو ارز، مسیر با بیشترین حاصل‌ضرب نرخ را لانگ و مسیر با کمترین حاصل‌ضرب را شورت می‌کنیم. آستانهٔ سیگنال ${formatPct(MIN_SPREAD * 100)} است.`,
+    `برای هر سیگنال: سود خالص = ناخالص − اسپرد همهٔ پاها − کمیسیون − لغزش − سواپ یک‌شب − تأخیر اجرای همزمان. حجم فرضی ${n} دلار.`,
+  );
+  lines.push(
+    `میانگین سود خالص همهٔ موقعیت‌های رتبه‌بندی‌شده ${formatPct(analysis.averageNetPct)} است. پیشنهاد معامله فقط اگر سود خالص همان فرصت > ۰ باشد.`,
   );
 
   if (analysis.signalCount === 0) {
     lines.push(
-      `در این عکس‌برداری هیچ دو مسیری با اختلاف حداقل ${formatPct(MIN_SPREAD * 100)} پیدا نشد. در بازار نقدشونده معمولاً آربیتراژ چندمسیره سریع از بین می‌رود یا زیر هزینهٔ کارمزد و اسپرد می‌ماند.`,
+      'در این عکس هیچ مسیری پس از هزینه سود خالص مثبت ندارد. بهترین موقعیت‌ها فقط برای مشاهده رتبه‌بندی شده‌اند؛ ورود پیشنهاد نمی‌شود.',
     );
-    if (analysis.nearMisses[0]) {
-      const n = analysis.nearMisses[0];
+    if (analysis.watchlist[0]) {
+      const top = analysis.watchlist[0];
       lines.push(
-        `بزرگ‌ترین اختلاف مشاهده‌شده حدود ${formatPct(n.spreadPct)} بین ${n.from} و ${n.to} بود؛ زیر آستانه است و سیگنال محسوب نمی‌شود.`,
+        `نزدیک‌ترین مورد ${top.from} → ${top.to}: ناخالص ${formatPct(top.pnl.grossPct)}، هزینه ${formatPct(top.pnl.costPct)}، خالص ${formatPct(top.pnl.netPct)} ≈ ${formatUsd(top.pnl.netUsd)}.`,
       );
     }
   } else {
     const top = analysis.opportunities[0];
     lines.push(
-      `${analysis.signalCount.toLocaleString('fa-IR')} فرصت با اختلاف حداقل ${formatPct(MIN_SPREAD * 100)} دیده شد. قوی‌ترین: ${top.from} → ${top.to} با ${formatPct(top.spreadPct)}.`,
+      `${analysis.signalCount.toLocaleString('fa-IR')} فرصت با سود خالص مثبت. قوی‌ترین: ${top.from} → ${top.to} خالص ${formatPct(top.pnl.netPct)} ≈ ${formatUsd(top.pnl.netUsd)}.`,
     );
     lines.push(
-      `نمونه اجرا (آزمایشی): ${top.longActionsFa.join('، ')} را لانگ و ${top.shortActionsFa.join('، ')} را شورت. این متن توصیهٔ معامله نیست؛ تأخیر قیمت و کارمزد می‌تواند اختلاف را صفر کند.`,
+      `اجرا (آزمایشی): ${top.longActionsFa.join('، ')} لانگ و ${top.shortActionsFa.join('، ')} شورت. تأخیر واقعی سفارش می‌تواند همین حاشیه را هم از بین ببرد.`,
     );
   }
 
-  if (analysis.cycles.length) {
-    lines.push(
-      `${analysis.cycles.length.toLocaleString('fa-IR')} حلقه با سود اسمی حداقل ${formatPct(MIN_SPREAD * 100)} هم دیده شد (ضرب نرخ دور کامل > ۱). حلقه‌ها به کارمزد و لغزش بسیار حساس‌اند.`,
-    );
+  const recCycles = analysis.cycles.filter((c) => c.recommend).length;
+  if (recCycles) {
+    lines.push(`${recCycles.toLocaleString('fa-IR')} حلقه پس از هزینه هنوز سود خالص مثبت دارد.`);
   } else {
-    lines.push('حلقهٔ آربیتراژ با سود اسمی ۳٪ یا بیشتر در این گراف دیده نشد.');
+    lines.push('هیچ حلقهٔ آربیتراژ پس از هزینه سود خالص مثبت ندارد.');
   }
 
   lines.push(
-    'مسیرهایی که فیات را به بیت‌کوین/طلا وصل می‌کنند از چند منبع قیمت می‌آیند؛ اختلاف می‌تواند اختلاف منبع باشد نه فرصت واقعی قابل‌اجرا.',
+    'اسپرد اگر بید/آسک از بازار بیاید همان استفاده می‌شود؛ وگرنه پیش‌فرض نقدشوندگی جفت اصلی/کراس/اگزاتیک/رمزارز/فلز. مسیر فیات–رمزارز ممکن است اختلاف منبع باشد نه فرصت قابل‌اجرا.',
   );
   return lines;
 }
@@ -292,23 +346,34 @@ export function buildWeightedGraph(quotes: QuotedPair[]): BuiltGraph {
     if (!(q.rate > 0)) continue;
     nodeCodes.add(q.base);
     nodeCodes.add(q.quote);
+    const spread = q.spread ?? null;
+    const bid = q.bid;
+    const ask = q.ask;
     edges.push({
       from: q.base,
       to: q.quote,
       rate: q.rate,
       pairSymbol: q.pairSymbol,
       inverted: false,
+      spread,
       source: q.source,
       yahooSymbol: q.yahooSymbol,
+      bid,
+      ask,
     });
+    const invBid = ask && ask > 0 ? 1 / ask : null;
+    const invAsk = bid && bid > 0 ? 1 / bid : null;
     edges.push({
       from: q.quote,
       to: q.base,
       rate: 1 / q.rate,
       pairSymbol: q.pairSymbol,
       inverted: true,
+      spread,
       source: q.source,
       yahooSymbol: q.yahooSymbol,
+      bid: invBid,
+      ask: invAsk,
     });
   }
 
@@ -327,6 +392,7 @@ export function buildWeightedGraph(quotes: QuotedPair[]): BuiltGraph {
       rate: e.rate,
       pairSymbol: e.pairSymbol,
       inverted: e.inverted,
+      spread: e.spread,
     };
     const list = adj.get(e.from) ?? [];
     list.push(hop);
@@ -351,28 +417,32 @@ export function buildWeightedGraph(quotes: QuotedPair[]): BuiltGraph {
         if (p.product < short.product) short = p;
       }
       if (short.product <= 0) continue;
-      const spread = long.product / short.product - 1;
-      if (!(spread > 0) || !Number.isFinite(spread)) continue;
+      const gross = long.product / short.product - 1;
+      if (!(gross > 0) || !Number.isFinite(gross)) continue;
       if (long.nodes.join('>') === short.nodes.join('>')) continue;
       const key = uniquePairKey(src, dst);
       if (seenPair.has(key)) continue;
       seenPair.add(key);
-      allOpps.push(toOpportunity(src, dst, long, short, spread));
+      allOpps.push(toOpportunity(src, dst, long, short, gross));
     }
   }
 
-  allOpps.sort((a, b) => b.spreadPct - a.spreadPct);
-  const opportunities = allOpps.filter((o) => o.meetsMinSpread).slice(0, 20);
-  const nearMisses = allOpps.filter((o) => !o.meetsMinSpread).slice(0, 8);
+  allOpps.sort((a, b) => b.pnl.netPct - a.pnl.netPct || b.spreadPct - a.spreadPct);
+  const opportunities = allOpps.filter((o) => o.recommend).slice(0, 20);
+  const watchlist = allOpps.filter((o) => !o.recommend).slice(0, 12);
   const cycles = findCycles(adj);
   const featured = pickFeatured(allOpps);
+  const averageNetPct =
+    allOpps.length > 0 ? allOpps.reduce((s, o) => s + o.pnl.netPct, 0) / allOpps.length : 0;
 
   const analysisBody: Omit<ForexAnalysis, 'narrativeFa'> = {
-    minSpreadPct: MIN_SPREAD * 100,
     pathCountCompared,
     signalCount: opportunities.length,
+    averageNetPct,
+    costModel: costModelPublic(),
     opportunities,
-    nearMisses,
+    watchlist,
+    nearMisses: watchlist,
     cycles,
     featured,
   };

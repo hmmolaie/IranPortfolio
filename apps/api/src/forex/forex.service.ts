@@ -122,6 +122,9 @@ export class ForexService {
             yahooSymbol: e.yahooSymbol,
             source: e.source,
             inverted: e.inverted,
+            bid: e.bid,
+            ask: e.ask,
+            spreadPct: e.spread,
           })),
         },
       },
@@ -164,6 +167,9 @@ export class ForexService {
       yahooSymbol: string | null;
       source: string;
       inverted: boolean;
+      bid: number | null;
+      ask: number | null;
+      spreadPct: number | null;
     }>;
   }): ForexSnapshotDto {
     const nodes = row.nodes.map((n) => {
@@ -180,8 +186,11 @@ export class ForexService {
       rate: e.rate,
       pairSymbol: e.pairSymbol,
       inverted: e.inverted,
+      spread: e.spreadPct,
       source: e.source,
       yahooSymbol: e.yahooSymbol,
+      bid: e.bid,
+      ask: e.ask,
     }));
     const rebuilt = buildWeightedGraph(
       edges
@@ -195,6 +204,9 @@ export class ForexService {
             rate: e.rate,
             yahooSymbol: e.yahooSymbol ?? '',
             source: e.source,
+            bid: e.bid,
+            ask: e.ask,
+            spread: e.spread,
           };
         }),
     );
@@ -215,5 +227,5 @@ export class ForexService {
 function isAnalysis(v: Prisma.JsonValue | null): v is Prisma.JsonValue & ForexAnalysis {
   if (!v || typeof v !== 'object' || Array.isArray(v)) return false;
   const rec = v as Record<string, unknown>;
-  return Array.isArray(rec.narrativeFa) && Array.isArray(rec.opportunities);
+  return Array.isArray(rec.narrativeFa) && Array.isArray(rec.opportunities) && rec.costModel != null;
 }

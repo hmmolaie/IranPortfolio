@@ -13,6 +13,7 @@ type Hop = {
   rate: number;
   pairSymbol: string;
   inverted: boolean;
+  spread?: number | null;
 };
 
 type GraphPath = {
@@ -21,13 +22,42 @@ type GraphPath = {
   product: number;
 };
 
+type LegCost = {
+  pairSymbol: string;
+  side: 'long' | 'short';
+  spreadPct: number;
+  spreadSource: 'market' | 'default';
+  commissionPct: number;
+  slippagePct: number;
+  swapPct: number;
+  subtotalPct: number;
+};
+
+type TradePnl = {
+  grossPct: number;
+  spreadPct: number;
+  commissionPct: number;
+  slippagePct: number;
+  swapPct: number;
+  syncLagPct: number;
+  costPct: number;
+  netPct: number;
+  grossUsd: number;
+  costUsd: number;
+  netUsd: number;
+  recommend: boolean;
+  legCount: number;
+  legs: LegCost[];
+};
+
 type Opportunity = {
   from: string;
   to: string;
   fromNameFa: string;
   toNameFa: string;
   spreadPct: number;
-  meetsMinSpread: boolean;
+  recommend: boolean;
+  pnl: TradePnl;
   long: GraphPath;
   short: GraphPath;
   longActionsFa: string[];
@@ -40,15 +70,27 @@ type ArbCycle = {
   hops: Hop[];
   product: number;
   profitPct: number;
+  recommend: boolean;
+  pnl: TradePnl;
   actionsFa: string[];
   summaryFa: string;
 };
 
+type CostModel = {
+  notionalUsd: number;
+  commissionPctPerSide: number;
+  syncLagPct: number;
+  noteFa: string;
+  bucketsFa: Array<{ labelFa: string; spreadPct: number; slippagePct: number; swapPct: number }>;
+};
+
 type Analysis = {
-  minSpreadPct: number;
   pathCountCompared: number;
   signalCount: number;
+  averageNetPct: number;
+  costModel: CostModel;
   opportunities: Opportunity[];
+  watchlist: Opportunity[];
   nearMisses: Opportunity[];
   cycles: ArbCycle[];
   featured: Opportunity[];
@@ -56,7 +98,7 @@ type Analysis = {
 };
 
 type NodeDto = { code: string; nameFa: string; kind: 'FIAT' | 'CRYPTO' | 'METAL' | string };
-type EdgeDto = Hop & { source: string; yahooSymbol: string | null };
+type EdgeDto = Hop & { source: string; yahooSymbol: string | null; bid?: number | null; ask?: number | null };
 
 type Snapshot = {
   id: string;
@@ -88,13 +130,41 @@ function formatWhen(iso: string) {
 }
 
 function formatPct(n: number) {
-  return `${n.toLocaleString('fa-IR', { maximumFractionDigits: 2 })}٪`;
+  const digits = Math.abs(n) < 1 ? 3 : 2;
+  return `${n.toLocaleString('fa-IR', { maximumFractionDigits: digits, minimumFractionDigits: 0 })}٪`;
+}
+
+function formatUsd(n: number) {
+  const sign = n < 0 ? '−' : '';
+  return `${sign}${Math.abs(n).toLocaleString('fa-IR', { maximumFractionDigits: 0 })} دلار`;
 }
 
 function formatRate(n: number) {
   if (!Number.isFinite(n) || n <= 0) return '—';
   const digits = n >= 1000 ? 2 : n >= 10 ? 3 : n >= 1 ? 5 : 6;
   return n.toLocaleString('fa-IR', { maximumFractionDigits: digits });
+}
+
+function PnlBox({ pnl }: { pnl: TradePnl }) {
+  return (
+    <div className="mt-3 space-y-2 text-xs">
+      <div className="grid grid-cols-2 gap-1.5 sm:grid-cols-4">
+        <div>ناخالص: {formatPct(pnl.grossPct)}</div>
+        <div>اسپرد: {formatPct(pnl.spreadPct)}</div>
+        <div>کمیسیون: {formatPct(pnl.commissionPct)}</div>
+        <div>لغزش: {formatPct(pnl.slippagePct)}</div>
+        <div>سواپ: {formatPct(pnl.swapPct)}</div>
+        <div>تأخیر همزمان: {formatPct(pnl.syncLagPct)}</div>
+        <div>جمع هزینه: {formatPct(pnl.costPct)}</div>
+        <div className={pnl.netPct > 0 ? 'font-semibold text-emerald-800' : 'font-semibold text-rose-800'}>
+          خالص: {formatPct(pnl.netPct)} ≈ {formatUsd(pnl.netUsd)}
+        </div>
+      </div>
+      <div className="text-[11px] leading-6 text-navy-800/55">
+        ناخالص {formatUsd(pnl.grossUsd)} − هزینه {formatUsd(pnl.costUsd)} روی حجم ۱۰۰٬۰۰۰ دلار · {pnl.legCount.toLocaleString('fa-IR')} پا
+      </div>
+    </div>
+  );
 }
 
 function OppCard({
@@ -106,6 +176,7 @@ function OppCard({
   active: boolean;
   onPick: () => void;
 }) {
+  const pnl = opp.pnl;
   return (
     <button
       type="button"
@@ -114,7 +185,9 @@ function OppCard({
         'w-full rounded-xl border p-4 text-start transition',
         active
           ? 'border-gold-400 bg-gold-400/10 shadow-soft'
-          : 'border-navy-900/10 bg-white hover:border-navy-900/20',
+          : opp.recommend
+            ? 'border-emerald-700/30 bg-white hover:border-emerald-700/50'
+            : 'border-navy-900/10 bg-white hover:border-navy-900/20',
       )}
     >
       <div className="flex flex-wrap items-center justify-between gap-2">
@@ -127,13 +200,14 @@ function OppCard({
         <span
           className={clsx(
             'rounded-full px-2.5 py-0.5 text-xs font-semibold',
-            opp.meetsMinSpread ? 'bg-emerald-700 text-white' : 'bg-navy-900/8 text-navy-800',
+            opp.recommend ? 'bg-emerald-700 text-white' : 'bg-navy-900/8 text-navy-800',
           )}
         >
-          اختلاف {formatPct(opp.spreadPct)}
+          {opp.recommend ? 'پیشنهاد معامله' : 'فقط نمایش'}
         </span>
       </div>
       <p className="mt-2 text-xs leading-6 text-navy-800/70">{opp.summaryFa}</p>
+      {pnl && <PnlBox pnl={pnl} />}
       <div className="mt-3 grid gap-2 text-xs sm:grid-cols-2">
         <div className="rounded-lg bg-emerald-50 px-3 py-2 text-emerald-900">
           <div className="font-medium">لانگ · مسیر بلند</div>
@@ -225,7 +299,7 @@ export default function ForexPage() {
             'دریافت نرخ از یاهو و منابع کمکی...',
             'ساخت رأس‌ها و یال‌های جهت‌دار...',
             'جستجوی مسیر بلند و کوتاه...',
-            'بررسی اختلاف حداقل ۳٪...',
+            'کسر اسپرد، کمیسیون، لغزش و سواپ...',
           ]}
         />
       )}
@@ -239,8 +313,7 @@ export default function ForexPage() {
             </span>
           </div>
           <p className="mt-2 max-w-2xl text-sm leading-7 text-navy-800/70">
-            هر رأس یک ارز یا دارایی است. هر یال یک جفت‌نرخ: مثلاً یورو به دلار با وزن همان نرخ. مسیر بلند
-            لانگ و مسیر کوتاه شورت می‌شود اگر اختلاف حداقل ۳٪ باشد. این صفحه توصیهٔ معاملاتی نیست.
+            هر رأس یک ارز است. مسیر بلند لانگ و مسیر کوتاه شورت می‌شود. پیشنهاد معامله فقط وقتی سود خالص پس از اسپرد، کمیسیون، لغزش، سواپ و تأخیر اجرا مثبت باشد. این صفحه توصیهٔ رسمی نیست.
           </p>
         </div>
         <div className="flex flex-wrap items-center gap-2">
@@ -275,7 +348,7 @@ export default function ForexPage() {
               { k: 'رأس‌ها', v: data.nodeCount.toLocaleString('fa-IR') },
               { k: 'یال‌های جهت‌دار', v: data.edgeCount.toLocaleString('fa-IR') },
               {
-                k: 'سیگنال ≥ ۳٪',
+                k: 'پیشنهاد سود خالص',
                 v: data.analysis.signalCount.toLocaleString('fa-IR'),
               },
             ].map((s) => (
@@ -300,6 +373,21 @@ export default function ForexPage() {
                 {line}
               </p>
             ))}
+            {data.analysis.costModel && (
+              <div className="rounded-xl bg-navy-50/70 p-4 text-xs leading-6 text-navy-800/75">
+                <p>{data.analysis.costModel.noteFa}</p>
+                <p className="mt-2">
+                  کمیسیون هر پا {formatPct(data.analysis.costModel.commissionPctPerSide)} · تأخیر همزمان پایه{' '}
+                  {formatPct(data.analysis.costModel.syncLagPct)} · حجم{' '}
+                  {data.analysis.costModel.notionalUsd.toLocaleString('fa-IR')} دلار
+                </p>
+                {data.analysis.averageNetPct != null && (
+                  <p className="mt-1">
+                    میانگین سود خالص همهٔ موقعیت‌های دیده‌شده: {formatPct(data.analysis.averageNetPct)}
+                  </p>
+                )}
+              </div>
+            )}
             <p className="text-xs text-navy-800/50">
               منبع این اسنپ‌شات:
               <span className="ms-1 font-mono" dir="ltr">
@@ -310,10 +398,10 @@ export default function ForexPage() {
 
           <div className="grid gap-6 lg:grid-cols-2">
             <section className="space-y-3">
-              <h2 className="text-lg font-semibold">فرصت لانگ / شورت (≥ ۳٪)</h2>
+              <h2 className="text-lg font-semibold">پیشنهاد معامله (سود خالص مثبت)</h2>
               {data.analysis.opportunities.length === 0 && (
                 <p className="card text-sm text-navy-800/60">
-                  در این عکس اختلاف ۳٪ بین مسیرها دیده نشد. موارد نزدیک را در ستون کناری ببینید.
+                  پس از کسر هزینه هیچ فرصتی سود خالص مثبت ندارد. بهترین موقعیت‌ها فقط نمایش داده می‌شوند.
                 </p>
               )}
               {data.analysis.opportunities.map((o) => (
@@ -326,8 +414,8 @@ export default function ForexPage() {
               ))}
             </section>
             <section className="space-y-3">
-              <h2 className="text-lg font-semibold">نزدیک به آستانه و حلقه‌ها</h2>
-              {data.analysis.nearMisses.map((o) => (
+              <h2 className="text-lg font-semibold">بهترین موقعیت‌ها بدون پیشنهاد</h2>
+              {(data.analysis.watchlist ?? data.analysis.nearMisses ?? []).map((o) => (
                 <OppCard
                   key={`nm-${o.from}-${o.to}`}
                   opp={o}
@@ -349,14 +437,23 @@ export default function ForexPage() {
                 >
                   <div className="flex items-center justify-between gap-2">
                     <span className="text-sm font-semibold">حلقه آربیتراژ</span>
-                    <span className="text-xs font-semibold text-emerald-800">{formatPct(c.profitPct)}</span>
+                    <span
+                      className={clsx(
+                        'rounded-full px-2.5 py-0.5 text-xs font-semibold',
+                        c.recommend ? 'bg-emerald-700 text-white' : 'bg-navy-900/8 text-navy-800',
+                      )}
+                    >
+                      {c.recommend ? 'پیشنهاد معامله' : 'فقط نمایش'}
+                    </span>
                   </div>
                   <p className="mt-2 text-xs leading-6 text-navy-800/70">{c.summaryFa}</p>
+                  {c.pnl && <PnlBox pnl={c.pnl} />}
                 </button>
               ))}
-              {!data.analysis.nearMisses.length && !data.analysis.cycles.length && (
-                <p className="card text-sm text-navy-800/60">مورد نزدیک به آستانه یا حلقهٔ ۳٪ نیست.</p>
-              )}
+              {!(data.analysis.watchlist ?? data.analysis.nearMisses ?? []).length &&
+                !data.analysis.cycles.length && (
+                  <p className="card text-sm text-navy-800/60">موقعیت نزدیکی برای نمایش نیست.</p>
+                )}
             </section>
           </div>
 
@@ -366,6 +463,7 @@ export default function ForexPage() {
                 <tr>
                   <th className="px-4 py-3 text-start font-medium">جفت</th>
                   <th className="px-4 py-3 text-start font-medium">نرخ</th>
+                  <th className="px-4 py-3 text-start font-medium">اسپرد</th>
                   <th className="px-4 py-3 text-start font-medium">منبع</th>
                 </tr>
               </thead>
@@ -376,6 +474,9 @@ export default function ForexPage() {
                       {q.pairSymbol}
                     </td>
                     <td className="px-4 py-2.5 tabular-nums">{formatRate(q.rate)}</td>
+                    <td className="px-4 py-2.5 tabular-nums">
+                      {q.spread != null ? formatPct(q.spread * 100) : 'پیش‌فرض'}
+                    </td>
                     <td className="px-4 py-2.5 text-navy-800/60" dir="ltr">
                       {q.source}
                     </td>

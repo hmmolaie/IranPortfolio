@@ -1,4 +1,5 @@
 import { FOREX_PAIRS, pairSymbol, type PairDef } from './forex-universe';
+import { bookSpread } from './forex-costs';
 
 const UA =
   'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/126.0.0.0 Safari/537.36';
@@ -15,6 +16,10 @@ export type QuotedPair = {
   rate: number;
   yahooSymbol: string;
   source: string;
+  bid: number | null;
+  ask: number | null;
+  /** کسر اسپرد بازار (ask-bid)/mid */
+  spread: number | null;
 };
 
 function asRecord(v: unknown): Record<string, unknown> | null {
@@ -39,7 +44,14 @@ async function fetchJson(url: string, timeoutMs = 12_000): Promise<unknown> {
   return res.json();
 }
 
-function quoted(pair: PairDef, rate: number, source: string): QuotedPair {
+function quoted(
+  pair: PairDef,
+  rate: number,
+  source: string,
+  book?: { bid?: number | null; ask?: number | null },
+): QuotedPair {
+  const bid = book?.bid && book.bid > 0 ? book.bid : null;
+  const ask = book?.ask && book.ask > 0 ? book.ask : null;
   return {
     base: pair.base,
     quote: pair.quote,
@@ -47,6 +59,9 @@ function quoted(pair: PairDef, rate: number, source: string): QuotedPair {
     rate,
     yahooSymbol: pair.yahoo,
     source,
+    bid,
+    ask,
+    spread: bookSpread(bid, ask, rate),
   };
 }
 
@@ -81,19 +96,21 @@ async function fetchYahooQuoteV7(pairs: PairDef[]): Promise<QuotedPair[]> {
   const url = `https://query1.finance.yahoo.com/v7/finance/quote?symbols=${encodeURIComponent(symbols)}`;
   const data = asRecord(await fetchJson(url, 18_000));
   const result = asRecord(data?.quoteResponse)?.result;
-  const prices = new Map<string, number>();
+  const bySym = new Map<string, { rate: number; bid: number | null; ask: number | null }>();
   if (Array.isArray(result)) {
     for (const row of result) {
       const rec = asRecord(row);
       const symbol = String(rec?.symbol ?? '');
       const price = asFinite(rec?.regularMarketPrice);
-      if (symbol && price) prices.set(symbol, price);
+      const bid = asFinite(rec?.bid) ?? asFinite(rec?.regularMarketBid);
+      const ask = asFinite(rec?.ask) ?? asFinite(rec?.regularMarketAsk);
+      if (symbol && price) bySym.set(symbol, { rate: price, bid, ask });
     }
   }
   const out: QuotedPair[] = [];
   for (const pair of pairs) {
-    const rate = prices.get(pair.yahoo);
-    if (rate) out.push(quoted(pair, rate, 'yahoo-quote'));
+    const row = bySym.get(pair.yahoo);
+    if (row) out.push(quoted(pair, row.rate, 'yahoo-quote', { bid: row.bid, ask: row.ask }));
   }
   return out;
 }
@@ -132,7 +149,12 @@ async function fetchBitstamp(): Promise<QuotedPair[]> {
           await fetchJson(`https://www.bitstamp.net/api/v2/ticker/${item.path}/`),
         );
         const rate = asFinite(data?.last) ?? asFinite(data?.bid);
-        return rate ? quoted(item.pair, rate, `bitstamp:${item.path}`) : null;
+        return rate
+          ? quoted(item.pair, rate, `bitstamp:${item.path}`, {
+              bid: asFinite(data?.bid),
+              ask: asFinite(data?.ask),
+            })
+          : null;
       } catch {
         return null;
       }
@@ -160,7 +182,20 @@ function mergeQuotes(chunks: QuotedPair[][]): QuotedPair[] {
   const byPair = new Map<string, QuotedPair>();
   for (const list of chunks) {
     for (const q of list) {
-      byPair.set(q.pairSymbol, q);
+      const prev = byPair.get(q.pairSymbol);
+      if (!prev) {
+        byPair.set(q.pairSymbol, q);
+        continue;
+      }
+      byPair.set(q.pairSymbol, {
+        ...q,
+        bid: q.bid ?? prev.bid,
+        ask: q.ask ?? prev.ask,
+        spread:
+          q.spread ??
+          prev.spread ??
+          bookSpread(q.bid ?? prev.bid, q.ask ?? prev.ask, q.rate),
+      });
     }
   }
   return [...byPair.values()];
