@@ -1,6 +1,7 @@
 import {
   Body,
   Controller,
+  Delete,
   Get,
   NotFoundException,
   Param,
@@ -10,7 +11,7 @@ import {
   UseGuards,
 } from '@nestjs/common';
 import { AssetType } from '@prisma/client';
-import { IsString, MinLength } from 'class-validator';
+import { IsString, MaxLength, MinLength } from 'class-validator';
 import { MarketService } from './market.service';
 import { JwtAuthGuard } from '../auth/jwt-auth.guard';
 import { AdminGuard } from '../auth/admin.guard';
@@ -19,6 +20,13 @@ class AskDto {
   @IsString()
   @MinLength(2)
   question!: string;
+}
+
+class MarketChatDto {
+  @IsString()
+  @MinLength(2)
+  @MaxLength(800)
+  message!: string;
 }
 
 @Controller('market')
@@ -44,6 +52,24 @@ export class MarketController {
   @Get('indices')
   indices(@Query('days') days?: string) {
     return this.market.getMarketIndices(days ? Number(days) : 60);
+  }
+
+  @Get('chat')
+  getChat(@Req() req: { user: { userId: string } }) {
+    return this.market.getChat(req.user.userId);
+  }
+
+  @Post('chat')
+  postChat(
+    @Req() req: { user: { userId: string; role?: string } },
+    @Body() dto: MarketChatDto,
+  ) {
+    return this.market.postChat(req.user.userId, req.user.role ?? 'USER', dto.message);
+  }
+
+  @Delete('chat')
+  hideChat(@Req() req: { user: { userId: string } }) {
+    return this.market.hideChat(req.user.userId);
   }
 
   @Get('instruments/:id/history')

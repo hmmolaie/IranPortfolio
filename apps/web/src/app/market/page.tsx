@@ -5,6 +5,7 @@ import { api, formatNum, getToken, getUserRole, setUserRole, UserRole } from '@/
 import { useRouter } from 'next/navigation';
 import clsx from 'clsx';
 import { WaitingOverlay } from '@/components/WaitingOverlay';
+import { TehranMarketChat } from '@/components/TehranMarketChat';
 
 type Quote = {
   id: string;
@@ -239,6 +240,8 @@ export default function MarketPage() {
       </div>
 
       {msg && <p className="text-sm text-navy-800/80">{msg}</p>}
+
+      <TehranMarketChat />
 
       <div className="card flex flex-wrap gap-3">
         <input

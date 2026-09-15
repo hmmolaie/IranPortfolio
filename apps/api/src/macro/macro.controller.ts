@@ -48,7 +48,7 @@ export class MacroController {
   async latest() {
     const [macro, spot] = await Promise.all([
       this.prisma.macroSnapshot.findFirst({ orderBy: { asOfDate: 'desc' } }),
-      this.prisma.spotPriceDaily.findFirst({ orderBy: { dateKey: 'desc' } }),
+      this.prices.latest(),
     ]);
     if (!macro && !spot) return null;
     return {
@@ -56,6 +56,7 @@ export class MacroController {
       usdIrr: spot?.usdIrr ?? macro?.usdIrr ?? null,
       goldGramRial: spot?.goldGramRial ?? null,
       spotDateKey: spot?.dateKey ?? null,
+      sourceNoteFa: spot && 'sourceNoteFa' in spot ? spot.sourceNoteFa : null,
     };
   }
 
@@ -89,6 +90,7 @@ export class MacroController {
       usdIrr: spotLatest?.usdIrr ?? saved.usdIrr ?? null,
       goldGramRial: spotLatest?.goldGramRial ?? null,
       spotDateKey: spotLatest?.dateKey ?? null,
+      sourceNoteFa: spotLatest && 'sourceNoteFa' in spotLatest ? spotLatest.sourceNoteFa : null,
     };
   }
 

@@ -2,7 +2,7 @@
 
 import Link from 'next/link';
 import { usePathname, useRouter } from 'next/navigation';
-import { getToken, clearSession, api, getUserRole, setUserRole, UserRole } from '@/lib/api';
+import { getToken, clearSession, api, getUserRole, setUserRole, UserRole, touchSession, refreshSessionIfNeeded, sessionTimedOut } from '@/lib/api';
 import { useEffect, useState } from 'react';
 import clsx from 'clsx';
 import { ToastProvider } from '@/components/Toast';
@@ -14,6 +14,7 @@ const allLinks = [
   { href: '/funds', label: 'صندوق‌ها', adminOnly: true },
   { href: '/lessons', label: 'درس‌آموخته‌ها', adminOnly: true },
   { href: '/macro', label: 'اقتصاد ایران', adminOnly: true },
+  { href: '/world', label: 'اقتصاد دنیا', adminOnly: true },
   { href: '/news', label: 'اخبار اقتصادی ایران', adminOnly: false },
   { href: '/admin/users', label: 'مدیریت کاربران', adminOnly: true },
 ];
@@ -63,6 +64,60 @@ export function AppShell({ children }: { children: React.ReactNode }) {
       });
   }, [pathname, router, isAuthPage]);
 
+  useEffect(() => {
+    if (isAuthPage) return;
+
+    function logoutIdle() {
+      clearSession();
+      setAuthed(false);
+      setRole(null);
+      setUserLabel('');
+      router.replace('/');
+    }
+
+    function onActivity() {
+      if (sessionTimedOut()) {
+        logoutIdle();
+        return;
+      }
+      touchSession();
+      void refreshSessionIfNeeded();
+    }
+
+    const events: Array<keyof WindowEventMap> = ['pointerdown', 'keydown', 'scroll', 'touchstart'];
+    for (const ev of events) {
+      window.addEventListener(ev, onActivity, { passive: true });
+    }
+
+    const tick = window.setInterval(() => {
+      if (sessionTimedOut()) logoutIdle();
+    }, 5000);
+
+    const onVis = () => {
+      if (document.visibilityState === 'visible') onActivity();
+    };
+    document.addEventListener('visibilitychange', onVis);
+
+    const onStorage = (e: StorageEvent) => {
+      if (e.key === 'sabadyar_token' && !e.newValue) logoutIdle();
+    };
+    window.addEventListener('storage', onStorage);
+
+    if (getToken()) {
+      touchSession();
+      void refreshSessionIfNeeded();
+    }
+
+    return () => {
+      for (const ev of events) {
+        window.removeEventListener(ev, onActivity);
+      }
+      window.clearInterval(tick);
+      document.removeEventListener('visibilitychange', onVis);
+      window.removeEventListener('storage', onStorage);
+    };
+  }, [isAuthPage, router]);
+
   const links = allLinks.filter((l) => !l.adminOnly || role === 'ADMIN');
 
   function logout() {
@@ -98,7 +153,7 @@ export function AppShell({ children }: { children: React.ReactNode }) {
           <div className="px-6 py-7">
             <Link href="/dashboard" className="block">
               <div className="text-2xl font-bold tracking-tight">سبدیار</div>
-              <div className="mt-1 text-xs text-white/60">بانک خصوصی سبد شما</div>
+              <div className="mt-1 text-xs text-white/60">مدیریت سبد سرمایه‌گذاری شما</div>
             </Link>
           </div>
           <nav className="flex gap-1 overflow-x-auto px-3 pb-4 lg:flex-col lg:overflow-visible">

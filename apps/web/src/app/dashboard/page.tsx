@@ -4,7 +4,6 @@ import { useEffect, useState } from 'react';
 import Link from 'next/link';
 import { useRouter } from 'next/navigation';
 import { api, formatRial, getToken, getUserRole, setUserRole, UserRole } from '@/lib/api';
-import { TelegramBotLink } from '@/components/TelegramBotLink';
 
 type Portfolio = {
   id: string;
@@ -72,11 +71,6 @@ export default function DashboardPage() {
           {role === 'ADMIN'
             ? 'نمای کلی سبد کاربران — فقط مشاهده'
             : 'نمای کلی سبدها و مسیر سرمایه‌گذاری شما'}
-        </p>
-        <p className="mt-3 text-sm text-navy-800/70">
-          ربات تلگرام برای خلاصهٔ روزانهٔ ۸:۳۰:
-          <br />
-          <TelegramBotLink />
         </p>
       </div>
 

@@ -1,6 +1,7 @@
-import { Body, Controller, ForbiddenException, Post } from '@nestjs/common';
+import { Body, Controller, ForbiddenException, Post, Req, UseGuards } from '@nestjs/common';
 import { IsString } from 'class-validator';
 import { AuthService } from './auth.service';
+import { JwtAuthGuard } from './jwt-auth.guard';
 
 class LoginDto {
   @IsString()
@@ -22,5 +23,11 @@ export class AuthController {
   @Post('login')
   login(@Body() dto: LoginDto) {
     return this.auth.login(dto.email, dto.password);
+  }
+
+  @Post('refresh')
+  @UseGuards(JwtAuthGuard)
+  refresh(@Req() req: { user: { userId: string } }) {
+    return this.auth.refresh(req.user.userId);
   }
 }

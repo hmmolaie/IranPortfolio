@@ -2,6 +2,7 @@ import { Injectable, Logger, BadRequestException } from '@nestjs/common';
 import { Cron } from '@nestjs/schedule';
 import { PrismaService } from '../prisma/prisma.service';
 import { tehranDateKey } from '../news/tehran-date';
+import { BITPIN_MARKETS_URL, extractBitpinSpot } from './bitpin-spot';
 
 type ParsedSpot = {
   usdIrr: number | null;
@@ -177,7 +178,9 @@ export class PricesService {
   }
 
   async latest() {
-    return this.prisma.spotPriceDaily.findFirst({ orderBy: { dateKey: 'desc' } });
+    const row = await this.prisma.spotPriceDaily.findFirst({ orderBy: { dateKey: 'desc' } });
+    if (!row) return null;
+    return { ...row, sourceNoteFa: this.sourceNoteFa(row.sourceRaw) };
   }
 
   /** ثبت دستی نرخ دلار (و اختیاری طلا) برای امروز به وقت ایران */
@@ -239,10 +242,10 @@ export class PricesService {
     return rows.reverse();
   }
 
-  /** هر روز ۱۲:۰۰ ظهر به وقت ایران ≈ ۰۸:۳۰ UTC */
-  @Cron('30 8 * * *')
+  /** هر روز ۱۲:۰۰ ظهر تهران — دلار و طلا از بیت‌پین */
+  @Cron('0 0 12 * * *', { timeZone: 'Asia/Tehran', name: 'spot-prices-1200' })
   async scheduledRefresh() {
-    this.logger.log('بروزرسانی زمان‌بندی‌شده قیمت دلار و طلا (۱۲ ظهر ایران)');
+    this.logger.log('بروزرسانی زمان‌بندی‌شده قیمت دلار و طلا از بیت‌پین (۱۲ ظهر ایران)');
     try {
       await this.refreshFromApi();
     } catch (e) {
@@ -251,12 +254,90 @@ export class PricesService {
   }
 
   async refreshFromApi() {
-    const config = await this.getConfig();
-    if (!config?.uri) {
-      throw new BadRequestException('ابتدا آدرس API قیمت را در تنظیمات ذخیره کنید');
+    try {
+      return await this.refreshFromBitpin();
+    } catch (e) {
+      const config = await this.getConfig();
+      if (!config?.uri) throw e;
+      this.logger.warn(
+        `بیت‌پین ناموفق بود، API تنظیمات امتحان می‌شود: ${(e as Error).message.slice(0, 160)}`,
+      );
+      return this.refreshFromConfiguredUri(config.uri);
     }
+  }
 
-    const res = await fetch(config.uri, {
+  async refreshFromBitpin() {
+    const markets = await this.fetchBitpinMarketList();
+    return this.upsertFromBitpinMarkets(markets);
+  }
+
+  async upsertFromBitpinMarkets(
+    markets: Array<{ code?: string | null; priceNum?: number | null; price?: unknown }>,
+  ) {
+    const parsed = extractBitpinSpot(markets);
+    if (parsed.usdIrr == null && parsed.goldGramRial == null) {
+      throw new BadRequestException('در بیت‌پین نماد تتر/تومان یا طلای دیجیتال پیدا نشد');
+    }
+    return this.persistSpot(
+      { usdIrr: parsed.usdIrr, goldGramRial: parsed.goldGramRial },
+      {
+        source: 'bitpin',
+        usdMarket: parsed.usdMarket,
+        goldMarket: parsed.goldMarket,
+        usdtToman: parsed.usdtToman,
+        goldOzToman: parsed.goldOzToman,
+        at: new Date().toISOString(),
+      },
+    );
+  }
+
+  private async fetchBitpinMarketList() {
+    let res: Response;
+    try {
+      res = await fetch(BITPIN_MARKETS_URL, {
+        headers: { Accept: 'application/json' },
+        signal: AbortSignal.timeout(60_000),
+      });
+    } catch (e) {
+      throw new BadRequestException(
+        `اتصال به بیت‌پین برقرار نشد: ${(e as Error).message || 'خطای شبکه'}`,
+      );
+    }
+    const text = await res.text();
+    if (!res.ok) throw new BadRequestException(`بیت‌پین پاسخ ${res.status} داد`);
+    let json: unknown;
+    try {
+      json = JSON.parse(text);
+    } catch {
+      throw new BadRequestException('پاسخ بیت‌پین JSON معتبر نیست');
+    }
+    const rec = json && typeof json === 'object' && !Array.isArray(json) ? (json as Record<string, unknown>) : null;
+    const list = Array.isArray(json)
+      ? json
+      : Array.isArray(rec?.results)
+        ? rec.results
+        : Array.isArray(rec?.markets)
+          ? rec.markets
+          : null;
+    if (!list) throw new BadRequestException('ساختار پاسخ بیت‌پین ناشناخته است');
+    return list
+      .map((item) => {
+        if (!item || typeof item !== 'object') return null;
+        const row = item as Record<string, unknown>;
+        const info =
+          row.price_info && typeof row.price_info === 'object'
+            ? (row.price_info as Record<string, unknown>)
+            : null;
+        return {
+          code: typeof row.code === 'string' ? row.code : '',
+          price: info?.price ?? row.price,
+        };
+      })
+      .filter((m): m is { code: string; price: unknown } => Boolean(m?.code));
+  }
+
+  private async refreshFromConfiguredUri(uri: string) {
+    const res = await fetch(uri, {
       headers: { Accept: 'application/json' },
       signal: AbortSignal.timeout(45_000),
     });
@@ -279,6 +360,13 @@ export class PricesService {
       );
     }
 
+    return this.persistSpot(parsed, { source: 'custom-uri', uri, at: new Date().toISOString() });
+  }
+
+  private async persistSpot(
+    parsed: ParsedSpot,
+    sourceRaw: Record<string, unknown>,
+  ) {
     const dateKey = tehranDateKey();
     const asOfDate = new Date(`${dateKey}T12:00:00+03:30`);
 
@@ -289,17 +377,16 @@ export class PricesService {
         asOfDate,
         usdIrr: parsed.usdIrr ?? undefined,
         goldGramRial: parsed.goldGramRial ?? undefined,
-        sourceRaw: json as object,
+        sourceRaw,
       },
       update: {
         usdIrr: parsed.usdIrr ?? undefined,
         goldGramRial: parsed.goldGramRial ?? undefined,
-        sourceRaw: json as object,
+        sourceRaw,
         asOfDate,
       },
     });
 
-    // همگام‌سازی نرخ دلار با MacroSnapshot برای بقیهٔ سیستم
     if (parsed.usdIrr != null) {
       const macroDate = new Date(dateKey + 'T00:00:00.000Z');
       await this.prisma.macroSnapshot.upsert({
@@ -310,8 +397,19 @@ export class PricesService {
     }
 
     this.logger.log(
-      `قیمت ${dateKey}: دلار=${parsed.usdIrr ?? '—'} طلاگرم=${parsed.goldGramRial ?? '—'}`,
+      `قیمت ${dateKey}: دلار=${parsed.usdIrr ?? '—'} طلاگرم۱۸=${parsed.goldGramRial ?? '—'}`,
     );
-    return row;
+    return { ...row, sourceNoteFa: this.sourceNoteFa(row.sourceRaw) };
+  }
+
+  private sourceNoteFa(raw: unknown): string | null {
+    if (!raw || typeof raw !== 'object') return null;
+    const source = (raw as { source?: unknown }).source;
+    if (source === 'bitpin') {
+      return 'بیت‌پین — دلار از تتر، طلای ۱۸ عیار از انس طلای دیجیتال';
+    }
+    if (source === 'manual') return 'ثبت دستی';
+    if (source === 'custom-uri') return 'API تنظیم‌شده';
+    return null;
   }
 }

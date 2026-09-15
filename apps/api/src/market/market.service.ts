@@ -1,8 +1,16 @@
-import { Injectable, Logger, NotFoundException, ServiceUnavailableException } from '@nestjs/common';
+import { BadRequestException, Injectable, Logger, NotFoundException, ServiceUnavailableException } from '@nestjs/common';
 import { Cron } from '@nestjs/schedule';
-import { AssetType, Prisma } from '@prisma/client';
+import { AssetType, Prisma, UserRole } from '@prisma/client';
 import { PrismaService } from '../prisma/prisma.service';
 import { LlmService } from '../llm/llm.service';
+import {
+  foldFa,
+  isTehranMarketScoped,
+  MARKET_CHAT_REFUSE_FA,
+  tokenizeMarketQuestion,
+  wantsEqualWeightIndex,
+  wantsTotalIndex,
+} from './tehran-chat';
 
 const UA =
   'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/126.0.0.0 Safari/537.36';
@@ -68,24 +76,22 @@ function dEvenToDate(dEven: string): Date {
   return new Date(Date.UTC(y, m, day));
 }
 
-function addDaysUtc(d: Date, days: number): Date {
-  const x = new Date(d);
-  x.setUTCDate(x.getUTCDate() + days);
-  return x;
+/** پنجشنبه و جمعه بورس تهران تعطیل است */
+function isTehranWeekend(dEven: string): boolean {
+  const dow = dEvenToDate(dEven).getUTCDay();
+  return dow === 4 || dow === 5;
 }
 
-function toDEvenFromDate(d: Date): string {
-  const y = d.getUTCFullYear();
-  const m = String(d.getUTCMonth() + 1).padStart(2, '0');
-  const day = String(d.getUTCDate()).padStart(2, '0');
-  return `${y}${m}${day}`;
-}
+/** حداکثر چند روز معاملاتی در هر به‌روزرسانی (جلوگیری از پیمایش سال‌ها) */
+const MAX_INGEST_TRADING_DAYS = 5;
+const MAX_LOOKBACK_CALENDAR_DAYS = 14;
 
 type IngestRow = Record<string, unknown>;
 
 @Injectable()
 export class MarketService {
   private readonly logger = new Logger(MarketService.name);
+  private ingestInFlight = false;
 
   constructor(
     private readonly prisma: PrismaService,
@@ -223,34 +229,329 @@ export class MarketService {
     return { answer };
   }
 
+  async getChat(userId: string) {
+    return this.prisma.marketChatMessage.findMany({
+      where: { userId, status: 'active' },
+      orderBy: { createdAt: 'asc' },
+      take: 100,
+    });
+  }
+
+  async hideChat(userId: string) {
+    await this.prisma.marketChatMessage.updateMany({
+      where: { userId, status: 'active' },
+      data: { status: 'hidden' },
+    });
+    return { ok: true };
+  }
+
+  async postChat(userId: string, role: string, message: string) {
+    const text = message.trim().slice(0, 800);
+    if (text.length < 2) throw new BadRequestException('متن پیام کوتاه است');
+
+    await this.prisma.marketChatMessage.create({
+      data: { userId, role: 'user', contentFa: text },
+    });
+
+    const mentioned = await this.findMentionedInstruments(userId, role, text);
+    const inScope = isTehranMarketScoped(text, mentioned.length);
+
+    let reply = MARKET_CHAT_REFUSE_FA;
+    if (inScope) {
+      try {
+        reply = await this.answerTehranMarketChat(userId, role, text, mentioned);
+      } catch (e) {
+        reply = `متأسفانه مدل زبانی در دسترس نیست. (${(e as Error).message.slice(0, 120)})`;
+      }
+    }
+
+    return this.prisma.marketChatMessage.create({
+      data: { userId, role: 'assistant', contentFa: reply },
+    });
+  }
+
+  private async answerTehranMarketChat(
+    userId: string,
+    role: string,
+    question: string,
+    mentioned: Array<{ id: string; symbol: string; nameFa: string; assetType: AssetType }>,
+  ) {
+    const instruments = await this.buildInstrumentChatContext(mentioned);
+    const fundHoldings = await this.buildFundHoldingsContext(userId, role, mentioned);
+    const indices = await this.readMarketIndices(5);
+    const indexDigest = indices.map((i) => ({
+      nameFa: i.nameFa,
+      symbol: i.symbol,
+      lastValue: i.lastValue,
+      changePct: i.changePct,
+    }));
+
+    const history = await this.prisma.marketChatMessage.findMany({
+      where: { userId, status: 'active' },
+      orderBy: { createdAt: 'asc' },
+      take: 24,
+    });
+    const historyText = history
+      .map((m) => `${m.role === 'user' ? 'کاربر' : 'دستیار'}: ${m.contentFa}`)
+      .join('\n');
+
+    const system = await this.llm.getSystemPrompt(userId, 'market_tehran_chat');
+    return this.llm.chatText(
+      'market_tehran_chat',
+      system,
+      `دادهٔ پایگاه سبدیار (تنها منبع مجاز):\n${JSON.stringify(
+        {
+          question,
+          instruments,
+          fundHoldings,
+          indices: indexDigest,
+          noteFa:
+            'fundHoldings فقط گزارش‌های صندوق ذخیره‌شده است. اگر خالی است یعنی در دیتابیس خرید/موجودی ثبت نشده.',
+        },
+        null,
+        2,
+      )}\n\nگفتگو:\n${historyText}`,
+      userId,
+    );
+  }
+
+  private async findMentionedInstruments(userId: string, role: string, question: string) {
+    const tokens = tokenizeMarketQuestion(question);
+    const or: Prisma.InstrumentWhereInput[] = tokens.flatMap((t) => {
+      const clauses: Prisma.InstrumentWhereInput[] = [{ symbol: t }];
+      if (t.length >= 3) clauses.push({ nameFa: { contains: t } });
+      return clauses;
+    });
+
+    if (wantsTotalIndex(question)) or.push({ symbol: 'TEDPIX', assetType: AssetType.INDEX });
+    if (wantsEqualWeightIndex(question)) or.push({ symbol: 'TESWEQ', assetType: AssetType.INDEX });
+
+    const rows = or.length
+      ? await this.prisma.instrument.findMany({
+          where: {
+            isActive: true,
+            assetType: { in: [AssetType.STOCK, AssetType.INDEX, AssetType.FUND, AssetType.GOLD_ETF] },
+            OR: or,
+          },
+          take: 24,
+          select: { id: true, symbol: true, nameFa: true, assetType: true },
+        })
+      : [];
+
+    const foldedQ = foldFa(question);
+    const tokenSet = new Set(tokens);
+    const needTotal = wantsTotalIndex(question);
+    const needEqual = wantsEqualWeightIndex(question);
+    const scored = rows
+      .map((r) => {
+        const sym = foldFa(r.symbol);
+        const name = foldFa(r.nameFa);
+        let score = 0;
+        if (tokenSet.has(sym) || (sym.length >= 3 && foldedQ.includes(sym))) score += 8;
+        if (tokens.some((t) => t.length >= 3 && name.includes(t))) score += 3;
+        if (needTotal && (r.symbol === 'TEDPIX' || name.includes('شاخص کل'))) score += 10;
+        if (needEqual && (r.symbol === 'TESWEQ' || /هم[\s‌-]*وزن/.test(name))) score += 10;
+        if (r.assetType === AssetType.STOCK) score += 1;
+        return { ...r, score };
+      })
+      .filter((r) => r.score > 0)
+      .sort((a, b) => b.score - a.score);
+
+    const seen = new Set<string>();
+    const out: Array<{ id: string; symbol: string; nameFa: string; assetType: AssetType }> = [];
+    for (const r of scored) {
+      if (seen.has(r.id) || seen.has(foldFa(r.symbol))) continue;
+      seen.add(r.id);
+      seen.add(foldFa(r.symbol));
+      out.push({ id: r.id, symbol: r.symbol, nameFa: r.nameFa, assetType: r.assetType });
+      if (out.length >= 6) break;
+    }
+
+    if (tokens.length && out.length < 6) {
+      const isAdmin = role === UserRole.ADMIN || role === 'ADMIN';
+      const holdings = await this.prisma.fundHolding.findMany({
+        where: {
+          assetKind: 'STOCK',
+          ...(isAdmin ? {} : { userId }),
+          OR: tokens.flatMap((t) => {
+            const clauses: Prisma.FundHoldingWhereInput[] = [{ symbol: t }];
+            if (t.length >= 3) clauses.push({ nameFa: { contains: t } });
+            return clauses;
+          }),
+        },
+        take: 20,
+        select: { symbol: true, nameFa: true },
+      });
+      for (const h of holdings) {
+        const folded = foldFa(h.symbol);
+        if (seen.has(folded)) continue;
+        const inst = await this.prisma.instrument.findFirst({
+          where: {
+            isActive: true,
+            OR: [{ symbol: h.symbol }, { symbol: folded }],
+          },
+          select: { id: true, symbol: true, nameFa: true, assetType: true },
+        });
+        const row = inst ?? {
+          id: '',
+          symbol: h.symbol,
+          nameFa: h.nameFa,
+          assetType: AssetType.STOCK,
+        };
+        seen.add(folded);
+        if (row.id) seen.add(row.id);
+        out.push(row);
+        if (out.length >= 6) break;
+      }
+    }
+
+    return out;
+  }
+
+  private async buildInstrumentChatContext(
+    mentioned: Array<{ id: string; symbol: string; nameFa: string; assetType: AssetType }>,
+  ) {
+    const out = [];
+    for (const inst of mentioned) {
+      const bars = inst.id
+        ? await this.prisma.priceBar.findMany({
+            where: { instrumentId: inst.id },
+            orderBy: { tradeDate: 'desc' },
+            take: 16,
+          })
+        : [];
+      const last = bars[0] ?? null;
+      out.push({
+        symbol: inst.symbol,
+        nameFa: inst.nameFa,
+        assetType: inst.assetType,
+        last: last
+          ? {
+              tradeDate: last.tradeDate,
+              lastPrice: last.lastPrice,
+              closePrice: last.closePrice,
+              eps: last.eps,
+              pe: last.pe,
+              volume: last.volume,
+            }
+          : null,
+        recentBars: [...bars]
+          .reverse()
+          .map((b) => ({
+            tradeDate: b.tradeDate,
+            lastPrice: b.lastPrice,
+            closePrice: b.closePrice,
+            eps: b.eps,
+            pe: b.pe,
+            volume: b.volume,
+          })),
+      });
+    }
+    return out;
+  }
+
+  private async buildFundHoldingsContext(
+    userId: string,
+    role: string,
+    mentioned: Array<{ symbol: string; nameFa: string }>,
+  ) {
+    if (!mentioned.length) return [];
+    const isAdmin = role === UserRole.ADMIN || role === 'ADMIN';
+    const or: Prisma.FundHoldingWhereInput[] = mentioned.flatMap((i) => {
+      const symbol = foldFa(i.symbol);
+      const clauses: Prisma.FundHoldingWhereInput[] = [{ symbol: i.symbol }];
+      if (symbol !== i.symbol) clauses.push({ symbol });
+      if (symbol.length >= 2) {
+        clauses.push({ nameFa: { contains: i.symbol } });
+        clauses.push({ symbol: { contains: i.symbol } });
+      }
+      return clauses;
+    });
+
+    const rows = await this.prisma.fundHolding.findMany({
+      where: {
+        assetKind: 'STOCK',
+        action: { in: ['HELD', 'BOUGHT'] },
+        ...(isAdmin ? {} : { userId }),
+        OR: or,
+      },
+      include: {
+        fundDefinition: { select: { nameFa: true, symbolCode: true } },
+      },
+      orderBy: { createdAt: 'desc' },
+      take: 80,
+    });
+
+    const actionFa: Record<string, string> = {
+      HELD: 'موجودی گزارش',
+      BOUGHT: 'خرید طی ماه',
+      SOLD: 'فروش طی ماه',
+    };
+
+    const seen = new Set<string>();
+    const out: Array<{
+      fundNameFa: string;
+      fundSymbol: string | null;
+      symbol: string;
+      nameFa: string;
+      action: string;
+      actionFa: string;
+      weightPct: number | null;
+      quantity: number | null;
+      amountRial: number | null;
+      reportYear: number | null;
+      reportMonth: number | null;
+    }> = [];
+
+    for (const h of rows) {
+      const key = `${h.fundDefinitionId ?? h.fundReportId}:${h.symbol}:${h.action}:${h.reportYear ?? ''}:${h.reportMonthNum ?? ''}`;
+      if (seen.has(key)) continue;
+      seen.add(key);
+      out.push({
+        fundNameFa: h.fundDefinition?.nameFa ?? 'صندوق بدون نام',
+        fundSymbol: h.fundDefinition?.symbolCode ?? null,
+        symbol: h.symbol,
+        nameFa: h.nameFa,
+        action: h.action,
+        actionFa: actionFa[h.action] ?? h.action,
+        weightPct: h.weightPct,
+        quantity: h.quantity,
+        amountRial: h.amountRial,
+        reportYear: h.reportYear,
+        reportMonth: h.reportMonthNum,
+      });
+      if (out.length >= 40) break;
+    }
+    return out;
+  }
+
   async ingestToday() {
     return this.ingestCatchUp();
   }
 
   async ingestCatchUp() {
-    const today = todayDateOnly();
-    const todayDEven = toDEven();
-
-    const lastBar = await this.prisma.priceBar.findFirst({
-      orderBy: { tradeDate: 'desc' },
-      select: { tradeDate: true },
-    });
-
-    const datesToIngest: string[] = [];
-    if (!lastBar) {
-      datesToIngest.push(todayDEven);
-    } else {
-      let cursor = addDaysUtc(lastBar.tradeDate, 1);
-      while (cursor.getTime() <= today.getTime()) {
-        datesToIngest.push(toDEvenFromDate(cursor));
-        cursor = addDaysUtc(cursor, 1);
-      }
-      if (!datesToIngest.length) {
-        datesToIngest.push(todayDEven);
-      }
+    if (this.ingestInFlight) {
+      throw new ServiceUnavailableException('به‌روزرسانی بازار از قبل در حال انجام است. لطفاً صبر کنید.');
     }
+    this.ingestInFlight = true;
+    try {
+      return await this.runIngestCatchUp();
+    } finally {
+      this.ingestInFlight = false;
+    }
+  }
 
-    this.logger.log(`اینجست بازار برای ${datesToIngest.length} روز: ${datesToIngest.join(', ')}`);
+  private async runIngestCatchUp() {
+    const todayDEven = toDEven();
+    const datesToIngest: string[] = [];
+    for (let back = 0; back <= MAX_LOOKBACK_CALENDAR_DAYS && datesToIngest.length < MAX_INGEST_TRADING_DAYS; back++) {
+      const day = shiftDEven(todayDEven, back);
+      if (isTehranWeekend(day)) continue;
+      datesToIngest.push(day);
+    }
+    datesToIngest.reverse();
+
+    this.logger.log(`اینجست بازار برای ${datesToIngest.length} روز معاملاتی: ${datesToIngest.join(', ')}`);
 
     const days: Array<{ tradeDate: string; upserted: number; source: string }> = [];
     let totalUpserted = 0;
@@ -369,17 +670,7 @@ export class MarketService {
 
   async getMarketIndices(historyDays = 60) {
     const take = Math.min(Math.max(historyDays, 5), 365);
-    let result = await this.readMarketIndices(take);
-    const needFetch = result.some((r) => r.history.length < 2);
-    if (needFetch) {
-      try {
-        await this.ingestIndices();
-        result = await this.readMarketIndices(take);
-      } catch (e) {
-        this.logger.warn(`خواندن شاخص‌ها ناموفق: ${(e as Error).message}`);
-      }
-    }
-    return result;
+    return this.readMarketIndices(take);
   }
 
   private async readMarketIndices(take: number) {

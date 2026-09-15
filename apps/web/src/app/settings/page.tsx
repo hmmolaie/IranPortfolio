@@ -1227,15 +1227,18 @@ export default function SettingsPage() {
 
       {tab === 'spotPrices' && isAdmin && (
         <form onSubmit={saveSpotConfig} className="card grid max-w-2xl gap-4">
+          <p className="text-sm leading-7 text-navy-800/75">
+            منبع پیش‌فرض روزانه بیت‌پین است (تتر برای دلار آزاد، انس طلای دیجیتال برای گرم ۱۸ عیار).
+            آدرس زیر فقط اگر بخواهید منبع دیگری بگذارید لازم است.
+          </p>
           <div>
-            <label className="label">آدرس API (URI)</label>
+            <label className="label">آدرس API جایگزین (اختیاری)</label>
             <input
               className="input"
               value={spotUri}
               onChange={(e) => setSpotUri(e.target.value)}
-              placeholder="https://example.com/api/prices"
+              placeholder="https://api.bitpin.ir/v1/mkt/markets/"
               dir="ltr"
-              required
             />
           </div>
           {spotLatest && (
@@ -1264,7 +1267,7 @@ export default function SettingsPage() {
             <button
               type="button"
               className="btn-secondary w-fit"
-              disabled={spotBusy || !spotUri.trim()}
+              disabled={spotBusy}
               onClick={refreshSpotPrices}
             >
               {spotBusy ? 'در حال به‌روزرسانی...' : 'به‌روزرسانی الان'}

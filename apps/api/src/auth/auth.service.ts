@@ -26,6 +26,13 @@ export class AuthService {
     return this.tokenFor(user.id, user.email, user.role);
   }
 
+  async refresh(userId: string) {
+    const user = await this.users.findById(userId);
+    if (!user) throw new UnauthorizedException('جلسه نامعتبر است');
+    if (!user.isActive) throw new UnauthorizedException('حساب کاربری غیرفعال است');
+    return this.tokenFor(user.id, user.email, user.role);
+  }
+
   private tokenFor(userId: string, email: string, role: string) {
     const accessToken = this.jwt.sign({ sub: userId, email, role });
     return { accessToken, user: { id: userId, email, role } };

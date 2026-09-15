@@ -73,6 +73,7 @@ model User {
   aiTraces    AiTrace[]
   llmPrompts  LlmPromptTemplate[]
   economicNewsBatches EconomicNewsBatch[]
+  marketChats MarketChatMessage[]
 }
 
 model UserProfile {
@@ -342,6 +343,20 @@ model PortfolioChatMessage {
   @@index([portfolioId, status])
 }
 
+model MarketChatMessage {
+  id        String   @id @default(cuid())
+  userId    String
+  role      String
+  contentFa String
+  /// active = نمایش به کاربر · hidden = پاک‌شده از دید کاربر (در DB می‌ماند)
+  status    String   @default("active")
+  createdAt DateTime @default(now())
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId, status])
+}
+
 model Lesson {
   id           String   @id @default(cuid())
   userId       String
@@ -473,4 +488,55 @@ model SpotPriceDaily {
   updatedAt      DateTime @updatedAt
 
   @@index([asOfDate])
+}
+
+/** آخرین همگام‌سازی بازارهای جهانی (بیت‌پین) */
+model WorldMarketRefresh {
+  id          String   @id @default("latest")
+  fetchedAt   DateTime
+  dateKey     String
+  symbolCount Int
+  sourceUrl   String
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+}
+
+/** نمادهای بازار جهانی — هر بار همگام‌سازی جایگزین آخرین وضعیت می‌شود */
+model WorldMarket {
+  id             String   @id @default(cuid())
+  bitpinId       Int
+  code           String   @unique
+  title          String
+  titleFa        String
+  baseCode       String
+  baseTitle      String
+  baseTitleFa    String
+  baseImageUrl   String?
+  baseColor      String?
+  quoteCode      String
+  quoteTitle     String
+  quoteTitleFa   String
+  price          String
+  priceNum       Float?
+  changePct      Float?
+  high24h        String?
+  low24h         String?
+  volume24h      String?
+  volumeNum      Float?
+  marketCap      String?
+  circulating    String?
+  allTimeHigh    String?
+  tradable       Boolean  @default(true)
+  suspended      Boolean  @default(false)
+  otcTradable    Boolean  @default(false)
+  comingSoon     Boolean  @default(false)
+  tagsFa         String?
+  fetchedAt      DateTime
+  createdAt      DateTime @default(now())
+  updatedAt      DateTime @updatedAt
+
+  @@index([quoteCode])
+  @@index([volumeNum])
+  @@index([changePct])
+  @@index([baseCode])
 }
