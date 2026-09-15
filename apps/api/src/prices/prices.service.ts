@@ -1,5 +1,6 @@
 import { Injectable, Logger, BadRequestException } from '@nestjs/common';
 import { Cron } from '@nestjs/schedule';
+import { Prisma } from '@prisma/client';
 import { PrismaService } from '../prisma/prisma.service';
 import { tehranDateKey } from '../news/tehran-date';
 import { BITPIN_MARKETS_URL, extractBitpinSpot } from './bitpin-spot';
@@ -365,7 +366,7 @@ export class PricesService {
 
   private async persistSpot(
     parsed: ParsedSpot,
-    sourceRaw: Record<string, unknown>,
+    sourceRaw: Prisma.InputJsonValue,
   ) {
     const dateKey = tehranDateKey();
     const asOfDate = new Date(`${dateKey}T12:00:00+03:30`);
