@@ -24,7 +24,7 @@
 
 - App Router؛ شِل مشترک در `AppShell`.
 - احراز هویت سمت کلاینت با `localStorage` کلید `sabadyar_token`.
-- صفحات اصلی: داشبورد، سبدها، بازار، صندوق‌ها، اخبار اقتصادی، اقتصاد ایران، اقتصاد دنیا، درس‌آموخته‌ها، تنظیمات، ورود/ثبت‌نام.
+- صفحات اصلی: داشبورد، سبدها، بازار، صندوق‌ها، اخبار اقتصادی، اقتصاد ایران، اقتصاد دنیا، آزمایش فارکس، درس‌آموخته‌ها، تنظیمات، ورود/ثبت‌نام.
 
 ### API (`apps/api`)
 
@@ -40,6 +40,7 @@
 | `news` | اخبار و فرصت‌های خرد روزانه، زمینهٔ پیشنهاد سبد |
 | `telegram` | ربات تلگرام [`https://t.me/sabadyaar_bot`](https://t.me/sabadyaar_bot): وصل با موبایل پروفایل، پیام ۸:۳۰ |
 | `world-markets` | اقتصاد دنیا: همهٔ نمادهای بیت‌پین، همگام‌سازی ۷ صبح تهران |
+| `forex` | آزمایش گراف فارکس (`/forex`): نرخ جفت‌ارز + BTC/ETH/طلا/نقره، ذخیرهٔ رأس/یال با زمان |
 | `lessons` | درس‌آموخته‌های کاربر |
 | `prices` | قیمت دلار و طلا (پیش‌فرض بیت‌پین؛ API سفارشی اختیاری) |
 
@@ -47,7 +48,7 @@
 
 ### داده (`apps/api/prisma/schema.prisma`)
 
-موجودیت‌های کلیدی: `User`، `UserProfile` (موبایل و اتصال تلگرام)، `Portfolio`، `PortfolioSnapshot` / `SnapshotItem`، `Instrument` / `PriceBar`، `FundReport` / `FundHolding`، `MarketChatMessage`، `Lesson`، `MacroSnapshot`، `EconomicNewsBatch` / `EconomicNewsItem`، `TelegramBotConfig`، `WorldMarket` / `WorldMarketRefresh`، `AiTrace`، `LlmSetting`.
+موجودیت‌های کلیدی: `User`، `UserProfile` (موبایل و اتصال تلگرام)، `Portfolio`، `PortfolioSnapshot` / `SnapshotItem`، `Instrument` / `PriceBar`، `FundReport` / `FundHolding`، `MarketChatMessage`، `Lesson`، `MacroSnapshot`، `EconomicNewsBatch` / `EconomicNewsItem`، `TelegramBotConfig`، `WorldMarket` / `WorldMarketRefresh`، `ForexSnapshot` / `ForexGraphNode` / `ForexGraphEdge`، `AiTrace`، `LlmSetting`.
 
 اسنپ‌شات‌ها تاریخچهٔ پیشنهاد و بازچینش را نگه می‌دارند؛ رویدادها در `PortfolioEvent`.
 
@@ -66,6 +67,7 @@ Enumها و DTOهای پیشنهاد سبد + لیبل‌های فارسی اس�
 https://t.me/sabadyaar_bot
 ```
 5. **اقتصاد دنیا:** هر روز ۷:۰۰ تهران همهٔ بازارهای بیت‌پین خوانده و در `WorldMarket` جایگزین می‌شوند. مدیر می‌تواند از صفحهٔ ادمین فوری همگام کند.
+6. **آزمایش فارکس:** نرخ جفت‌ارزهای معروف به‌علاوه بیت‌کوین، اتریوم، طلا و نقره از یاهو و منابع کمکی خوانده می‌شود، به‌صورت گراف رأس/یال وزن‌دار با زمان ذخیره می‌گردد، و مسیر بلند (لانگ) در برابر مسیر کوتاه (شورت) با آستانهٔ ۳٪ مقایسه می‌شود. صفحهٔ `/forex` جدا از بیزینس سبد است.
 
 ## زمان‌بندی داخل API
 
@@ -77,6 +79,7 @@ https://t.me/sabadyaar_bot
 | ۰۸:۰۰ | اخبار و فرصت‌های خرد (تلاش مجدد ۹ و ۱۰ اگر خالی ماند) |
 | ۰۸:۳۰ | تلگرام شخصی: نمودار سبد + پیشنهاد AI + اخبار (تلاش مجدد ۸:۴۵) |
 | ۱۲:۰۰ | تکرار قیمت دلار و طلا از بیت‌پین |
+| هر ۵ دقیقه | آزمایش گراف فارکس (نرخ جفت‌ارز و فلز/رمزارز) |
 | ۲۲:۰۰ | اینجست بازار TSETMC |
 
 ## استقرار

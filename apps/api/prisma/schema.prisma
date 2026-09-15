@@ -540,3 +540,51 @@ model WorldMarket {
   @@index([changePct])
   @@index([baseCode])
 }
+
+/** آزمایش گراف فارکس — اسنپ‌شات نرخ جفت‌ارزها با زمان */
+model ForexSnapshot {
+  id           String   @id @default(cuid())
+  capturedAt   DateTime
+  source       String
+  nodeCount    Int
+  edgeCount    Int
+  pairCount    Int
+  analysisJson Json?
+  createdAt    DateTime @default(now())
+
+  nodes ForexGraphNode[]
+  edges ForexGraphEdge[]
+
+  @@index([capturedAt])
+}
+
+model ForexGraphNode {
+  id         String @id @default(cuid())
+  snapshotId String
+  code       String
+  nameFa     String
+  /// FIAT | CRYPTO | METAL
+  kind       String
+
+  snapshot ForexSnapshot @relation(fields: [snapshotId], references: [id], onDelete: Cascade)
+
+  @@unique([snapshotId, code])
+  @@index([snapshotId])
+}
+
+model ForexGraphEdge {
+  id          String  @id @default(cuid())
+  snapshotId  String
+  fromCode    String
+  toCode      String
+  rate        Float
+  pairSymbol  String
+  yahooSymbol String?
+  source      String
+  inverted    Boolean @default(false)
+
+  snapshot ForexSnapshot @relation(fields: [snapshotId], references: [id], onDelete: Cascade)
+
+  @@index([snapshotId])
+  @@index([snapshotId, fromCode])
+}

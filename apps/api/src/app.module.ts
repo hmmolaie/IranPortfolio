@@ -15,6 +15,7 @@ import { NewsModule } from './news/news.module';
 import { PricesModule } from './prices/prices.module';
 import { TelegramModule } from './telegram/telegram.module';
 import { WorldMarketsModule } from './world-markets/world-markets.module';
+import { ForexModule } from './forex/forex.module';
 
 @Module({
   imports: [
@@ -33,6 +34,7 @@ import { WorldMarketsModule } from './world-markets/world-markets.module';
     PricesModule,
     TelegramModule,
     WorldMarketsModule,
+    ForexModule,
   ],
   controllers: [HealthController],
 })

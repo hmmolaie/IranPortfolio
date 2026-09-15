@@ -49,10 +49,11 @@ Node `>=20`. با Docker دیتابیس PostgreSQL است؛ `NEXT_PUBLIC_API_URL
 
 ## ماژول‌های API
 
-`auth` · `users` · `market` · `portfolios` · `llm` · `funds` · `macro` · `news` · `prices` · `telegram` · `world-markets` · `lessons`
+`auth` · `users` · `market` · `portfolios` · `llm` · `funds` · `macro` · `news` · `prices` · `telegram` · `world-markets` · `lessons` · `forex`
 
 اندپوینت‌های مهم سبد: `POST :id/suggest` · `rebalance` · `monthly-evaluate` · `adjust` · `cash`.
 بازار تهران: گفتگوی LLM در `GET/POST/DELETE /api/market/chat`؛ فقط نماد/شاخص بورس تهران و خرید صندوق‌ها از دیتابیس.
+آزمایش فارکس: گراف جفت‌ارز در `GET/POST /api/forex` و صفحهٔ `/forex` (جدا از بیزینس سبد).
 اخبار روزانه: کرون ۸ صبح تهران در `news` (`POST /api/news/refresh` دستی برای admin).
 اقتصاد دنیا: کرون ۷ صبح تهران در `world-markets` (`POST /api/world-markets/refresh` دستی برای admin).
 تلگرام: ربات عمومی `https://t.me/sabadyaar_bot`؛ تنظیمات ادمین در `telegram`؛ پیام ۸:۳۰ به کاربرانی که موبایل پروفایل دارند و ربات را وصل کرده‌اند.
