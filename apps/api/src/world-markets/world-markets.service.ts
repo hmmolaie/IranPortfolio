@@ -4,6 +4,8 @@ import { Prisma } from '@prisma/client';
 import { PrismaService } from '../prisma/prisma.service';
 import { tehranDateFa, tehranDateKey } from '../news/tehran-date';
 import { PricesService } from '../prices/prices.service';
+import { LlmService } from '../llm/llm.service';
+import { UsersService } from '../users/users.service';
 
 import { BITPIN_MARKETS_URL } from '../prices/bitpin-spot';
 const REFRESH_ID = 'latest';
@@ -70,6 +72,32 @@ function asBool(v: unknown, fallback = false): boolean {
   return typeof v === 'boolean' ? v : fallback;
 }
 
+type XSignalLlmItem = {
+  side?: string;
+  marketCode?: string;
+  titleFa?: string;
+  reasonFa?: string;
+  strength?: number;
+  xSourceHintFa?: string;
+  languagesFa?: string;
+};
+
+type XSignalLlmOut = {
+  analysisSummaryFa?: string;
+  sourceNoteFa?: string;
+  items?: XSignalLlmItem[];
+};
+
+type MarketRef = {
+  code: string;
+  baseCode: string;
+  baseTitleFa: string;
+  quoteCode: string;
+  price: string;
+  changePct: number | null;
+  volumeNum: number | null;
+};
+
 @Injectable()
 export class WorldMarketsService implements OnModuleInit {
   private readonly logger = new Logger(WorldMarketsService.name);
@@ -78,6 +106,8 @@ export class WorldMarketsService implements OnModuleInit {
   constructor(
     private readonly prisma: PrismaService,
     private readonly prices: PricesService,
+    private readonly llm: LlmService,
+    private readonly users: UsersService,
   ) {}
 
   onModuleInit() {
@@ -108,10 +138,14 @@ export class WorldMarketsService implements OnModuleInit {
   }
 
   async list() {
-    const [refresh, markets] = await Promise.all([
+    const [refresh, markets, signals] = await Promise.all([
       this.prisma.worldMarketRefresh.findUnique({ where: { id: REFRESH_ID } }),
       this.prisma.worldMarket.findMany({
         orderBy: [{ volumeNum: 'desc' }, { titleFa: 'asc' }],
+      }),
+      this.prisma.worldMarketSignal.findMany({
+        orderBy: [{ sortOrder: 'asc' }, { strength: 'desc' }],
+        take: 5,
       }),
     ]);
 
@@ -126,6 +160,9 @@ export class WorldMarketsService implements OnModuleInit {
       dateLabelFa: refresh?.fetchedAt ? tehranDateFa(refresh.fetchedAt) : null,
       symbolCount: refresh?.symbolCount ?? markets.length,
       sourceUrl: refresh?.sourceUrl ?? BITPIN_MARKETS_URL,
+      xSummaryFa: refresh?.xSummaryFa ?? null,
+      xSourceNoteFa: refresh?.xSourceNoteFa ?? null,
+      signals,
       quotes: Object.entries(quoteCounts)
         .map(([code, count]) => ({
           code,
@@ -190,10 +227,180 @@ export class WorldMarketsService implements OnModuleInit {
       } catch (e) {
         this.logger.warn(`ذخیره دلار/طلا از بیت‌پین: ${(e as Error).message.slice(0, 180)}`);
       }
+      try {
+        await this.refreshXSignals(rows, fetchedAt);
+      } catch (e) {
+        this.logger.warn(`سیگنال X اقتصاد دنیا: ${(e as Error).message.slice(0, 180)}`);
+      }
       return this.list();
     } finally {
       this.refreshInFlight = false;
     }
+  }
+
+  private async refreshXSignals(
+    rows: Prisma.WorldMarketCreateManyInput[],
+    fetchedAt: Date,
+  ) {
+    const ranked: MarketRef[] = rows
+      .filter((r) => r.tradable !== false && r.comingSoon !== true && r.suspended !== true)
+      .map((r) => ({
+        code: r.code,
+        baseCode: r.baseCode,
+        baseTitleFa: r.baseTitleFa,
+        quoteCode: r.quoteCode,
+        price: r.price,
+        changePct: r.changePct ?? null,
+        volumeNum: r.volumeNum ?? null,
+      }))
+      .sort((a, b) => (b.volumeNum ?? 0) - (a.volumeNum ?? 0));
+    const universe = ranked.slice(0, 120);
+    if (!universe.length) return;
+
+    const adminId = await this.users.getAdminUserId();
+    if (!adminId) {
+      this.logger.warn('کاربر admin نیست؛ سیگنال X اقتصاد دنیا رد شد');
+      return;
+    }
+
+    const system = await this.llm.getSystemPrompt(adminId, 'world_x_signals');
+    const userPrompt = JSON.stringify(
+      {
+        todayTehran: tehranDateKey(fetchedAt),
+        todayLabelFa: tehranDateFa(fetchedAt),
+        instruction:
+          'همین الان اخبار کف شبکهٔ X را به همهٔ زبان‌ها مرور کن و دقیقاً ۵ تا از قوی‌ترین سیگنال‌های خرید یا فروش را روی نمادهای همین فهرست بده. هر سیگنال باید روی یک marketCode مشخص باشد و دلیل فارسی داشته باشد.',
+        markets: universe.map((m) => ({
+          marketCode: m.code,
+          baseCode: m.baseCode,
+          nameFa: m.baseTitleFa,
+          quote: m.quoteCode,
+          price: m.price,
+          changePct: m.changePct,
+          volumeNum: m.volumeNum,
+        })),
+      },
+      null,
+      2,
+    );
+
+    let out: XSignalLlmOut;
+    try {
+      out = await this.llm.chatJson<XSignalLlmOut>('world_x_signals', system, userPrompt, adminId);
+    } catch (e) {
+      this.logger.warn(`مدل سیگنال X: ${(e as Error).message.slice(0, 180)}`);
+      return;
+    }
+
+    const mapped = (Array.isArray(out.items) ? out.items : [])
+      .map((item) => this.mapXSignal(item, universe, fetchedAt))
+      .filter((row): row is NonNullable<typeof row> => Boolean(row));
+
+    const unique: typeof mapped = [];
+    const seen = new Set<string>();
+    for (const row of mapped.sort((a, b) => b.strength - a.strength)) {
+      const key = `${row.side}:${row.marketCode}`;
+      if (seen.has(key)) continue;
+      seen.add(key);
+      unique.push(row);
+      if (unique.length >= 5) break;
+    }
+    if (unique.length < 5) {
+      for (const row of mapped) {
+        if (unique.some((u) => u.marketCode === row.marketCode && u.side === row.side)) continue;
+        unique.push(row);
+        if (unique.length >= 5) break;
+      }
+    }
+    if (!unique.length) {
+      this.logger.warn('مدل سیگنال X آیتم قابل‌نقشه به نماد بیت‌پین برنگرداند');
+      return;
+    }
+
+    await this.prisma.$transaction([
+      this.prisma.worldMarketSignal.deleteMany(),
+      this.prisma.worldMarketSignal.createMany({
+        data: unique.slice(0, 5).map((row, i) => ({ ...row, sortOrder: i })),
+      }),
+      this.prisma.worldMarketRefresh.update({
+        where: { id: REFRESH_ID },
+        data: {
+          xSummaryFa: (out.analysisSummaryFa ?? '').trim() || null,
+          xSourceNoteFa: (out.sourceNoteFa ?? '').trim() || null,
+        },
+      }),
+    ]);
+    this.logger.log(`سیگنال X اقتصاد دنیا: ${Math.min(unique.length, 5)} مورد ذخیره شد`);
+  }
+
+  private mapXSignal(
+    item: XSignalLlmItem,
+    universe: MarketRef[],
+    fetchedAt: Date,
+  ): {
+    side: string;
+    marketCode: string;
+    baseCode: string;
+    baseTitleFa: string;
+    titleFa: string;
+    reasonFa: string;
+    strength: number;
+    xSourceHintFa: string | null;
+    languagesFa: string | null;
+    fetchedAt: Date;
+    sortOrder: number;
+  } | null {
+    const reasonFa = (item.reasonFa ?? '').trim();
+    const titleFa = (item.titleFa ?? '').trim();
+    if (!reasonFa && !titleFa) return null;
+    const market = this.matchMarket(item.marketCode, titleFa, universe);
+    if (!market) return null;
+    const rawSide = (item.side ?? '').trim().toUpperCase();
+    const side =
+      rawSide === 'SELL' || /فروش|short|bear/i.test(item.side ?? '')
+        ? 'SELL'
+        : rawSide === 'BUY' || /خرید|long|bull/i.test(item.side ?? '')
+          ? 'BUY'
+          : null;
+    if (!side) return null;
+    const strengthNum = Number(item.strength);
+    const strength = Number.isFinite(strengthNum)
+      ? Math.min(10, Math.max(1, Math.round(strengthNum * 10) / 10))
+      : 7;
+    return {
+      side,
+      marketCode: market.code,
+      baseCode: market.baseCode,
+      baseTitleFa: market.baseTitleFa,
+      titleFa: titleFa || (side === 'BUY' ? `خرید ${market.baseTitleFa}` : `فروش ${market.baseTitleFa}`),
+      reasonFa: reasonFa || titleFa,
+      strength,
+      xSourceHintFa: (item.xSourceHintFa ?? '').trim() || null,
+      languagesFa: (item.languagesFa ?? '').trim() || null,
+      fetchedAt,
+      sortOrder: 0,
+    };
+  }
+
+  private matchMarket(rawCode: string | undefined, titleFa: string, universe: MarketRef[]): MarketRef | null {
+    const code = (rawCode ?? '').trim().toUpperCase().replace(/[-/]/g, '_');
+    if (code) {
+      const exact = universe.find((m) => m.code.toUpperCase() === code);
+      if (exact) return exact;
+      const base = code.split('_')[0];
+      const byBase = universe.filter((m) => m.baseCode.toUpperCase() === base);
+      const usdt = byBase.find((m) => m.quoteCode === 'USDT');
+      if (usdt) return usdt;
+      if (byBase[0]) return byBase[0];
+    }
+    const name = titleFa.trim();
+    if (name.length >= 2) {
+      const hit = universe.find(
+        (m) => m.baseTitleFa.includes(name) || name.includes(m.baseTitleFa) || name.includes(m.baseCode),
+      );
+      if (hit) return hit;
+    }
+    return null;
   }
 
   private async fetchAllPages(): Promise<BitpinMarket[]> {

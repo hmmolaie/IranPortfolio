@@ -55,7 +55,7 @@ Node `>=20`. با Docker دیتابیس PostgreSQL است؛ `NEXT_PUBLIC_API_URL
 بازار تهران: گفتگوی LLM در `GET/POST/DELETE /api/market/chat`؛ فقط نماد/شاخص بورس تهران و خرید صندوق‌ها از دیتابیس.
 آزمایش فارکس: گراف جفت‌ارز در `GET/POST /api/forex` و صفحهٔ `/forex`؛ پیشنهاد معامله فقط اگر سود خالص پس از هزینه مثبت باشد.
 اخبار روزانه: کرون ۸ صبح تهران در `news` (`POST /api/news/refresh` دستی برای admin).
-اقتصاد دنیا: کرون ۷ صبح تهران در `world-markets` (`POST /api/world-markets/refresh` دستی برای admin).
+اقتصاد دنیا: کرون ۷ صبح تهران در `world-markets` (`POST /api/world-markets/refresh` دستی برای admin) همراه ۵ سیگنال X.
 تلگرام: ربات عمومی `https://t.me/sabadyaar_bot`؛ تنظیمات ادمین در `telegram`؛ پیام ۸:۳۰ به کاربرانی که موبایل پروفایل دارند و ربات را وصل کرده‌اند.
 
 ## سبک کد

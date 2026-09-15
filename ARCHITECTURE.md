@@ -39,7 +39,7 @@
 | `macro` | تورم، بهره، ریسک ژئوپلیتیک، پرسش |
 | `news` | اخبار و فرصت‌های خرد روزانه، زمینهٔ پیشنهاد سبد |
 | `telegram` | ربات تلگرام [`https://t.me/sabadyaar_bot`](https://t.me/sabadyaar_bot): وصل با موبایل پروفایل، پیام ۸:۳۰ |
-| `world-markets` | اقتصاد دنیا: همهٔ نمادهای بیت‌پین، همگام‌سازی ۷ صبح تهران |
+| `world-markets` | اقتصاد دنیا: بیت‌پین + ۵ سیگنال خرید/فروش از فضای X |
 | `forex` | آزمایش گراف فارکس (`/forex`): نرخ جفت‌ارز + BTC/ETH/طلا/نقره، ذخیرهٔ رأس/یال با زمان |
 | `lessons` | درس‌آموخته‌های کاربر |
 | `prices` | قیمت دلار و طلا (پیش‌فرض بیت‌پین؛ API سفارشی اختیاری) |
@@ -48,7 +48,7 @@
 
 ### داده (`apps/api/prisma/schema.prisma`)
 
-موجودیت‌های کلیدی: `User`، `UserProfile` (موبایل و اتصال تلگرام)، `Portfolio`، `PortfolioSnapshot` / `SnapshotItem`، `Instrument` / `PriceBar`، `FundReport` / `FundHolding`، `MarketChatMessage`، `Lesson`، `MacroSnapshot`، `EconomicNewsBatch` / `EconomicNewsItem`، `TelegramBotConfig`، `WorldMarket` / `WorldMarketRefresh`، `ForexSnapshot` / `ForexGraphNode` / `ForexGraphEdge`، `AiTrace`، `LlmSetting`.
+موجودیت‌های کلیدی: `User`، `UserProfile` (موبایل و اتصال تلگرام)، `Portfolio`، `PortfolioSnapshot` / `SnapshotItem`، `Instrument` / `PriceBar`، `FundReport` / `FundHolding`، `MarketChatMessage`، `Lesson`، `MacroSnapshot`، `EconomicNewsBatch` / `EconomicNewsItem`، `TelegramBotConfig`، `WorldMarket` / `WorldMarketRefresh` / `WorldMarketSignal`، `ForexSnapshot` / `ForexGraphNode` / `ForexGraphEdge`، `AiTrace`، `LlmSetting`.
 
 اسنپ‌شات‌ها تاریخچهٔ پیشنهاد و بازچینش را نگه می‌دارند؛ رویدادها در `PortfolioEvent`.
 
@@ -66,7 +66,7 @@ Enumها و DTOهای پیشنهاد سبد + لیبل‌های فارسی اس�
 ```
 https://t.me/sabadyaar_bot
 ```
-5. **اقتصاد دنیا:** هر روز ۷:۰۰ تهران همهٔ بازارهای بیت‌پین خوانده و در `WorldMarket` جایگزین می‌شوند. مدیر می‌تواند از صفحهٔ ادمین فوری همگام کند.
+5. **اقتصاد دنیا:** هر روز ۷:۰۰ تهران همهٔ بازارهای بیت‌پین خوانده و در `WorldMarket` جایگزین می‌شوند. همان به‌روزرسانی فضای X را به همهٔ زبان‌ها برای ۵ سیگنال قوی خرید/فروش روی همان نمادها مرور می‌کند. مدیر می‌تواند از صفحهٔ ادمین فوری همگام کند.
 6. **آزمایش فارکس:** نرخ جفت‌ارزهای معروف به‌علاوه بیت‌کوین، اتریوم، طلا و نقره خوانده می‌شود، گراف رأس/یال با زمان ذخیره می‌گردد، و برای هر مسیر سود خالص پس از اسپرد، کمیسیون، لغزش، سواپ و تأخیر اجرا حساب می‌شود. پیشنهاد معامله فقط اگر خالص مثبت باشد.
 
 ## زمان‌بندی داخل API
@@ -75,7 +75,7 @@ https://t.me/sabadyaar_bot
 
 | ساعت تهران | کار |
 |------------|-----|
-| ۰۷:۰۰ | اقتصاد دنیا از بیت‌پین + ذخیره دلار آزاد و طلای ۱۸ عیار |
+| ۰۷:۰۰ | اقتصاد دنیا از بیت‌پین + سیگنال X + ذخیره دلار آزاد و طلای ۱۸ عیار |
 | ۰۸:۰۰ | اخبار و فرصت‌های خرد (تلاش مجدد ۹ و ۱۰ اگر خالی ماند) |
 | ۰۸:۳۰ | تلگرام شخصی: نمودار سبد + پیشنهاد AI + اخبار (تلاش مجدد ۸:۴۵) |
 | ۱۲:۰۰ | تکرار قیمت دلار و طلا از بیت‌پین |

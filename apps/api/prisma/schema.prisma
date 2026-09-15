@@ -492,13 +492,36 @@ model SpotPriceDaily {
 
 /** آخرین همگام‌سازی بازارهای جهانی (بیت‌پین) */
 model WorldMarketRefresh {
-  id          String   @id @default("latest")
-  fetchedAt   DateTime
-  dateKey     String
-  symbolCount Int
-  sourceUrl   String
-  createdAt   DateTime @default(now())
-  updatedAt   DateTime @updatedAt
+  id           String   @id @default("latest")
+  fetchedAt    DateTime
+  dateKey      String
+  symbolCount  Int
+  sourceUrl    String
+  xSummaryFa   String?
+  xSourceNoteFa String?
+  createdAt    DateTime @default(now())
+  updatedAt    DateTime @updatedAt
+}
+
+/** پنج سیگنال خرید/فروش از فضای X روی نمادهای اقتصاد دنیا */
+model WorldMarketSignal {
+  id             String   @id @default(cuid())
+  /// BUY | SELL
+  side           String
+  marketCode     String
+  baseCode       String
+  baseTitleFa    String
+  titleFa        String
+  reasonFa       String
+  strength       Float
+  xSourceHintFa  String?
+  languagesFa    String?
+  sortOrder      Int      @default(0)
+  fetchedAt      DateTime
+  createdAt      DateTime @default(now())
+
+  @@index([fetchedAt])
+  @@index([sortOrder])
 }
 
 /** نمادهای بازار جهانی — هر بار همگام‌سازی جایگزین آخرین وضعیت می‌شود */
