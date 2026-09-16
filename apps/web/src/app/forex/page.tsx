@@ -248,9 +248,16 @@ export default function ForexPage() {
       router.replace('/');
       return;
     }
-    setLoading(true);
-    loadLatest()
-      .catch((e) => setErrorFa((e as Error).message))
+    api<{ role?: string }>('/users/me')
+      .then((u) => {
+        if (u.role !== 'ADMIN') {
+          router.replace('/dashboard');
+          return;
+        }
+        setLoading(true);
+        return loadLatest().catch((e) => setErrorFa((e as Error).message));
+      })
+      .catch(() => router.replace('/'))
       .finally(() => setLoading(false));
   }, [router]);
 

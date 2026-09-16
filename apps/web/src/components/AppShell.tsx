@@ -16,7 +16,7 @@ const allLinks = [
   { href: '/macro', label: 'اقتصاد ایران', adminOnly: true },
   { href: '/world', label: 'اقتصاد دنیا', adminOnly: true },
   { href: '/news', label: 'اخبار اقتصادی ایران', adminOnly: false },
-  { href: '/forex', label: 'آزمایش فارکس', adminOnly: false },
+  { href: '/forex', label: 'آزمایش فارکس', adminOnly: true },
   { href: '/admin/users', label: 'مدیریت کاربران', adminOnly: true },
 ];
 

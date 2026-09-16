@@ -1,9 +1,10 @@
 import { Controller, Get, Param, Post, UseGuards } from '@nestjs/common';
 import { ForexService } from './forex.service';
 import { JwtAuthGuard } from '../auth/jwt-auth.guard';
+import { AdminGuard } from '../auth/admin.guard';
 
 @Controller('forex')
-@UseGuards(JwtAuthGuard)
+@UseGuards(JwtAuthGuard, AdminGuard)
 export class ForexController {
   constructor(private readonly forex: ForexService) {}
 
