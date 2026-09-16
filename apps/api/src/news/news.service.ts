@@ -4,6 +4,7 @@ import { PrismaService } from '../prisma/prisma.service';
 import { LlmService } from '../llm/llm.service';
 import { UsersService } from '../users/users.service';
 import { daysAgoDateKey, tehranDateFa, tehranDateKey, tehranHour } from './tehran-date';
+import { fetchIranEconomyXFeed } from './news-x-fetch';
 
 type NewsLlmItem = {
   titleFa: string;
@@ -123,7 +124,6 @@ export class NewsService implements OnModuleInit {
     const newsDateKey = tehranDateKey();
     const persistEmpty = opts?.persistEmpty !== false;
     const includeItems = { items: { orderBy: { sortOrder: 'asc' as const } } };
-    const macro = await this.prisma.macroSnapshot.findFirst({ orderBy: { asOfDate: 'desc' } });
     const recentBatches = await this.prisma.economicNewsBatch.findMany({
       where: { userId: ownerId },
       orderBy: { newsDateKey: 'desc' },
@@ -131,43 +131,62 @@ export class NewsService implements OnModuleInit {
       include: { items: { orderBy: { relevanceScore: 'desc' }, take: 5 } },
     });
 
-    const system = await this.llm.getSystemPrompt(ownerId, 'economic_news_refresh');
-    const userPrompt = JSON.stringify(
-      {
-        todayTehran: newsDateKey,
-        todayLabelFa: tehranDateFa(),
-        macroContext: macro,
-        recentHeadlines: recentBatches.map((b) => ({
-          date: b.newsDateKey,
-          summary: b.summaryFa,
-          topItems: b.items.map((i) => i.titleFa),
-        })),
-        instruction:
-          'فضای X و منابع رسمی ایران را مرور کن. علاوه بر کلان اقتصادی، فرصت‌های واقعی سرمایه‌گذار خرد را هم بیاور: عرضه اولیه بورس، ثبت‌نام خودروسازان معتبر، حراج سکه بانک مرکزی، اوراق/صکوک قابل خرید، صندوق یا گواهی قابل ثبت‌نام. شایعه نده؛ فقط موارد معتبر و قابل اقدام. تکراری نسبت به روزهای اخیر نده. فقط JSON برگردان.',
-      },
-      null,
-      2,
-    );
+    const xFeed = await fetchIranEconomyXFeed(36);
+    this.logger.log(`فید X اخبار ایران: ${xFeed.posts.length} پست`);
 
     let out: NewsLlmOut;
-    try {
-      out = await this.llm.chatJson<NewsLlmOut>(
-        'economic_news_refresh',
-        system,
-        userPrompt,
-        ownerId,
-      );
-    } catch (e) {
+    if (!xFeed.posts.length) {
       out = {
-        analysisSummaryFa: `تحلیل خودکار در دسترس نبود. (${(e as Error).message.slice(0, 180)})`,
-        sourceNoteFa: 'LLM',
+        analysisSummaryFa:
+          'در این لحظه پست قابل‌استفاده از شبکهٔ X دریافت نشد. قیمت دلار و طلای دیتابیس به‌عنوان خبر استفاده نمی‌شود.',
+        sourceNoteFa: xFeed.sourceNoteFa,
         items: [],
       };
+    } else {
+      const system = await this.llm.getSystemPrompt(ownerId, 'economic_news_refresh');
+      const userPrompt = JSON.stringify(
+        {
+          todayTehran: newsDateKey,
+          todayLabelFa: tehranDateFa(),
+          source: 'x_network_only',
+          forbid: [
+            'قیمت دلار/طلا/سهام از دیتابیس',
+            'macroSnapshot',
+            'bitpin',
+            'TSETMC lastPrice',
+          ],
+          recentHeadlinesToAvoidRepeat: recentBatches.map((b) => ({
+            date: b.newsDateKey,
+            topItems: b.items.map((i) => i.titleFa),
+          })),
+          posts: xFeed.posts,
+          xSourceNoteFa: xFeed.sourceNoteFa,
+          instruction:
+            'فقط از آرایهٔ posts (پست‌های واقعی شبکهٔ X) خبر بساز. قیمت ذخیره‌شده در دیتابیس را نخوان و در خبر نیاور. هر آیتم باید xSourceHintFa داشته باشد. تکراری نسبت به recentHeadlinesToAvoidRepeat نده. فقط JSON.',
+        },
+        null,
+        2,
+      );
+      try {
+        out = await this.llm.chatJson<NewsLlmOut>(
+          'economic_news_refresh',
+          system,
+          userPrompt,
+          ownerId,
+        );
+      } catch (e) {
+        out = {
+          analysisSummaryFa: `خواندن فضای X ناموفق بود. (${(e as Error).message.slice(0, 180)})`,
+          sourceNoteFa: xFeed.sourceNoteFa,
+          items: [],
+        };
+      }
     }
 
-    const items = (Array.isArray(out.items) ? out.items : []).filter(
-      (i) => Boolean(i.titleFa?.trim() || i.summaryFa?.trim()),
-    );
+    const items = (Array.isArray(out.items) ? out.items : []).filter((i) => this.isXBackedItem(i));
+    if (!out.sourceNoteFa?.trim()) {
+      out.sourceNoteFa = xFeed.sourceNoteFa;
+    }
     const existing = await this.prisma.economicNewsBatch.findUnique({
       where: { userId_newsDateKey: { userId: ownerId, newsDateKey } },
     });
@@ -226,6 +245,20 @@ export class NewsService implements OnModuleInit {
       take: limit,
       include: { batch: { select: { newsDateKey: true, summaryFa: true } } },
     });
+  }
+
+  private isXBackedItem(item: NewsLlmItem): boolean {
+    const title = (item.titleFa ?? '').trim();
+    const summary = (item.summaryFa ?? '').trim();
+    const hint = (item.xSourceHintFa ?? '').trim();
+    if (!title && !summary) return false;
+    if (!hint) return false;
+    const blob = `${title} ${summary} ${item.marketImpactFa ?? ''}`;
+    if (/macroSnapshot|bitpin|TSETMC|lastPrice|از دیتابیس/i.test(blob)) return false;
+    if (/^(قیمت (دلار|طلا|سکه|بورس)|دلار امروز|انس طلا)/.test(title) && !/[@#]/.test(hint)) {
+      return false;
+    }
+    return true;
   }
 
   private async createItems(batchId: string, userId: string, items: NewsLlmItem[]) {

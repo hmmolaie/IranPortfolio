@@ -125,13 +125,14 @@ export default function NewsPage() {
       <div className="flex flex-wrap items-end justify-between gap-4">
         <div>
           <h1 className="text-3xl font-bold">اخبار اقتصادی ایران</h1>
+          <p className="mt-1 text-sm text-navy-800/50">منبع: شبکهٔ X — نه قیمت ذخیره‌شده در دیتابیس</p>
           {data?.todayLabelFa && (
             <p className="mt-1 text-sm text-navy-800/50">امروز: {data.todayLabelFa}</p>
           )}
         </div>
         {isAdmin && (
           <button className="btn-primary" onClick={refresh} disabled={loading}>
-            {loading ? 'در حال تحلیل...' : 'به‌روزرسانی اخبار'}
+            {loading ? 'در حال خواندن شبکهٔ X...' : 'به‌روزرسانی اخبار'}
           </button>
         )}
       </div>
@@ -207,9 +208,9 @@ export default function NewsPage() {
                     </p>
                   )}
                   <div className="mt-2 flex flex-wrap gap-3 text-xs text-navy-800/55">
+                    {item.xSourceHintFa && <span>X: {item.xSourceHintFa}</span>}
                     {item.officialSourceFa && <span>منبع رسمی: {item.officialSourceFa}</span>}
                     {item.sectorsFa && <span>بخش‌ها: {item.sectorsFa}</span>}
-                    {item.xSourceHintFa && <span>X: {item.xSourceHintFa}</span>}
                   </div>
                 </article>
               ))}
