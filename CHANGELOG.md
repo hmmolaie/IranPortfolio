@@ -14,13 +14,14 @@
 - جمع‌آوری خودکار اخبار و فرصت‌های خرد مؤثر بر سبد، هر روز ۸ صبح به وقت ایران
 - ربات تلگرام ۸:۳۰ از [`https://t.me/sabadyaar_bot`](https://t.me/sabadyaar_bot): نمودار سبد جاری، پیشنهاد بهبود با دادهٔ بورس/ارز/اخبار، و فرصت‌های خرد
 - GitHub Actions: استقرار خودکار سرور تست (`.github/workflows/deploy-test.yml`) + اسکریپت `scripts/deploy-test-server.sh`
-- استک کامل Docker (`docker-compose.yml` + `Dockerfile.api` / `Dockerfile.web`) برای دسترسی از راه دور
-- نمونه env سرور: `docker/env.production.example` (IP پیش‌فرض `46.249.100.230`)
+- استک کامل Docker (`docker-compose.yml` + `Dockerfile.api` / `Dockerfile.web` + nginx reverse proxy) برای دامنهٔ `sabad-yar.ir`
+- نمونه env سرور: `docker/env.production.example` (دامنه `sabad-yar.ir`)
 - مستندات استاندارد مخزن: `AGENTS.md`، `ARCHITECTURE.md`، `CONTRIBUTING.md`، `SECURITY.md`
 
 ### Changed
 
 - Prisma datasource پیش‌فرض: PostgreSQL (هماهنگ با Docker)
+- ورود عمومی از nginx روی `sabad-yar.ir`؛ API از مسیر `/api`؛ پورت‌های ۳۰۰۰ و ۳۰۰۱ روی اینترنت publish نمی‌شوند
 
 ## [0.1.0] — 2026-08
 

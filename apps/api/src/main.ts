@@ -5,7 +5,9 @@ import { AppModule } from './app.module';
 async function bootstrap() {
   const app = await NestFactory.create(AppModule);
   app.enableCors({
-    origin: process.env.CORS_ORIGIN?.split(',') ?? ['http://localhost:3000'],
+    origin: (process.env.CORS_ORIGIN?.split(',') ?? ['http://localhost:3000'])
+      .map((s) => s.trim())
+      .filter(Boolean),
     credentials: true,
   });
   app.useGlobalPipes(
@@ -17,9 +19,10 @@ async function bootstrap() {
   );
   app.setGlobalPrefix('api');
   const port = Number(process.env.API_PORT ?? 3001);
-  await app.listen(port, '0.0.0.0');
+  const listenHost = process.env.API_LISTEN_HOST ?? '127.0.0.1';
+  await app.listen(port, listenHost);
   // eslint-disable-next-line no-console
-  console.log(`سبدیار API روی پورت ${port}`);
+  console.log(`سبدیار API روی ${listenHost}:${port}`);
 }
 
 bootstrap().catch((err) => {

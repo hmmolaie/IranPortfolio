@@ -11,8 +11,8 @@
 | `apps/web` | Next.js 15 + React 19 + Tailwind (`@sabadyar/web`) |
 | `apps/api` | NestJS 11 + Prisma (`@sabadyar/api`) — پیشوند `/api` |
 | `packages/shared` | انواع و لیبل‌های مشترک (`@sabadyar/shared`) |
-| `docker/` | Dockerfileهای api/web و نمونه env سرور |
-| `docker-compose.yml` | استک کامل: web + api + postgres |
+| `docker/` | Dockerfileهای api/web، nginx reverse proxy، و نمونه env سرور |
+| `docker-compose.yml` | استک کامل: nginx + web + api + postgres |
 
 ## دستورات
 
@@ -30,7 +30,7 @@ npm run dev:web          # :3000
 npm run build
 ```
 
-Node `>=20`. با Docker دیتابیس PostgreSQL است؛ `NEXT_PUBLIC_API_URL` و `CORS_ORIGIN` باید IP/دامنهٔ عمومی سرور باشند.
+Node `>=20`. با Docker دیتابیس PostgreSQL است. روی سرور، `NEXT_PUBLIC_API_URL` باید `https://sabad-yar.ir` باشد و `CORS_ORIGIN` همان دامنه؛ API از مسیر `/api` پشت nginx در دسترس است.
 
 ## محیط کار ایجنت
 
@@ -45,7 +45,7 @@ Node `>=20`. با Docker دیتابیس PostgreSQL است؛ `NEXT_PUBLIC_API_URL
 4. **اسرار را کامیت نکن** — `.env`، توکن LLM، `JWT_SECRET`. فقط `.env.example` را به‌روز کن.
 5. **دامنه محدود** — فقط همان فایل/ماژول مرتبط را تغییر بده؛ ریفکتور گسترده بدون درخواست نکن.
 6. **اعتبارسنجی API** — DTO + `ValidationPipe` (whitelist / forbidNonWhitelisted).
-7. **مسیر وب** — کلاینت از `apps/web/src/lib/api.ts` با `Authorization: Bearer` و پایه `NEXT_PUBLIC_API_URL` استفاده می‌کند.
+7. **مسیر وب** — کلاینت از `apps/web/src/lib/api.ts` با `Authorization: Bearer` و پایهٔ `NEXT_PUBLIC_API_URL` (روی سرور: `https://sabad-yar.ir` سپس `/api`) استفاده می‌کند.
 
 ## ماژول‌های API
 

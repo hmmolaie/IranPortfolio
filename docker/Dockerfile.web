@@ -20,7 +20,7 @@ COPY --from=deps /app/packages/shared/package.json ./packages/shared/
 COPY packages/shared ./packages/shared
 COPY apps/web ./apps/web
 
-ARG NEXT_PUBLIC_API_URL=http://46.249.100.230:3001
+ARG NEXT_PUBLIC_API_URL=https://sabad-yar.ir
 ENV NEXT_PUBLIC_API_URL=$NEXT_PUBLIC_API_URL
 ENV NEXT_TELEMETRY_DISABLED=1
 

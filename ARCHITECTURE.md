@@ -3,17 +3,21 @@
 ## نمای کلی
 
 ```
-┌─────────────────┐     JWT + JSON      ┌─────────────────┐
-│  apps/web       │◄───────────────────►│  apps/api       │
-│  Next.js :3000  │   /api/*            │  NestJS :3001   │
-└────────┬────────┘                     └────────┬────────┘
-         │                                       │
-         │  @sabadyar/shared                     │ Prisma
-         └──────────────────┬────────────────────┘
-                            │
-              ┌─────────────▼─────────────┐
-              │ SQLite (dev) / PostgreSQL │
-              └───────────────────────────┘
+┌─────────────────┐                      ┌─────────────────┐
+│ مرورگر          │  sabad-yar.ir        │ nginx :80/:443  │
+│                 │─────────────────────►│ reverse proxy   │
+└─────────────────┘                      └───┬─────────┬───┘
+                                             │         │
+                              /          :3000│         │/api :3001
+                                             ▼         ▼
+                                      ┌──────────┐ ┌──────────┐
+                                      │ apps/web │ │ apps/api │
+                                      │ Next.js  │ │ NestJS   │
+                                      └────┬─────┘ └────┬─────┘
+                                           │            │ Prisma
+                                           └──────┬─────┘
+                                                  ▼
+                                         PostgreSQL (داخلی)
 ```
 
 اختیاری: LLM سازگار با OpenAI (پلتفرم یا توکن کاربر) و اینجست دادهٔ بازار.
@@ -44,7 +48,7 @@
 | `lessons` | درس‌آموخته‌های کاربر |
 | `prices` | قیمت دلار و طلا (پیش‌فرض بیت‌پین؛ API سفارشی اختیاری) |
 
-پیشوند سراسری: `/api`. CORS از `CORS_ORIGIN`.
+پیشوند سراسری: `/api`. CORS از `CORS_ORIGIN`. ورود عمومی فقط از nginx روی دامنهٔ `sabad-yar.ir`.
 
 ### داده (`apps/api/prisma/schema.prisma`)
 
@@ -84,8 +88,11 @@ https://t.me/sabadyaar_bot
 
 ## استقرار
 
-- **توصیه:** `docker compose up -d --build` — سرویس‌های `web`، `api`، `db`.
-- `NEXT_PUBLIC_API_URL` در **زمان build** وب تزریق می‌شود (آدرس API از دید مرورگر).
-- `CORS_ORIGIN` باید origin همان UI عمومی باشد (مثلاً `http://46.249.100.230:3000`).
+- **توصیه:** `docker compose up -d --build` — سرویس‌های `nginx`، `web`، `api`، `db`.
+- دامنهٔ عمومی: `https://sabad-yar.ir` — API از مرورگر: `https://sabad-yar.ir/api`.
+- `NEXT_PUBLIC_API_URL` در **زمان build** وب تزریق می‌شود و باید `https://sabad-yar.ir` باشد (بدون پورت ۳۰۰۱).
+- `CORS_ORIGIN` باید origin همان UI باشد (`https://sabad-yar.ir`).
+- پورت‌های `3000` و `3001` روی هاست publish نمی‌شوند؛ فقط `80` و `443`.
+- بدون Docker، API روی `127.0.0.1` گوش می‌دهد (`API_LISTEN_HOST`).
 - آپلودها در volume با نام `sabadyar_uploads` ماندگار می‌مانند.
 - schema پیش‌فرض Prisma: `postgresql`.

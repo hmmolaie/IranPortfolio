@@ -1,9 +1,10 @@
-# سبدیار — استک کامل (web + api + postgres)
+# سبدیار — استک کامل (nginx + web + api + postgres)
 # از ریشهٔ مخزن:
 #   cp docker/env.production.example .env
 #   docker compose up -d --build
 #
-# UI از راه دور: http://46.249.100.230:3000
+# عمومی فقط از nginx: https://sabad-yar.ir  و  https://sabad-yar.ir/api
+# پورت‌های 3000 و 3001 روی اینترنت publish نمی‌شوند.
 
 name: sabadyar
 
@@ -23,7 +24,6 @@ services:
       interval: 5s
       timeout: 5s
       retries: 20
-    # فقط داخل شبکهٔ داکر؛ روی اینترنت باز نیست
     expose:
       - '5432'
     networks:
@@ -41,21 +41,23 @@ services:
     environment:
       NODE_ENV: production
       API_PORT: 3001
+      # فقط شبکهٔ داخلی داکر؛ روی کارت شبکهٔ هاست publish نمی‌شود
+      API_LISTEN_HOST: 0.0.0.0
       DATABASE_URL: postgresql://${POSTGRES_USER:-sabadyar}:${POSTGRES_PASSWORD:-sabadyar}@db:5432/${POSTGRES_DB:-sabadyar}?schema=public
       JWT_SECRET: ${JWT_SECRET:-change-me-to-a-long-random-string}
       LLM_TOKEN_ENCRYPTION_KEY: ${LLM_TOKEN_ENCRYPTION_KEY:-0123456789abcdef0123456789abcdef}
-      CORS_ORIGIN: ${CORS_ORIGIN:-http://46.249.100.230:3000}
+      CORS_ORIGIN: ${CORS_ORIGIN:-https://sabad-yar.ir,http://sabad-yar.ir}
+      PUBLIC_URL: ${PUBLIC_URL:-https://sabad-yar.ir}
       PLATFORM_LLM_BASE_URL: ${PLATFORM_LLM_BASE_URL:-https://api.openai.com/v1}
       PLATFORM_LLM_API_KEY: ${PLATFORM_LLM_API_KEY:-}
       PLATFORM_LLM_MODEL: ${PLATFORM_LLM_MODEL:-gpt-4o-mini}
-      # کلید رایگان از https://brsapi.ir — برای اینجست بازار از سرور خارج ایران ضروری است
       BRS_API_KEY: ${BRS_API_KEY:-}
       BRS_API_TYPES: ${BRS_API_TYPES:-1}
       LLM_MODEL_FALLBACKS: ${LLM_MODEL_FALLBACKS:-}
     volumes:
       - sabadyar_uploads:/app/apps/api/uploads
-    ports:
-      - '${API_HOST_PORT:-3001}:3001'
+    expose:
+      - '3001'
     healthcheck:
       test:
         [
@@ -74,7 +76,7 @@ services:
       context: .
       dockerfile: docker/Dockerfile.web
       args:
-        NEXT_PUBLIC_API_URL: ${NEXT_PUBLIC_API_URL:-http://46.249.100.230:3001}
+        NEXT_PUBLIC_API_URL: ${NEXT_PUBLIC_API_URL:-https://sabad-yar.ir}
     container_name: sabadyar-web
     restart: unless-stopped
     depends_on:
@@ -83,9 +85,10 @@ services:
     environment:
       NODE_ENV: production
       PORT: 3000
+      # فقط شبکهٔ داخلی داکر برای رسیدن nginx
       HOSTNAME: 0.0.0.0
-    ports:
-      - '${WEB_HOST_PORT:-3000}:3000'
+    expose:
+      - '3000'
     healthcheck:
       test: ['CMD', 'wget', '-qO-', 'http://127.0.0.1:3000']
       interval: 15s
@@ -95,9 +98,39 @@ services:
     networks:
       - sabadyar
 
+  nginx:
+    image: nginx:1.27-alpine
+    container_name: sabadyar-nginx
+    restart: unless-stopped
+    depends_on:
+      api:
+        condition: service_healthy
+      web:
+        condition: service_healthy
+    ports:
+      - '${NGINX_HTTP_PORT:-80}:80'
+      - '${NGINX_HTTPS_PORT:-443}:443'
+    volumes:
+      - ./docker/nginx/nginx.conf:/etc/nginx/nginx.conf:ro
+      - ./docker/nginx/snippets:/etc/nginx/snippets:ro
+      - ./docker/nginx/templates:/etc/nginx/templates:ro
+      - ./docker/nginx/entrypoint.sh:/entrypoint.sh:ro
+      - ./docker/nginx/certs:/etc/nginx/certs:ro
+      - sabadyar_certbot:/var/www/certbot
+    entrypoint: ['/bin/sh', '/entrypoint.sh']
+    healthcheck:
+      test: ['CMD', 'wget', '-qO-', 'http://127.0.0.1/nginx-health']
+      interval: 10s
+      timeout: 3s
+      retries: 8
+      start_period: 10s
+    networks:
+      - sabadyar
+
 volumes:
   sabadyar_pg:
   sabadyar_uploads:
+  sabadyar_certbot:
 
 networks:
   sabadyar:

@@ -58,29 +58,29 @@ jobs:
             $DC up -d --build
             $DC ps
 
-            echo "==> Wait for API health"
+            echo "==> Wait for nginx /api/health"
             for i in $(seq 1 40); do
-              if curl -fsS "http://127.0.0.1:${API_HOST_PORT:-3001}/api/health" >/dev/null 2>&1; then
-                echo "API is healthy"
+              if curl -fsS -H "Host: sabad-yar.ir" "http://127.0.0.1:${NGINX_HTTP_PORT:-80}/api/health" >/dev/null 2>&1; then
+                echo "API is healthy via nginx"
                 break
               fi
               if [ "$i" -eq 40 ]; then
                 echo "API health check timed out"
-                $DC logs --tail=80 api || true
+                $DC logs --tail=80 nginx api || true
                 exit 1
               fi
               sleep 5
             done
 
-            echo "==> Wait for Web health"
+            echo "==> Wait for nginx"
             for i in $(seq 1 20); do
-              if curl -fsS "http://127.0.0.1:${WEB_HOST_PORT:-3000}" >/dev/null 2>&1; then
-                echo "Web is healthy"
+              if curl -fsS -H "Host: sabad-yar.ir" "http://127.0.0.1:${NGINX_HTTP_PORT:-80}/nginx-health" >/dev/null 2>&1; then
+                echo "Nginx is healthy"
                 break
               fi
               if [ "$i" -eq 20 ]; then
-                echo "Web health check timed out"
-                $DC logs --tail=80 web || true
+                echo "Nginx health check timed out"
+                $DC logs --tail=80 nginx web || true
                 exit 1
               fi
               sleep 3

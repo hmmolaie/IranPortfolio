@@ -3,15 +3,28 @@
 
 پلتفرم فارسی و راست‌به‌چپ (`dir="rtl"`) برای کشف و مدیریت سبد سرمایه‌گذاری در بازار ایران.
 
+دامنهٔ عمومی:
+
+```
+https://sabad-yar.ir
+```
+
+API پشت همان دامنه:
+
+```
+https://sabad-yar.ir/api
+```
+
 ## پشته فنی
 
 - **وب:** Next.js + React + Tailwind (RTL کامل)
 - **API:** NestJS + Prisma
 - **دیتابیس:** PostgreSQL (Docker) — برای توسعهٔ بدون Docker می‌توانید موقتاً SQLite بگذارید
+- **ورود عمومی:** Nginx reverse proxy (فقط پورت ۸۰ و ۴۴۳)
 
 ## اجرای کامل با Docker (توصیه‌شده روی سرور)
 
-روی سرور لینوکس (دسترسی از راه دور روی `46.249.100.230`):
+روی سرور لینوکس، DNS دامنه را به IP سرور بدهید، سپس:
 
 ```bash
 cp docker/env.production.example .env
@@ -19,10 +32,32 @@ cp docker/env.production.example .env
 docker compose up -d --build
 ```
 
-- وب: http://46.249.100.230:3000  
-- API: http://46.249.100.230:3001  
+- سایت:
 
-فایروال باید پورت‌های `3000` و `3001` را باز کند. دیتابیس فقط داخل شبکهٔ Docker است و روی اینترنت expose نمی‌شود.
+```
+https://sabad-yar.ir
+```
+
+- API:
+
+```
+https://sabad-yar.ir/api
+```
+
+فایروال فقط پورت‌های `80` و `443` را باز کند. سرویس‌های `web` (۳۰۰۰) و `api` (۳۰۰۱) داخل شبکهٔ Docker می‌مانند و روی اینترنت publish نمی‌شوند. دیتابیس هم فقط داخلی است.
+
+برای HTTPS، گواهی را در این مسیر بگذارید (در غیر این صورت سایت روی HTTP پورت ۸۰ کار می‌کند):
+
+```
+docker/nginx/certs/fullchain.pem
+docker/nginx/certs/privkey.pem
+```
+
+سپس nginx را یک‌بار از نو بالا بیاورید:
+
+```bash
+docker compose up -d nginx
+```
 
 توقف:
 
@@ -33,7 +68,7 @@ docker compose down
 لاگ‌ها:
 
 ```bash
-docker compose logs -f web api
+docker compose logs -f nginx web api
 ```
 
 همان استک با مسیر قدیمی هم در دسترس است: `docker compose -f docker/docker-compose.yml up -d --build`
@@ -57,8 +92,8 @@ npm run dev:api
 npm run dev:web
 ```
 
-- وب: http://localhost:3000  
-- API: http://localhost:3001  
+- وب: http://localhost:3000
+- API: http://localhost:3001 (فقط روی localhost گوش می‌دهد)
 
 ## امکانات
 
@@ -70,6 +105,7 @@ npm run dev:web
 ```
 https://t.me/sabadyaar_bot
 ```
+
 - پیشنهاد سبد با LLM (سازگار با ChatGPT) + ذخیره چرایی هر آیتم
 - ویرایش وزن، واریز/فروش و بازچینش
 - آپلود PDF صندوق‌ها، امتیازدهی استراتژی و درس‌آموخته‌ها

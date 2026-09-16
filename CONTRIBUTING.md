@@ -56,7 +56,7 @@ Settings → Secrets and variables → Actions → New repository secret
 
 | Secret | توضیح |
 |--------|--------|
-| `SSH_HOST` | IP یا دامنه سرور (مثلاً `46.249.100.230`) |
+| `SSH_HOST` | IP یا دامنه سرور (مثلاً `sabad-yar.ir`) |
 | `SSH_USER` | کاربر SSH |
 | `SSH_PRIVATE_KEY` | کلید خصوصی SSH (بدون passphrase ترجیحاً) |
 | `DEPLOY_PATH` | مسیر clone پروژه روی سرور (مثلاً `/home/ubuntu/IranPortfolio`) |

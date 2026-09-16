@@ -1,4 +1,16 @@
-export const API_URL = process.env.NEXT_PUBLIC_API_URL ?? 'http://localhost:3001';
+function resolveApiOrigin(): string {
+  const raw = process.env.NEXT_PUBLIC_API_URL;
+  if (raw === undefined) {
+    return process.env.NODE_ENV === 'production' ? '' : 'http://localhost:3001';
+  }
+  let origin = raw.trim().replace(/\/+$/, '');
+  if (!origin || origin === '/') return '';
+  origin = origin.replace(/\/api$/i, '');
+  return origin;
+}
+
+/** پایهٔ API از دید مرورگر. روی سرور: https://sabad-yar.ir تا درخواست‌ها به /api بروند */
+export const API_URL = resolveApiOrigin();
 
 /** پرچم حضور جلسه برای middleware (JWT در localStorage می‌ماند) */
 export const AUTH_COOKIE = 'sabadyar_auth';

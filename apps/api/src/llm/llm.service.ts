@@ -198,7 +198,9 @@ export class LlmService {
     };
     if (creds.baseUrl.includes('openrouter.ai')) {
       headers['HTTP-Referer'] =
-        this.config.get<string>('CORS_ORIGIN')?.split(',')[0]?.trim() || 'https://sabadyar.local';
+        this.config.get<string>('PUBLIC_URL')?.trim() ||
+        this.config.get<string>('CORS_ORIGIN')?.split(',')[0]?.trim() ||
+        'https://sabad-yar.ir';
       headers['X-Title'] = 'Sabadyar';
       headers['X-OpenRouter-Title'] = 'Sabadyar';
     }
