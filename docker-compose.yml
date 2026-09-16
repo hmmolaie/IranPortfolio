@@ -46,7 +46,7 @@ services:
       DATABASE_URL: postgresql://${POSTGRES_USER:-sabadyar}:${POSTGRES_PASSWORD:-sabadyar}@db:5432/${POSTGRES_DB:-sabadyar}?schema=public
       JWT_SECRET: ${JWT_SECRET:-change-me-to-a-long-random-string}
       LLM_TOKEN_ENCRYPTION_KEY: ${LLM_TOKEN_ENCRYPTION_KEY:-0123456789abcdef0123456789abcdef}
-      CORS_ORIGIN: ${CORS_ORIGIN:-https://sabad-yar.ir,http://sabad-yar.ir}
+      CORS_ORIGIN: ${CORS_ORIGIN:-https://sabad-yar.ir,http://sabad-yar.ir,http://46.249.100.230}
       PUBLIC_URL: ${PUBLIC_URL:-https://sabad-yar.ir}
       PLATFORM_LLM_BASE_URL: ${PLATFORM_LLM_BASE_URL:-https://api.openai.com/v1}
       PLATFORM_LLM_API_KEY: ${PLATFORM_LLM_API_KEY:-}
@@ -76,7 +76,8 @@ services:
       context: .
       dockerfile: docker/Dockerfile.web
       args:
-        NEXT_PUBLIC_API_URL: ${NEXT_PUBLIC_API_URL:-https://sabad-yar.ir}
+        # خالی = مرورگر از origin صفحه /api می‌زند (نه :3001)
+        NEXT_PUBLIC_API_URL: ''
     container_name: sabadyar-web
     restart: unless-stopped
     depends_on:

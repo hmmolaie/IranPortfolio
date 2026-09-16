@@ -89,9 +89,9 @@ https://t.me/sabadyaar_bot
 ## استقرار
 
 - **توصیه:** `docker compose up -d --build` — سرویس‌های `nginx`، `web`، `api`، `db`.
-- دامنهٔ عمومی: `https://sabad-yar.ir` — API از مرورگر: `https://sabad-yar.ir/api`.
-- `NEXT_PUBLIC_API_URL` در **زمان build** وب تزریق می‌شود و باید `https://sabad-yar.ir` باشد (بدون پورت ۳۰۰۱).
-- `CORS_ORIGIN` باید origin همان UI باشد (`https://sabad-yar.ir`).
+- دامنهٔ عمومی: `https://sabad-yar.ir` — API از مرورگر: همان origin + `/api` (مثلاً `http://46.249.100.230/api`، بدون پورت ۳۰۰۱).
+- کلاینت وب host:port را در باندل قفل نمی‌کند؛ `NEXT_PUBLIC_API_URL` در بیلد خالی است.
+- `CORS_ORIGIN` باید origin همان UI باشد (دامنه یا IP، بدون `:3000` / `:3001`).
 - پورت‌های `3000` و `3001` روی هاست publish نمی‌شوند؛ فقط `80` و `443`.
 - بدون Docker، API روی `127.0.0.1` گوش می‌دهد (`API_LISTEN_HOST`).
 - آپلودها در volume با نام `sabadyar_uploads` ماندگار می‌مانند.

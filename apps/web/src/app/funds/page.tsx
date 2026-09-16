@@ -4,7 +4,7 @@ import { FormEvent, useEffect, useMemo, useState } from 'react';
 import { useRouter } from 'next/navigation';
 import Link from 'next/link';
 import clsx from 'clsx';
-import { API_URL, api, formatNum, getToken } from '@/lib/api';
+import { api, apiUrl, formatNum, getToken } from '@/lib/api';
 import { getCurrentShamsiParts } from '@/lib/shamsi-date';
 import { WaitingOverlay } from '@/components/WaitingOverlay';
 
@@ -245,7 +245,7 @@ export default function FundsPage() {
       fd.append('fundDefinitionId', fundDefinitionId);
       fd.append('reportYear', reportYear);
       fd.append('reportMonthNum', reportMonthNum);
-      const res = await fetch(`${API_URL}/api/funds/upload`, {
+      const res = await fetch(apiUrl('/funds/upload'), {
         method: 'POST',
         headers: { Authorization: `Bearer ${getToken()}` },
         body: fd,

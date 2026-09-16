@@ -1,16 +1,29 @@
-function resolveApiOrigin(): string {
-  const raw = process.env.NEXT_PUBLIC_API_URL;
-  if (raw === undefined) {
-    return process.env.NODE_ENV === 'production' ? '' : 'http://localhost:3001';
+const DEV_WEB_PORT = '3000';
+const DEV_API_PORT = '3001';
+
+/**
+ * پایهٔ API از دید مرورگر.
+ * پشت nginx (پورت ۸۰/۴۴۳ یا دامنه) همیشه همان origin صفحه است — بدون :3001.
+ * فقط next dev روی پورت ۳۰۰۰ به API محلی ۳۰۰۱ می‌رود.
+ */
+export function apiOrigin(): string {
+  if (typeof window !== 'undefined') {
+    const { protocol, hostname, port } = window.location;
+    if (port === DEV_WEB_PORT) {
+      return `${protocol}//${hostname}:${DEV_API_PORT}`;
+    }
+    return '';
   }
-  let origin = raw.trim().replace(/\/+$/, '');
-  if (!origin || origin === '/') return '';
-  origin = origin.replace(/\/api$/i, '');
-  return origin;
+  return process.env.NODE_ENV === 'production' ? '' : `http://localhost:${DEV_API_PORT}`;
 }
 
-/** پایهٔ API از دید مرورگر. روی سرور: https://sabad-yar.ir تا درخواست‌ها به /api بروند */
-export const API_URL = resolveApiOrigin();
+export function apiUrl(path: string): string {
+  const suffix = path.startsWith('/') ? path : `/${path}`;
+  return `${apiOrigin()}/api${suffix}`;
+}
+
+/** سازگار با کد قدیمی؛ در مرورگر پشت پروکسی خالی است تا fetch به /api برود */
+export const API_URL = apiOrigin();
 
 /** پرچم حضور جلسه برای middleware (JWT در localStorage می‌ماند) */
 export const AUTH_COOKIE = 'sabadyar_auth';
@@ -166,7 +179,7 @@ export async function api<T>(
       touchSession();
     }
   }
-  const res = await fetch(`${API_URL}/api${path}`, { ...options, headers });
+  const res = await fetch(apiUrl(path), { ...options, headers });
   if (!res.ok) {
     if (res.status === 401 && options.auth !== false && path !== '/auth/login') {
       expireAndRedirect();

@@ -20,7 +20,8 @@ COPY --from=deps /app/packages/shared/package.json ./packages/shared/
 COPY packages/shared ./packages/shared
 COPY apps/web ./apps/web
 
-ARG NEXT_PUBLIC_API_URL=https://sabad-yar.ir
+# مرورگر همان origin صفحه را صدا می‌زند؛ این مقدار نباید host:3001 باشد
+ARG NEXT_PUBLIC_API_URL=
 ENV NEXT_PUBLIC_API_URL=$NEXT_PUBLIC_API_URL
 ENV NEXT_TELEMETRY_DISABLED=1
 

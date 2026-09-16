@@ -30,7 +30,7 @@ npm run dev:web          # :3000
 npm run build
 ```
 
-Node `>=20`. با Docker دیتابیس PostgreSQL است. روی سرور، `NEXT_PUBLIC_API_URL` باید `https://sabad-yar.ir` باشد و `CORS_ORIGIN` همان دامنه؛ API از مسیر `/api` پشت nginx در دسترس است.
+Node `>=20`. با Docker دیتابیس PostgreSQL است. کلاینت وب API را از همان origin صفحه روی مسیر `/api` صدا می‌زند (بدون پورت ۳۰۰۱). `CORS_ORIGIN` باید دامنه یا IP عمومی بدون پورت باشد.
 
 ## محیط کار ایجنت
 
@@ -45,7 +45,7 @@ Node `>=20`. با Docker دیتابیس PostgreSQL است. روی سرور، `NE
 4. **اسرار را کامیت نکن** — `.env`، توکن LLM، `JWT_SECRET`. فقط `.env.example` را به‌روز کن.
 5. **دامنه محدود** — فقط همان فایل/ماژول مرتبط را تغییر بده؛ ریفکتور گسترده بدون درخواست نکن.
 6. **اعتبارسنجی API** — DTO + `ValidationPipe` (whitelist / forbidNonWhitelisted).
-7. **مسیر وب** — کلاینت از `apps/web/src/lib/api.ts` با `Authorization: Bearer` و پایهٔ `NEXT_PUBLIC_API_URL` (روی سرور: `https://sabad-yar.ir` سپس `/api`) استفاده می‌کند.
+7. **مسیر وب** — کلاینت از `apps/web/src/lib/api.ts` با `Authorization: Bearer` به `/api` روی همان origin صفحه درخواست می‌زند (نه پورت ۳۰۰۱).
 
 ## ماژول‌های API
 
