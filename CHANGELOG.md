@@ -24,6 +24,7 @@
 - فونت PDF دستیار تلگرام از فایل کوچک Vazirmatn داخل مخزن؛ بدون دانلود jsDelivr از کل ریپوی فونت
 - Prisma datasource پیش‌فرض: PostgreSQL (هماهنگ با Docker)
 - ورود عمومی از nginx روی `sabad-yar.ir`؛ API از مسیر `/api`؛ پورت‌های ۳۰۰۰ و ۳۰۰۱ روی اینترنت publish نمی‌شوند
+- nginx بعد از recreate شدن api/web نام را دوباره از DNS داکر می‌گیرد (دیگر ۵۰۲ به‌خاطر IP کهنه)
 
 ## [0.1.0] — 2026-08
 

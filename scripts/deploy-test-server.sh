@@ -28,6 +28,8 @@ fi
 echo "==> Build and start stack ($DC)"
 $DC pull || true
 $DC up -d --build
+# nginx IP کانتینر api/web را در شروع resolve می‌کند؛ بعد از recreate باید از نو بالا بیاید
+$DC up -d --force-recreate --no-deps nginx
 $DC ps
 
 NGINX_PORT="${NGINX_HTTP_PORT:-80}"
