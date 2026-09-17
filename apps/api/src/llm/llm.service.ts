@@ -32,6 +32,32 @@ function parseModelList(raw: string): string[] {
     .filter(Boolean);
 }
 
+export type LlmLiveSearch = {
+  x?: boolean;
+  web?: boolean;
+  fromDate?: string;
+  toDate?: string;
+};
+
+export type LlmChatOptions = {
+  liveSearch?: boolean | LlmLiveSearch;
+};
+
+function normalizeLiveSearch(raw?: LlmChatOptions['liveSearch']): LlmLiveSearch | null {
+  if (!raw) return null;
+  if (raw === true) return { x: true, web: false };
+  return {
+    x: raw.x !== false,
+    web: Boolean(raw.web),
+    fromDate: raw.fromDate,
+    toDate: raw.toDate,
+  };
+}
+
+function uniqueStrings(items: string[]): string[] {
+  return items.filter((m, i, arr) => m && arr.indexOf(m) === i);
+}
+
 @Injectable()
 export class LlmService {
   private readonly logger = new Logger(LlmService.name);
@@ -311,22 +337,185 @@ export class LlmService {
     throw this.humanizeError(lastErr);
   }
 
-  async chatJson<T>(
-    purpose: string,
+  private isXaiEndpoint(creds: LlmCreds): boolean {
+    return /api\.x\.ai/i.test(creds.baseUrl);
+  }
+
+  private isGrokModel(model: string): boolean {
+    return /grok/i.test(model);
+  }
+
+  private buildXSearchTool(search: LlmLiveSearch): Record<string, unknown> {
+    const tool: Record<string, unknown> = { type: 'x_search' };
+    if (search.fromDate) tool.from_date = search.fromDate;
+    if (search.toDate) tool.to_date = search.toDate;
+    return tool;
+  }
+
+  private searchToolSets(
+    creds: LlmCreds,
+    model: string,
+    search: LlmLiveSearch,
+  ): Record<string, unknown>[][] {
+    const sets: Record<string, unknown>[][] = [];
+    const xTool = this.buildXSearchTool(search);
+    const grok = this.isGrokModel(model) || this.isXaiEndpoint(creds);
+    if (search.x !== false && grok) {
+      sets.push(search.web ? [xTool, { type: 'web_search' }] : [xTool]);
+    }
+    if (creds.baseUrl.includes('openrouter.ai')) {
+      sets.push([{ type: 'openrouter:web_search', parameters: { max_results: 16 } }]);
+    } else if (search.web && this.isXaiEndpoint(creds) && !sets.length) {
+      sets.push([{ type: 'web_search' }]);
+    }
+    if (!sets.length && search.x !== false) {
+      sets.push([xTool]);
+    }
+    return sets;
+  }
+
+  private extractResponsesText(json: Record<string, unknown>): string {
+    if (typeof json.output_text === 'string' && json.output_text.trim()) {
+      return json.output_text;
+    }
+    const parts: string[] = [];
+    const output = json.output;
+    if (Array.isArray(output)) {
+      for (const item of output) {
+        if (!item || typeof item !== 'object') continue;
+        const rec = item as Record<string, unknown>;
+        if (rec.type === 'reasoning' || rec.type === 'web_search_call' || rec.type === 'x_search_call') {
+          continue;
+        }
+        if (typeof rec.text === 'string') parts.push(rec.text);
+        if (!Array.isArray(rec.content)) continue;
+        for (const c of rec.content) {
+          if (typeof c === 'string') {
+            parts.push(c);
+            continue;
+          }
+          if (!c || typeof c !== 'object') continue;
+          const cr = c as Record<string, unknown>;
+          if (typeof cr.text === 'string') parts.push(cr.text);
+          if (typeof cr.output_text === 'string') parts.push(cr.output_text);
+        }
+      }
+    }
+    const joined = parts.join('\n').trim();
+    if (joined) return joined;
+    const choices = json.choices as
+      | Array<{ message?: { content?: string | Array<{ type?: string; text?: string }> } }>
+      | undefined;
+    const raw = choices?.[0]?.message?.content;
+    if (typeof raw === 'string') return raw;
+    if (Array.isArray(raw)) {
+      return raw.map((p) => (typeof p === 'string' ? p : p.text ?? '')).join('');
+    }
+    return '';
+  }
+
+  private extractCitations(json: Record<string, unknown>): string[] {
+    const out: string[] = [];
+    const top = json.citations;
+    if (Array.isArray(top)) {
+      for (const c of top) {
+        if (typeof c === 'string' && c.trim()) out.push(c.trim());
+        else if (c && typeof c === 'object' && typeof (c as { url?: unknown }).url === 'string') {
+          out.push((c as { url: string }).url);
+        }
+      }
+    }
+    return [...new Set(out)].slice(0, 12);
+  }
+
+  private async postResponses(
+    creds: LlmCreds,
+    body: Record<string, unknown>,
+  ): Promise<{ content: string; citations: string[] }> {
+    const res = await fetch(`${creds.baseUrl}/responses`, {
+      method: 'POST',
+      headers: this.requestHeaders(creds),
+      body: JSON.stringify(body),
+      signal: AbortSignal.timeout(180_000),
+    });
+    const text = await res.text();
+    if (!res.ok) {
+      throw new LlmHttpError(`خطای LLM responses: ${res.status} ${text.slice(0, 800)}`, res.status, text);
+    }
+    let json: Record<string, unknown>;
+    try {
+      json = JSON.parse(text) as Record<string, unknown>;
+    } catch {
+      throw new Error(`پاسخ غیرJSON از LLM responses: ${text.slice(0, 300)}`);
+    }
+    const err = json.error as { message?: string; code?: number | string } | undefined;
+    if (err?.message) {
+      throw new LlmHttpError(`خطای LLM: ${err.message}`, Number(err.code) || 500, err.message);
+    }
+    const content = this.extractResponsesText(json);
+    if (!content.trim()) {
+      throw new Error('پاسخ خالی از جستجوی زندهٔ مدل');
+    }
+    return { content, citations: this.extractCitations(json) };
+  }
+
+  private async callResponsesForJson(
+    creds: LlmCreds,
     systemPrompt: string,
     userPrompt: string,
-    userId?: string,
-  ): Promise<T> {
-    const creds = await this.resolveCredentials(userId);
+    search: LlmLiveSearch,
+  ): Promise<{ content: string; model: string; citations: string[] }> {
+    const models = uniqueStrings([creds.model, ...creds.fallbackModels]);
+    let lastErr: unknown;
+    for (const model of models) {
+      const toolSets = this.searchToolSets(creds, model, search);
+      for (const tools of toolSets) {
+        const baseBody: Record<string, unknown> = {
+          model,
+          instructions: systemPrompt,
+          input: [{ role: 'user', content: userPrompt }],
+          tools,
+          temperature: 0.3,
+        };
+        const withJson = {
+          ...baseBody,
+          text: { format: { type: 'json_object' } },
+        };
+        try {
+          const r = await this.postResponses(creds, withJson);
+          this.logger.log(`جستجوی زنده مدل=${model} ابزار=${tools.map((t) => String(t.type ?? '')).join(',')}`);
+          return { ...r, model };
+        } catch (e) {
+          lastErr = e;
+          this.logger.warn(
+            `responses+json مدل=${model}: ${(e as Error).message.slice(0, 180)}`,
+          );
+          if (e instanceof LlmHttpError && e.isRateLimited) continue;
+          try {
+            const r = await this.postResponses(creds, baseBody);
+            this.logger.log(`جستجوی زنده مدل=${model} بدون json_object`);
+            return { ...r, model };
+          } catch (e2) {
+            lastErr = e2;
+            this.logger.warn(`responses مدل=${model}: ${(e2 as Error).message.slice(0, 180)}`);
+          }
+        }
+      }
+    }
+    throw this.humanizeError(lastErr ?? new Error('جستجوی زندهٔ X در دسترس نبود'));
+  }
+
+  private async callChatJsonCompletions(
+    creds: LlmCreds,
+    systemPrompt: string,
+    userPrompt: string,
+  ): Promise<{ content: string; model: string }> {
     const messages = [
       { role: 'system', content: systemPrompt },
       { role: 'user', content: userPrompt },
     ];
-
-    let usedModel = creds.model;
-    let content: string;
     try {
-      const r = await this.callWithModelFallback(creds, (model) => ({
+      return await this.callWithModelFallback(creds, (model) => ({
         model,
         temperature: 0.3,
         messages,
@@ -335,22 +524,46 @@ export class LlmService {
           ? { models: [model, ...creds.fallbackModels.filter((m) => m !== model)] }
           : {}),
       }));
-      content = r.content;
-      usedModel = r.model;
     } catch (e) {
       if (e instanceof LlmHttpError && e.isRateLimited) throw this.humanizeError(e);
       this.logger.warn(`chatJson با json_object ناموفق، تلاش بدون آن: ${(e as Error).message}`);
+      return this.callWithModelFallback(creds, (model) => ({
+        model,
+        temperature: 0.3,
+        messages,
+      }));
+    }
+  }
+
+  async chatJson<T>(
+    purpose: string,
+    systemPrompt: string,
+    userPrompt: string,
+    userId?: string,
+    options?: LlmChatOptions,
+  ): Promise<T> {
+    const creds = await this.resolveCredentials(userId);
+    const search = normalizeLiveSearch(options?.liveSearch);
+    let usedModel = creds.model;
+    let content: string;
+    let citations: string[] = [];
+
+    if (search) {
       try {
-        const r = await this.callWithModelFallback(creds, (model) => ({
-          model,
-          temperature: 0.3,
-          messages,
-        }));
+        const r = await this.callResponsesForJson(creds, systemPrompt, userPrompt, search);
         content = r.content;
         usedModel = r.model;
-      } catch (e2) {
-        throw this.humanizeError(e2);
+        citations = r.citations;
+      } catch (e) {
+        this.logger.warn(`جستجوی زنده X ناموفق؛ ادامه بدون ابزار جستجو: ${(e as Error).message.slice(0, 180)}`);
+        const r = await this.callChatJsonCompletions(creds, systemPrompt, userPrompt);
+        content = r.content;
+        usedModel = r.model;
       }
+    } else {
+      const r = await this.callChatJsonCompletions(creds, systemPrompt, userPrompt);
+      content = r.content;
+      usedModel = r.model;
     }
 
     await this.prisma.aiTrace.create({
@@ -358,12 +571,19 @@ export class LlmService {
         userId,
         purpose,
         prompt: `${systemPrompt}\n---\n${userPrompt}`,
-        response: content,
+        response: citations.length ? `${content}\n---\n${citations.join('\n')}` : content,
         model: usedModel,
       },
     });
 
-    return this.extractJsonObject(content) as T;
+    const parsed = this.extractJsonObject(content) as T;
+    if (citations.length && parsed && typeof parsed === 'object' && !Array.isArray(parsed)) {
+      const rec = parsed as { sourceNoteFa?: string };
+      if (!rec.sourceNoteFa?.trim()) {
+        rec.sourceNoteFa = `جستجوی زندهٔ X: ${citations.slice(0, 8).join('، ')}`;
+      }
+    }
+    return parsed;
   }
 
   async speakTts(text: string, userId?: string): Promise<Buffer> {

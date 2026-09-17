@@ -131,56 +131,58 @@ export class NewsService implements OnModuleInit {
       include: { items: { orderBy: { relevanceScore: 'desc' }, take: 5 } },
     });
 
-    const xFeed = await fetchIranEconomyXFeed(36);
-    this.logger.log(`فید X اخبار ایران: ${xFeed.posts.length} پست`);
+    const xFeed = await fetchIranEconomyXFeed(24);
+    this.logger.log(`فید RSS کمکی X: ${xFeed.posts.length} پست`);
+
+    const system = `${await this.llm.getSystemPrompt(ownerId, 'economic_news_refresh')}
+
+ابزار جستجوی زندهٔ X (x_search) در این درخواست فعال است. اگر rssPostsOptional خالی بود حتماً خودت در X جستجو کن و لیست خالی برنگردان.`;
+    const userPrompt = JSON.stringify(
+      {
+        todayTehran: newsDateKey,
+        todayLabelFa: tehranDateFa(),
+        source: 'x_live_search_primary',
+        rssPostsOptional: xFeed.posts,
+        rssNoteFa: xFeed.sourceNoteFa,
+        forbid: [
+          'قیمت دلار/طلا/سهام از دیتابیس',
+          'macroSnapshot',
+          'bitpin',
+          'TSETMC lastPrice',
+        ],
+        recentHeadlinesToAvoidRepeat: recentBatches.map((b) => ({
+          date: b.newsDateKey,
+          topItems: b.items.map((i) => i.titleFa),
+        })),
+        instruction:
+          'با ابزار جستجوی زندهٔ شبکهٔ X همین امروز اقتصاد ایران را بخوان. اگر rssPostsOptional خالی است خودت در X جستجو کن و خبر بساز. قیمت ذخیره‌شده در دیتابیس را نخوان. هر آیتم xSourceHintFa داشته باشد. تکراری نسبت به recentHeadlinesToAvoidRepeat نده. فقط JSON.',
+      },
+      null,
+      2,
+    );
 
     let out: NewsLlmOut;
-    if (!xFeed.posts.length) {
+    try {
+      out = await this.llm.chatJson<NewsLlmOut>(
+        'economic_news_refresh',
+        system,
+        userPrompt,
+        ownerId,
+        {
+          liveSearch: {
+            x: true,
+            web: false,
+            fromDate: daysAgoDateKey(2),
+            toDate: newsDateKey,
+          },
+        },
+      );
+    } catch (e) {
       out = {
-        analysisSummaryFa:
-          'در این لحظه پست قابل‌استفاده از شبکهٔ X دریافت نشد. قیمت دلار و طلای دیتابیس به‌عنوان خبر استفاده نمی‌شود.',
+        analysisSummaryFa: `خواندن فضای X ناموفق بود. (${(e as Error).message.slice(0, 180)})`,
         sourceNoteFa: xFeed.sourceNoteFa,
         items: [],
       };
-    } else {
-      const system = await this.llm.getSystemPrompt(ownerId, 'economic_news_refresh');
-      const userPrompt = JSON.stringify(
-        {
-          todayTehran: newsDateKey,
-          todayLabelFa: tehranDateFa(),
-          source: 'x_network_only',
-          forbid: [
-            'قیمت دلار/طلا/سهام از دیتابیس',
-            'macroSnapshot',
-            'bitpin',
-            'TSETMC lastPrice',
-          ],
-          recentHeadlinesToAvoidRepeat: recentBatches.map((b) => ({
-            date: b.newsDateKey,
-            topItems: b.items.map((i) => i.titleFa),
-          })),
-          posts: xFeed.posts,
-          xSourceNoteFa: xFeed.sourceNoteFa,
-          instruction:
-            'فقط از آرایهٔ posts (پست‌های واقعی شبکهٔ X) خبر بساز. قیمت ذخیره‌شده در دیتابیس را نخوان و در خبر نیاور. هر آیتم باید xSourceHintFa داشته باشد. تکراری نسبت به recentHeadlinesToAvoidRepeat نده. فقط JSON.',
-        },
-        null,
-        2,
-      );
-      try {
-        out = await this.llm.chatJson<NewsLlmOut>(
-          'economic_news_refresh',
-          system,
-          userPrompt,
-          ownerId,
-        );
-      } catch (e) {
-        out = {
-          analysisSummaryFa: `خواندن فضای X ناموفق بود. (${(e as Error).message.slice(0, 180)})`,
-          sourceNoteFa: xFeed.sourceNoteFa,
-          items: [],
-        };
-      }
     }
 
     const items = (Array.isArray(out.items) ? out.items : []).filter((i) => this.isXBackedItem(i));
@@ -252,12 +254,16 @@ export class NewsService implements OnModuleInit {
     const summary = (item.summaryFa ?? '').trim();
     const hint = (item.xSourceHintFa ?? '').trim();
     if (!title && !summary) return false;
-    if (!hint) return false;
     const blob = `${title} ${summary} ${item.marketImpactFa ?? ''}`;
     if (/macroSnapshot|bitpin|TSETMC|lastPrice|از دیتابیس/i.test(blob)) return false;
-    if (/^(قیمت (دلار|طلا|سکه|بورس)|دلار امروز|انس طلا)/.test(title) && !/[@#]/.test(hint)) {
+    if (
+      /^(قیمت (دلار|طلا|سکه|بورس)|دلار امروز|انس طلا)/.test(title) &&
+      hint &&
+      !/[@#]|x\.com|شبکهٔ X/i.test(hint)
+    ) {
       return false;
     }
+    if (!hint) item.xSourceHintFa = 'شبکهٔ X (جستجوی زنده)';
     return true;
   }
 

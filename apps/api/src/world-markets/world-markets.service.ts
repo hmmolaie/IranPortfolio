@@ -263,7 +263,9 @@ export class WorldMarketsService implements OnModuleInit {
       return;
     }
 
-    const system = await this.llm.getSystemPrompt(adminId, 'world_x_signals');
+    const system = `${await this.llm.getSystemPrompt(adminId, 'world_x_signals')}
+
+ابزار جستجوی زندهٔ X (x_search) در این درخواست فعال است. حتماً در X به چند زبان جستجو کن.`;
     const userPrompt = JSON.stringify(
       {
         todayTehran: tehranDateKey(fetchedAt),
@@ -286,7 +288,14 @@ export class WorldMarketsService implements OnModuleInit {
 
     let out: XSignalLlmOut;
     try {
-      out = await this.llm.chatJson<XSignalLlmOut>('world_x_signals', system, userPrompt, adminId);
+      out = await this.llm.chatJson<XSignalLlmOut>('world_x_signals', system, userPrompt, adminId, {
+        liveSearch: {
+          x: true,
+          web: false,
+          fromDate: tehranDateKey(new Date(fetchedAt.getTime() - 2 * 24 * 60 * 60 * 1000)),
+          toDate: tehranDateKey(fetchedAt),
+        },
+      });
     } catch (e) {
       this.logger.warn(`مدل سیگنال X: ${(e as Error).message.slice(0, 180)}`);
       return;

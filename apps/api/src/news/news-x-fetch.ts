@@ -131,9 +131,14 @@ export async function fetchIranEconomyXFeed(limit = 36): Promise<{
   const collected: XPostSnippet[] = [];
   const used: string[] = [];
   const batchSize = 6;
-  for (let i = 0; i < urls.length && collected.length < limit * 3; i += batchSize) {
+  const maxBatches = 2;
+  for (
+    let i = 0, batch = 0;
+    i < urls.length && batch < maxBatches && collected.length < limit;
+    i += batchSize, batch += 1
+  ) {
     const chunk = urls.slice(i, i + batchSize);
-    const results = await Promise.allSettled(chunk.map((u) => fetchText(u, 12_000)));
+    const results = await Promise.allSettled(chunk.map((u) => fetchText(u, 4_000)));
     results.forEach((r, idx) => {
       if (r.status !== 'fulfilled' || !r.value) return;
       const parsed = parseRss(r.value);
@@ -149,7 +154,7 @@ export async function fetchIranEconomyXFeed(limit = 36): Promise<{
   return {
     posts,
     sourceNoteFa: posts.length
-      ? `فید زندهٔ X (${posts.length} پست) از ${hosts.join('، ') || 'جستجوی چندزبانه'}`
-      : 'فید عمومی X در این لحظه خالی بود؛ بدون قیمت دیتابیس',
+      ? `فید کمکی RSS از X (${posts.length} پست) از ${hosts.join('، ') || 'جستجوی چندزبانه'}`
+      : 'فید RSS عمومی خالی بود؛ خبر از جستجوی زندهٔ مدل در شبکهٔ X می‌آید',
   };
 }
