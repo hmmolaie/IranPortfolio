@@ -27,7 +27,15 @@ type LlmPrompt = {
   isCustom: boolean;
 };
 
-type SettingsTab = 'profile' | 'password' | 'funds' | 'prompts' | 'llm' | 'spotPrices' | 'telegram';
+type SettingsTab =
+  | 'profile'
+  | 'password'
+  | 'funds'
+  | 'prompts'
+  | 'llm'
+  | 'spotPrices'
+  | 'telegram'
+  | 'telegramAssistant';
 
 const TABS: { id: SettingsTab; label: string; adminOnly?: boolean }[] = [
   { id: 'profile', label: 'پروفایل' },
@@ -37,6 +45,7 @@ const TABS: { id: SettingsTab; label: string; adminOnly?: boolean }[] = [
   { id: 'llm', label: 'API مدل زبانی', adminOnly: true },
   { id: 'spotPrices', label: 'API قیمت لحظه‌ای دلار و طلا', adminOnly: true },
   { id: 'telegram', label: 'ربات تلگرام', adminOnly: true },
+  { id: 'telegramAssistant', label: 'دستیار تلگرام', adminOnly: true },
 ];
 
 const PROVIDERS: Record<
@@ -149,6 +158,15 @@ export default function SettingsPage() {
   } | null>(null);
   const [tgBusy, setTgBusy] = useState(false);
   const [tgFeedback, setTgFeedback] = useState<{ ok: boolean; text: string } | null>(null);
+  const [assistForm, setAssistForm] = useState({
+    botNameFa: 'دستیار سبدیار',
+    botUsername: '',
+    botToken: '',
+    enabled: true,
+  });
+  const [assistMeta, setAssistMeta] = useState({ hasToken: false, deepLink: null as string | null });
+  const [assistBusy, setAssistBusy] = useState(false);
+  const [assistFeedback, setAssistFeedback] = useState<{ ok: boolean; text: string } | null>(null);
 
   const visibleTabs = TABS.filter((t) => !t.adminOnly || isAdmin);
 
@@ -230,6 +248,30 @@ export default function SettingsPage() {
     }
   }
 
+  async function loadAssistantConfig() {
+    try {
+      const c = await api<{
+        botNameFa?: string;
+        botUsername?: string;
+        enabled?: boolean;
+        hasToken?: boolean;
+        deepLink?: string | null;
+      }>('/telegram-assistant/config');
+      setAssistForm({
+        botNameFa: c.botNameFa?.trim() || 'دستیار سبدیار',
+        botUsername: c.botUsername?.trim() || '',
+        botToken: '',
+        enabled: c.enabled ?? true,
+      });
+      setAssistMeta({
+        hasToken: Boolean(c.hasToken),
+        deepLink: c.deepLink ?? null,
+      });
+    } catch {
+      /* non-admin */
+    }
+  }
+
   useEffect(() => {
     if (!getToken()) {
       router.replace('/');
@@ -265,6 +307,7 @@ export default function SettingsPage() {
         loadSpotConfig().catch(() => undefined);
         loadSpotLatest().catch(() => undefined);
         loadTelegramConfig().catch(() => undefined);
+        loadAssistantConfig().catch(() => undefined);
       }
     });
     api<{
@@ -296,6 +339,9 @@ export default function SettingsPage() {
     }
     if (tab === 'telegram' && isAdmin) {
       loadTelegramConfig().catch(() => undefined);
+    }
+    if (tab === 'telegramAssistant' && isAdmin) {
+      loadAssistantConfig().catch(() => undefined);
     }
   }, [tab, isAdmin]);
 
@@ -457,6 +503,54 @@ export default function SettingsPage() {
       toast.error(text);
     } finally {
       setTgBusy(false);
+    }
+  }
+
+  async function saveAssistant(e: FormEvent) {
+    e.preventDefault();
+    setAssistBusy(true);
+    setAssistFeedback(null);
+    try {
+      await api('/telegram-assistant/config', {
+        method: 'PUT',
+        body: JSON.stringify({
+          botNameFa: assistForm.botNameFa.trim(),
+          botUsername: assistForm.botUsername.trim().replace(/^@/, ''),
+          enabled: assistForm.enabled,
+          ...(assistForm.botToken.trim() ? { botToken: assistForm.botToken.trim() } : {}),
+        }),
+      });
+      setAssistForm((p) => ({ ...p, botToken: '' }));
+      await loadAssistantConfig();
+      const text = 'تنظیمات دستیار تلگرام ذخیره شد.';
+      setAssistFeedback({ ok: true, text });
+      toast.success(text);
+    } catch (err) {
+      const text = (err as Error).message || 'ذخیره دستیار ناموفق بود.';
+      setAssistFeedback({ ok: false, text });
+      toast.error(text);
+    } finally {
+      setAssistBusy(false);
+    }
+  }
+
+  async function testAssistant() {
+    setAssistBusy(true);
+    setAssistFeedback(null);
+    try {
+      const res = await api<{ ok: boolean; messageFa?: string; botUsername?: string }>(
+        '/telegram-assistant/test',
+        { method: 'POST' },
+      );
+      const text = res.messageFa ?? 'اتصال برقرار است.';
+      setAssistFeedback({ ok: true, text });
+      toast.success(text);
+    } catch (err) {
+      const text = (err as Error).message || 'تست دستیار ناموفق بود.';
+      setAssistFeedback({ ok: false, text });
+      toast.error(text);
+    } finally {
+      setAssistBusy(false);
     }
   }
 
@@ -687,7 +781,7 @@ export default function SettingsPage() {
     <div className="space-y-6">
       <div>
         <h1 className="text-3xl font-bold">تنظیمات</h1>
-        <p className="mt-2 text-navy-800/70">پروفایل، پرامپت‌ها، صندوق‌ها، اتصال مدل زبانی و ربات تلگرام</p>
+        <p className="mt-2 text-navy-800/70">پروفایل، پرامپت‌ها، صندوق‌ها، اتصال مدل زبانی، ربات و دستیار تلگرام</p>
       </div>
 
       <div className="flex flex-col gap-6 lg:flex-row lg:items-start">
@@ -1386,6 +1480,91 @@ export default function SettingsPage() {
             >
               {tgFeedback.ok ? '✓ ' : '! '}
               {tgFeedback.text}
+            </div>
+          )}
+        </form>
+      )}
+
+      {tab === 'telegramAssistant' && isAdmin && (
+        <form onSubmit={saveAssistant} className="card grid max-w-2xl gap-4">
+          <p className="text-sm leading-7 text-navy-800/75">
+            این ربات دوطرفه است و با ربات یک‌طرفهٔ خلاصهٔ صبح فرق دارد. توکن جدا از BotFather بسازید.
+            سؤال را به فارسی جواب می‌دهد، لینک صفحه را ترجمه یا خلاصه می‌کند، PDF را به PDF فارسی راست‌چین
+            برمی‌گرداند، و لینک یوتیوب را به متن و فایل صوتی فارسی تبدیل می‌کند. کارهای طولانی با پیام صبر همراه است.
+          </p>
+          {assistMeta.deepLink && (
+            <p className="text-sm">
+              لینک ربات:
+              <br />
+              <a className="font-mono underline" href={assistMeta.deepLink} target="_blank" rel="noreferrer" dir="ltr">
+                {assistMeta.deepLink}
+              </a>
+            </p>
+          )}
+          <div>
+            <label className="label">نام ربات</label>
+            <input
+              className="input"
+              value={assistForm.botNameFa}
+              onChange={(e) => setAssistForm({ ...assistForm, botNameFa: e.target.value })}
+              placeholder="دستیار سبدیار"
+            />
+          </div>
+          <div>
+            <label className="label">نام کاربری ربات (بدون @)</label>
+            <input
+              className="input"
+              value={assistForm.botUsername}
+              onChange={(e) => setAssistForm({ ...assistForm, botUsername: e.target.value })}
+              placeholder="my_assistant_bot"
+              dir="ltr"
+            />
+          </div>
+          <div>
+            <label className="label">توکن ربات</label>
+            <input
+              className="input"
+              type="password"
+              value={assistForm.botToken}
+              onChange={(e) => setAssistForm({ ...assistForm, botToken: e.target.value })}
+              placeholder={assistMeta.hasToken ? 'برای جایگزینی توکن جدید وارد کنید' : 'از BotFather'}
+              dir="ltr"
+            />
+          </div>
+          <label className="flex items-center gap-2 text-sm">
+            <input
+              type="checkbox"
+              checked={assistForm.enabled}
+              onChange={(e) => setAssistForm({ ...assistForm, enabled: e.target.checked })}
+            />
+            دستیار فعال باشد و به پیام‌ها جواب بدهد
+          </label>
+          <div className="rounded-lg border border-navy-100 bg-white px-3 py-3 text-sm text-navy-800/80">
+            توکن ذخیره شده: {assistMeta.hasToken ? 'بله' : 'خیر'}
+          </div>
+          <div className="flex flex-wrap gap-2">
+            <button type="submit" className="btn-primary w-fit" disabled={assistBusy}>
+              {assistBusy ? 'در حال ذخیره...' : 'ذخیره دستیار'}
+            </button>
+            <button
+              type="button"
+              className="btn-secondary w-fit"
+              disabled={assistBusy || !assistMeta.hasToken}
+              onClick={testAssistant}
+            >
+              تست اتصال
+            </button>
+          </div>
+          {assistFeedback && (
+            <div
+              className={clsx(
+                'rounded-lg px-3 py-3 text-sm leading-7',
+                assistFeedback.ok ? 'bg-emerald-50 text-emerald-900' : 'bg-red-50 text-red-800',
+              )}
+              role={assistFeedback.ok ? 'status' : 'alert'}
+            >
+              {assistFeedback.ok ? '✓ ' : '! '}
+              {assistFeedback.text}
             </div>
           )}
         </form>

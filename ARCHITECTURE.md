@@ -43,6 +43,7 @@
 | `macro` | تورم، بهره، ریسک ژئوپلیتیک، پرسش |
 | `news` | اخبار و فرصت‌های خرد روزانه، زمینهٔ پیشنهاد سبد |
 | `telegram` | ربات تلگرام [`https://t.me/sabadyaar_bot`](https://t.me/sabadyaar_bot): وصل با موبایل پروفایل، پیام ۸:۳۰ |
+| `telegram-assistant` | دستیار دوطرفه تلگرام: پرسش LLM، ترجمه/خلاصه صفحه، PDF فارسی RTL، صوت یوتیوب |
 | `world-markets` | اقتصاد دنیا: بیت‌پین + ۵ سیگنال خرید/فروش از فضای X |
 | `forex` | آزمایش گراف فارکس (`/forex` فقط admin): نرخ جفت‌ارز + BTC/ETH/طلا/نقره، ذخیرهٔ رأس/یال با زمان |
 | `lessons` | درس‌آموخته‌های کاربر |
@@ -52,7 +53,7 @@
 
 ### داده (`apps/api/prisma/schema.prisma`)
 
-موجودیت‌های کلیدی: `User`، `UserProfile` (موبایل و اتصال تلگرام)، `Portfolio`، `PortfolioSnapshot` / `SnapshotItem`، `Instrument` / `PriceBar`، `FundReport` / `FundHolding`، `MarketChatMessage`، `Lesson`، `MacroSnapshot`، `EconomicNewsBatch` / `EconomicNewsItem`، `TelegramBotConfig`، `WorldMarket` / `WorldMarketRefresh` / `WorldMarketSignal`، `ForexSnapshot` / `ForexGraphNode` / `ForexGraphEdge`، `AiTrace`، `LlmSetting`.
+موجودیت‌های کلیدی: `User`، `UserProfile` (موبایل و اتصال تلگرام)، `Portfolio`، `PortfolioSnapshot` / `SnapshotItem`، `Instrument` / `PriceBar`، `FundReport` / `FundHolding`، `MarketChatMessage`، `Lesson`، `MacroSnapshot`، `EconomicNewsBatch` / `EconomicNewsItem`، `TelegramBotConfig`، `TelegramAssistantConfig`، `WorldMarket` / `WorldMarketRefresh` / `WorldMarketSignal`، `ForexSnapshot` / `ForexGraphNode` / `ForexGraphEdge`، `AiTrace`، `LlmSetting`.
 
 اسنپ‌شات‌ها تاریخچهٔ پیشنهاد و بازچینش را نگه می‌دارند؛ رویدادها در `PortfolioEvent`.
 

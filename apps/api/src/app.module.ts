@@ -16,6 +16,7 @@ import { PricesModule } from './prices/prices.module';
 import { TelegramModule } from './telegram/telegram.module';
 import { WorldMarketsModule } from './world-markets/world-markets.module';
 import { ForexModule } from './forex/forex.module';
+import { TelegramAssistantModule } from './telegram-assistant/telegram-assistant.module';
 
 @Module({
   imports: [
@@ -33,6 +34,7 @@ import { ForexModule } from './forex/forex.module';
     NewsModule,
     PricesModule,
     TelegramModule,
+    TelegramAssistantModule,
     WorldMarketsModule,
     ForexModule,
   ],

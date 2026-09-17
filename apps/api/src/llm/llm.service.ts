@@ -366,6 +366,75 @@ export class LlmService {
     return this.extractJsonObject(content) as T;
   }
 
+  async speakTts(text: string, userId?: string): Promise<Buffer> {
+    const creds = await this.resolveTtsCredentials(userId);
+    const input = text.replace(/\s+/g, ' ').trim().slice(0, 4096);
+    if (!input) throw new Error('متن خالی برای گفتار');
+    const res = await fetch(`${creds.baseUrl}/audio/speech`, {
+      method: 'POST',
+      headers: {
+        Authorization: `Bearer ${creds.apiKey}`,
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify({
+        model: this.config.get<string>('TTS_MODEL') ?? 'gpt-4o-mini-tts',
+        voice: this.config.get<string>('TTS_VOICE') ?? 'nova',
+        input,
+        response_format: 'mp3',
+        instructions: 'Speak in fluent, clear Persian (Farsi). Natural pace.',
+      }),
+      signal: AbortSignal.timeout(120_000),
+    });
+    if (!res.ok) {
+      const errText = await res.text();
+      throw new Error(`خطای TTS: ${res.status} ${errText.slice(0, 240)}`);
+    }
+    return Buffer.from(await res.arrayBuffer());
+  }
+
+  async transcribeAudio(audio: Buffer, filename: string, userId?: string): Promise<string> {
+    const creds = await this.resolveTtsCredentials(userId);
+    const form = new FormData();
+    form.append('file', new Blob([new Uint8Array(audio)], { type: 'audio/mpeg' }), filename);
+    form.append('model', 'whisper-1');
+    form.append('response_format', 'text');
+    const res = await fetch(`${creds.baseUrl}/audio/transcriptions`, {
+      method: 'POST',
+      headers: { Authorization: `Bearer ${creds.apiKey}` },
+      body: form,
+      signal: AbortSignal.timeout(180_000),
+    });
+    const text = await res.text();
+    if (!res.ok) throw new Error(`خطای رونویسی: ${res.status} ${text.slice(0, 240)}`);
+    return text.trim();
+  }
+
+  private async resolveTtsCredentials(userId?: string): Promise<LlmCreds> {
+    const platformKey = this.config.get<string>('PLATFORM_LLM_API_KEY');
+    const platformBase = (this.config.get<string>('PLATFORM_LLM_BASE_URL') ?? 'https://api.openai.com/v1').replace(
+      /\/$/,
+      '',
+    );
+    if (platformKey && !platformBase.includes('openrouter.ai')) {
+      return {
+        baseUrl: platformBase,
+        model: 'gpt-4o-mini-tts',
+        apiKey: platformKey,
+        fallbackModels: [],
+      };
+    }
+    const creds = await this.resolveCredentials(userId);
+    if (!creds.baseUrl.includes('openrouter.ai')) {
+      return { ...creds, model: 'gpt-4o-mini-tts', fallbackModels: [] };
+    }
+    return {
+      baseUrl: 'https://api.openai.com/v1',
+      model: 'gpt-4o-mini-tts',
+      apiKey: creds.apiKey,
+      fallbackModels: [],
+    };
+  }
+
   async chatText(purpose: string, systemPrompt: string, userPrompt: string, userId?: string) {
     const creds = await this.resolveCredentials(userId);
     try {

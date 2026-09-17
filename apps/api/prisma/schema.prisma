@@ -457,6 +457,18 @@ model TelegramBotConfig {
   updatedAt         DateTime @updatedAt
 }
 
+/** ربات دوطرفهٔ دستیار (سؤال، URL، PDF، یوتیوب) — جدا از ربات یک‌طرفهٔ خلاصهٔ صبح */
+model TelegramAssistantConfig {
+  id                String   @id @default("default")
+  botNameFa         String?
+  botUsername       String?
+  botTokenEncrypted String?
+  enabled           Boolean  @default(true)
+  lastUpdateId      String?
+  createdAt         DateTime @default(now())
+  updatedAt         DateTime @updatedAt
+}
+
 model TelegramDigestLog {
   id              String   @id @default(cuid())
   dateKey         String   @unique
