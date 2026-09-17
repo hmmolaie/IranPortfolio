@@ -630,27 +630,10 @@ export class LlmService {
   }
 
   private async resolveTtsCredentials(userId?: string): Promise<LlmCreds> {
-    const platformKey = this.config.get<string>('PLATFORM_LLM_API_KEY');
-    const platformBase = (this.config.get<string>('PLATFORM_LLM_BASE_URL') ?? 'https://api.openai.com/v1').replace(
-      /\/$/,
-      '',
-    );
-    if (platformKey && !platformBase.includes('openrouter.ai')) {
-      return {
-        baseUrl: platformBase,
-        model: 'gpt-4o-mini-tts',
-        apiKey: platformKey,
-        fallbackModels: [],
-      };
-    }
     const creds = await this.resolveCredentials(userId);
-    if (!creds.baseUrl.includes('openrouter.ai')) {
-      return { ...creds, model: 'gpt-4o-mini-tts', fallbackModels: [] };
-    }
     return {
-      baseUrl: 'https://api.openai.com/v1',
-      model: 'gpt-4o-mini-tts',
-      apiKey: creds.apiKey,
+      ...creds,
+      model: this.config.get<string>('TTS_MODEL') ?? 'gpt-4o-mini-tts',
       fallbackModels: [],
     };
   }

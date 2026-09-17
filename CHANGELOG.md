@@ -21,6 +21,7 @@
 ### Changed
 
 - اخبار اقتصادی ایران: جستجوی زندهٔ X با ابزار `x_search` مدل Grok؛ دیگر وابسته به خالی‌نبودن RSS عمومی نیست
+- فونت PDF دستیار تلگرام از فایل کوچک Vazirmatn داخل مخزن؛ بدون دانلود jsDelivr از کل ریپوی فونت
 - Prisma datasource پیش‌فرض: PostgreSQL (هماهنگ با Docker)
 - ورود عمومی از nginx روی `sabad-yar.ir`؛ API از مسیر `/api`؛ پورت‌های ۳۰۰۰ و ۳۰۰۱ روی اینترنت publish نمی‌شوند
 

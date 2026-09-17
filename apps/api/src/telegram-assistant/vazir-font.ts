@@ -1,27 +1,29 @@
 import * as fs from 'fs';
 import * as path from 'path';
 
-const FONT_URL =
-  'https://cdn.jsdelivr.net/gh/rastikerdar/vazirmatn@v33.003/fonts/ttf/Vazirmatn-Regular.ttf';
+/** Vazirmatn OFL — فقط یک فایل Regular، نه کل مخزن فونت */
+const FILENAME = 'Vazirmatn-Regular.ttf';
+const MIN_BYTES = 10_000;
+const MAX_BYTES = 2_000_000;
+
+function candidates(): string[] {
+  return [
+    path.join(__dirname, 'fonts', FILENAME),
+    path.join(process.cwd(), 'src', 'telegram-assistant', 'fonts', FILENAME),
+    path.join(process.cwd(), 'telegram-assistant', 'fonts', FILENAME),
+  ];
+}
 
 export async function loadVazirmatn(): Promise<Buffer> {
-  const dir = path.join(process.cwd(), 'uploads', 'fonts');
-  const file = path.join(dir, 'Vazirmatn-Regular.ttf');
-  try {
-    if (fs.existsSync(file) && fs.statSync(file).size > 10_000) {
+  for (const file of candidates()) {
+    try {
+      if (!fs.existsSync(file)) continue;
+      const size = fs.statSync(file).size;
+      if (size < MIN_BYTES || size > MAX_BYTES) continue;
       return fs.readFileSync(file);
+    } catch {
+      /* next */
     }
-  } catch {
-    /* fetch */
   }
-  const res = await fetch(FONT_URL, { signal: AbortSignal.timeout(60_000) });
-  if (!res.ok) throw new Error(`دانلود فونت فارسی ناموفق بود (${res.status})`);
-  const buf = Buffer.from(await res.arrayBuffer());
-  try {
-    fs.mkdirSync(dir, { recursive: true });
-    fs.writeFileSync(file, buf);
-  } catch {
-    /* cache optional */
-  }
-  return buf;
+  throw new Error('فونت فارسی Vazirmatn در بستهٔ API پیدا نشد');
 }
