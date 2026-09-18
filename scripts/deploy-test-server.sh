@@ -26,8 +26,13 @@ else
 fi
 
 echo "==> Build and start stack ($DC)"
+export DOCKER_BUILDKIT=1
+export COMPOSE_DOCKER_CLI_BUILD=1
 $DC pull || true
-$DC up -d --build
+# نصب npm موازی روی سرور شبکه را خفه می‌کند و SSH تایم‌اوت می‌شود
+$DC build api
+$DC build web
+$DC up -d
 # nginx IP کانتینر api/web را در شروع resolve می‌کند؛ بعد از recreate باید از نو بالا بیاید
 $DC up -d --force-recreate --no-deps nginx
 $DC ps
