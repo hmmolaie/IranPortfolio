@@ -348,8 +348,6 @@ export default function WorldEconomyPage() {
         </div>
       </section>
 
-      </section>
-
       {gainers.length > 0 && (
         <div className="grid gap-4 lg:grid-cols-2">
           <section className="card">
