@@ -447,7 +447,7 @@ model EconomicNewsItem {
   xSourceHintFa   String?
   /// macro | opportunity
   category        String?
-  /// ipo | auto_sale | coin_auction | sukuk | housing | fund | deposit | other
+  /// ipo | auto_sale | coin_auction | fx_auction | arbitrage | growth | sukuk | housing | fund | deposit | other
   opportunityKind String?
   participateHowFa String?
   deadlineFa      String?

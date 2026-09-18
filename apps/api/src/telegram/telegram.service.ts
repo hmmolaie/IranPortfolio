@@ -560,7 +560,7 @@ export class TelegramService implements OnModuleInit {
 
     if (opportunities.length) {
       lines.push('<b>فرصت‌های قابل اقدام برای سرمایه‌گذار خرد</b>');
-      for (const [idx, item] of opportunities.slice(0, 6).entries()) {
+      for (const [idx, item] of opportunities.slice(0, 3).entries()) {
         lines.push(`${toFaDigit(idx + 1)}) <b>${escapeHtml(item.titleFa)}</b>`);
         if (item.deadlineFa) lines.push(`مهلت: ${escapeHtml(item.deadlineFa)}`);
         if (item.participateHowFa) lines.push(`چطور: ${escapeHtml(item.participateHowFa)}`);
@@ -571,7 +571,7 @@ export class TelegramService implements OnModuleInit {
 
     if (macros.length) {
       lines.push('<b>اخبار مؤثر بر سبد</b>');
-      for (const [idx, item] of macros.slice(0, 4).entries()) {
+      for (const [idx, item] of macros.slice(0, 7).entries()) {
         lines.push(`${toFaDigit(idx + 1)}) <b>${escapeHtml(item.titleFa)}</b>`);
         const body = item.marketImpactFa || item.summaryFa;
         if (body) lines.push(escapeHtml(body));

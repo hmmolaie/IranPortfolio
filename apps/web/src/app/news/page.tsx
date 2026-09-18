@@ -55,6 +55,9 @@ const KIND_FA: Record<string, string> = {
   ipo: 'عرضه اولیه',
   auto_sale: 'ثبت‌نام خودرو',
   coin_auction: 'حراج سکه',
+  fx_auction: 'حراج ارز',
+  arbitrage: 'آربیتراژ',
+  growth: 'بازار مستعد رشد',
   sukuk: 'اوراق / صکوک',
   housing: 'مسکن',
   fund: 'صندوق',
@@ -72,6 +75,57 @@ function formatDateKey(key: string) {
   } catch {
     return key;
   }
+}
+
+function isOpportunity(item: NewsItem) {
+  return item.category === 'opportunity' || Boolean(item.isRetailActionable);
+}
+
+function NewsCard({ item }: { item: NewsItem }) {
+  const opp = isOpportunity(item);
+  return (
+    <article className="card">
+      <div className="flex flex-wrap items-start justify-between gap-2">
+        <h3 className="text-base font-semibold">{item.titleFa}</h3>
+        <div className="flex flex-wrap gap-2 text-xs">
+          {opp && (
+            <span className="rounded bg-gold-400/25 px-2 py-0.5 text-gold-500">
+              {KIND_FA[item.opportunityKind ?? ''] ?? 'فرصت سرمایه‌گذاری'}
+            </span>
+          )}
+          {item.impactDirection && (
+            <span className={`rounded px-2 py-0.5 ${DIRECTION_CLASS[item.impactDirection] ?? 'bg-navy-50'}`}>
+              {DIRECTION_FA[item.impactDirection] ?? item.impactDirection}
+            </span>
+          )}
+          {item.relevanceScore != null && (
+            <span className="rounded bg-navy-50 px-2 py-0.5">اهمیت: {formatNum(item.relevanceScore)}/۱۰</span>
+          )}
+        </div>
+      </div>
+      <p className="mt-2 text-sm leading-7 text-navy-800/80">{item.summaryFa}</p>
+      {item.marketImpactFa && (
+        <p className="mt-2 text-sm leading-7">
+          <strong>{opp ? 'چرا فرصت است:' : 'اثر محتمل روی اقتصاد ایران:'}</strong> {item.marketImpactFa}
+        </p>
+      )}
+      {item.participateHowFa && (
+        <p className="mt-2 text-sm leading-7">
+          <strong>چطور شرکت کنید:</strong> {item.participateHowFa}
+        </p>
+      )}
+      {item.deadlineFa && (
+        <p className="mt-1 text-sm leading-7">
+          <strong>مهلت:</strong> {item.deadlineFa}
+        </p>
+      )}
+      <div className="mt-2 flex flex-wrap gap-3 text-xs text-navy-800/55">
+        {item.xSourceHintFa && <span>{item.xSourceHintFa}</span>}
+        {item.officialSourceFa && <span>منبع رسمی: {item.officialSourceFa}</span>}
+        {item.sectorsFa && <span>بخش‌ها: {item.sectorsFa}</span>}
+      </div>
+    </article>
+  );
 }
 
 export default function NewsPage() {
@@ -110,7 +164,7 @@ export default function NewsPage() {
     try {
       await api('/news/refresh', { method: 'POST' });
       await load();
-      toast.success('اخبار امروز به‌روزرسانی و ذخیره شد.');
+      toast.success('اخبار و فرصت‌های امروز به‌روزرسانی و ذخیره شد.');
     } catch (e) {
       toast.error((e as Error).message);
     } finally {
@@ -125,14 +179,13 @@ export default function NewsPage() {
       <div className="flex flex-wrap items-end justify-between gap-4">
         <div>
           <h1 className="text-3xl font-bold">اخبار اقتصادی ایران</h1>
-          <p className="mt-1 text-sm text-navy-800/50">منبع: شبکهٔ X — نه قیمت ذخیره‌شده در دیتابیس</p>
           {data?.todayLabelFa && (
             <p className="mt-1 text-sm text-navy-800/50">امروز: {data.todayLabelFa}</p>
           )}
         </div>
         {isAdmin && (
           <button className="btn-primary" onClick={refresh} disabled={loading}>
-            {loading ? 'در حال خواندن شبکهٔ X...' : 'به‌روزرسانی اخبار'}
+            {loading ? 'در حال جستجوی X با Grok...' : 'به‌روزرسانی اخبار'}
           </button>
         )}
       </div>
@@ -140,10 +193,7 @@ export default function NewsPage() {
       {todayBatch?.summaryFa && (
         <section className="card">
           <h2 className="text-lg font-semibold">خلاصه امروز</h2>
-          <p className="mt-2 leading-7 text-navy-800/80">{todayBatch.summaryFa}</p>
-          {todayBatch.sourceNoteFa && (
-            <p className="mt-2 text-xs text-navy-800/50">منبع: {todayBatch.sourceNoteFa}</p>
-          )}
+          <p className="mt-2 whitespace-pre-line leading-7 text-navy-800/80">{todayBatch.summaryFa}</p>
         </section>
       )}
 
@@ -157,67 +207,40 @@ export default function NewsPage() {
         </p>
       )}
 
-      {data?.batches.map((batch) => (
-        <section key={batch.id} className="space-y-4">
-          <h2 className="text-lg font-semibold">{formatDateKey(batch.newsDateKey)}</h2>
-          {batch.summaryFa && batch.newsDateKey !== data.todayKey && (
-            <p className="text-sm leading-7 text-navy-800/70">{batch.summaryFa}</p>
-          )}
-          {batch.items.length === 0 ? (
-            <p className="text-sm text-navy-800/50">خبری برای این روز ثبت نشده.</p>
-          ) : (
-            <div className="space-y-3">
-              {batch.items.map((item) => (
-                <article key={item.id} className="card">
-                  <div className="flex flex-wrap items-start justify-between gap-2">
-                    <h3 className="text-base font-semibold">{item.titleFa}</h3>
-                    <div className="flex flex-wrap gap-2 text-xs">
-                      {(item.category === 'opportunity' || item.isRetailActionable) && (
-                        <span className="rounded bg-gold-400/25 px-2 py-0.5 text-gold-500">
-                          {KIND_FA[item.opportunityKind ?? ''] ?? 'فرصت قابل اقدام'}
-                        </span>
-                      )}
-                      {item.impactDirection && (
-                        <span
-                          className={`rounded px-2 py-0.5 ${DIRECTION_CLASS[item.impactDirection] ?? 'bg-navy-50'}`}
-                        >
-                          {DIRECTION_FA[item.impactDirection] ?? item.impactDirection}
-                        </span>
-                      )}
-                      {item.relevanceScore != null && (
-                        <span className="rounded bg-navy-50 px-2 py-0.5">
-                          اهمیت: {formatNum(item.relevanceScore)}/۱۰
-                        </span>
-                      )}
-                    </div>
-                  </div>
-                  <p className="mt-2 text-sm leading-7 text-navy-800/80">{item.summaryFa}</p>
-                  {item.marketImpactFa && (
-                    <p className="mt-2 text-sm leading-7">
-                      <strong>اثر محتمل روی سبد:</strong> {item.marketImpactFa}
-                    </p>
-                  )}
-                  {item.participateHowFa && (
-                    <p className="mt-2 text-sm leading-7">
-                      <strong>چطور شرکت کنید:</strong> {item.participateHowFa}
-                    </p>
-                  )}
-                  {item.deadlineFa && (
-                    <p className="mt-1 text-sm leading-7">
-                      <strong>مهلت:</strong> {item.deadlineFa}
-                    </p>
-                  )}
-                  <div className="mt-2 flex flex-wrap gap-3 text-xs text-navy-800/55">
-                    {item.xSourceHintFa && <span>X: {item.xSourceHintFa}</span>}
-                    {item.officialSourceFa && <span>منبع رسمی: {item.officialSourceFa}</span>}
-                    {item.sectorsFa && <span>بخش‌ها: {item.sectorsFa}</span>}
-                  </div>
-                </article>
-              ))}
-            </div>
-          )}
-        </section>
-      ))}
+      {data?.batches.map((batch) => {
+        const macros = batch.items.filter((i) => !isOpportunity(i)).slice(0, 7);
+        const opportunities = batch.items.filter(isOpportunity).slice(0, 3);
+        return (
+          <section key={batch.id} className="space-y-4">
+            <h2 className="text-lg font-semibold">{formatDateKey(batch.newsDateKey)}</h2>
+            {batch.summaryFa && batch.newsDateKey !== data.todayKey && (
+              <p className="whitespace-pre-line text-sm leading-7 text-navy-800/70">{batch.summaryFa}</p>
+            )}
+
+            {macros.length > 0 && (
+              <div className="space-y-3">
+                <h3 className="text-sm font-semibold text-navy-800/70">اثرگذار بر اقتصاد ایران</h3>
+                {macros.map((item) => (
+                  <NewsCard key={item.id} item={item} />
+                ))}
+              </div>
+            )}
+
+            {opportunities.length > 0 && (
+              <div className="space-y-3">
+                <h3 className="text-sm font-semibold text-navy-800/70">فرصت‌های سرمایه‌گذاری</h3>
+                {opportunities.map((item) => (
+                  <NewsCard key={item.id} item={item} />
+                ))}
+              </div>
+            )}
+
+            {macros.length === 0 && opportunities.length === 0 && (
+              <p className="text-sm text-navy-800/50">خبری برای این روز ثبت نشده.</p>
+            )}
+          </section>
+        );
+      })}
     </div>
   );
 }

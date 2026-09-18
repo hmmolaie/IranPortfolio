@@ -41,6 +41,8 @@ export type LlmLiveSearch = {
 
 export type LlmChatOptions = {
   liveSearch?: boolean | LlmLiveSearch;
+  /** اگر در فهرست مدل‌ها Grok باشد، برای جستجوی X همان را جلو می‌اندازد */
+  preferGrok?: boolean;
 };
 
 function normalizeLiveSearch(raw?: LlmChatOptions['liveSearch']): LlmLiveSearch | null {
@@ -56,6 +58,12 @@ function normalizeLiveSearch(raw?: LlmChatOptions['liveSearch']): LlmLiveSearch 
 
 function uniqueStrings(items: string[]): string[] {
   return items.filter((m, i, arr) => m && arr.indexOf(m) === i);
+}
+
+function preferGrokFirst(models: string[]): string[] {
+  const grok = models.filter((m) => /grok/i.test(m));
+  const rest = models.filter((m) => !/grok/i.test(m));
+  return grok.length ? [...grok, ...rest] : models;
 }
 
 @Injectable()
@@ -464,8 +472,11 @@ export class LlmService {
     systemPrompt: string,
     userPrompt: string,
     search: LlmLiveSearch,
+    preferGrok?: boolean,
   ): Promise<{ content: string; model: string; citations: string[] }> {
-    const models = uniqueStrings([creds.model, ...creds.fallbackModels]);
+    const models = preferGrok
+      ? preferGrokFirst(uniqueStrings([creds.model, ...creds.fallbackModels]))
+      : uniqueStrings([creds.model, ...creds.fallbackModels]);
     let lastErr: unknown;
     for (const model of models) {
       const toolSets = this.searchToolSets(creds, model, search);
@@ -550,7 +561,7 @@ export class LlmService {
 
     if (search) {
       try {
-        const r = await this.callResponsesForJson(creds, systemPrompt, userPrompt, search);
+        const r = await this.callResponsesForJson(creds, systemPrompt, userPrompt, search, options?.preferGrok);
         content = r.content;
         usedModel = r.model;
         citations = r.citations;

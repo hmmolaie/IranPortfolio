@@ -13,6 +13,49 @@ import { UsersService } from '../users/users.service';
 import { daysAgoDateKey } from '../news/tehran-date';
 import { foldFa, tokenizeMarketQuestion } from '../market/tehran-chat';
 
+type PortfolioNewsRow = {
+  batch: { newsDateKey: string };
+  titleFa: string;
+  summaryFa: string;
+  marketImpactFa: string | null;
+  impactDirection: string | null;
+  relevanceScore: number | null;
+  sectorsFa: string | null;
+  category: string | null;
+  opportunityKind: string | null;
+  participateHowFa: string | null;
+  deadlineFa: string | null;
+  officialSourceFa: string | null;
+  isRetailActionable: boolean | null;
+  xSourceHintFa: string | null;
+};
+
+function splitNewsForPortfolio(rows: PortfolioNewsRow[]) {
+  const isOpp = (n: PortfolioNewsRow) => n.category === 'opportunity' || Boolean(n.isRetailActionable);
+  const base = (n: PortfolioNewsRow) => ({
+    date: n.batch.newsDateKey,
+    title: n.titleFa,
+    summary: n.summaryFa,
+    marketImpact: n.marketImpactFa,
+    direction: n.impactDirection,
+    relevance: n.relevanceScore,
+    sectors: n.sectorsFa,
+    xSource: n.xSourceHintFa,
+    category: n.category,
+  });
+  return {
+    economicNews: rows.filter((n) => !isOpp(n)).slice(0, 7).map(base),
+    investmentOpportunities: rows.filter(isOpp).slice(0, 3).map((n) => ({
+      ...base(n),
+      opportunityKind: n.opportunityKind,
+      participateHow: n.participateHowFa,
+      deadline: n.deadlineFa,
+      officialSource: n.officialSourceFa,
+      isRetailActionable: n.isRetailActionable,
+    })),
+  };
+}
+
 @Injectable()
 export class PortfoliosService {
   constructor(
@@ -227,21 +270,7 @@ export class PortfoliosService {
           pe: u.pe,
         })),
         macro,
-        economicNews: economicNews.map((n) => ({
-          date: n.batch.newsDateKey,
-          title: n.titleFa,
-          summary: n.summaryFa,
-          marketImpact: n.marketImpactFa,
-          direction: n.impactDirection,
-          relevance: n.relevanceScore,
-          sectors: n.sectorsFa,
-          category: n.category,
-          opportunityKind: n.opportunityKind,
-          participateHow: n.participateHowFa,
-          deadline: n.deadlineFa,
-          officialSource: n.officialSourceFa,
-          isRetailActionable: n.isRetailActionable,
-        })),
+        ...splitNewsForPortfolio(economicNews),
         fxHistory,
         topFunds: funds.map((f) => ({
           fundName: f.fundName,
@@ -273,11 +302,11 @@ export class PortfoliosService {
           ? `این ایجاد اولیه سبد است. سرمایه کل ${portfolio.capitalRial} ریال و استراتژی ${portfolio.strategy} است.
 فقط weightPct بده (جمع ≈ ۱۰۰). جمع ارزش سبد نباید از ${portfolio.capitalRial} ریال بیشتر شود.
 سهامی پیشنهاد نکن که قیمت یک واحدش از سهم بودجه‌اش بیشتر باشد.
-حتماً lessons، fundHoldings (موجودی/خرید/فروش صندوق‌ها)، economicNews (~۳۰ روز) و fxHistory (دلار/طلا ~۳۰ روز) را در تصمیم و در reasonFa/strategySummaryFa منعکس کن.
+حتماً lessons، fundHoldings (موجودی/خرید/فروش صندوق‌ها)، economicNews (حداکثر ۷ خبر اثرگذار بر اقتصاد ایران از X)، investmentOpportunities (حداکثر ۳ فرصت) و fxHistory (دلار/طلا ~۳۰ روز) را در تصمیم و در reasonFa/strategySummaryFa منعکس کن.
 PHYSICAL_GOLD / PHYSICAL_USD در صورت مناسب بودن مجاز است.`
           : `چند استراتژی متفاوت پیشنهاد بده. سرمایه کل ${portfolio.capitalRial} ریال است.
 weightPct فقط درصد از همین سرمایه است (جمع هر استراتژی ≈ ۱۰۰). ارزش کل هر استراتژی مساوی همین سرمایه است و نباید بیشتر شود.
-حتماً lessons، fundHoldings، economicNews (~۳۰ روز) و fxHistory را لحاظ کن و در توضیحات ارجاع بده.`,
+حتماً lessons، fundHoldings، economicNews، investmentOpportunities و fxHistory را لحاظ کن و در توضیحات ارجاع بده.`,
       },
       null,
       2,
@@ -1242,21 +1271,7 @@ ${historyText}`,
         userProfile: profile,
         currentItems: pricedItems,
         macro,
-        economicNews: economicNews.map((n) => ({
-          date: n.batch.newsDateKey,
-          title: n.titleFa,
-          summary: n.summaryFa,
-          marketImpact: n.marketImpactFa,
-          direction: n.impactDirection,
-          relevance: n.relevanceScore,
-          sectors: n.sectorsFa,
-          category: n.category,
-          opportunityKind: n.opportunityKind,
-          participateHow: n.participateHowFa,
-          deadline: n.deadlineFa,
-          officialSource: n.officialSourceFa,
-          isRetailActionable: n.isRetailActionable,
-        })),
+        ...splitNewsForPortfolio(economicNews),
         fxHistory,
         lessons: lessons.map((l) => ({ title: l.titleFa, body: l.bodyFa })),
       },
