@@ -30,6 +30,10 @@ type WorldMarket = {
   suspended: boolean;
   comingSoon: boolean;
   tagsFa?: string | null;
+  yahooSymbol?: string | null;
+  yahooPriceNum?: number | null;
+  diffAbs?: number | null;
+  diffPct?: number | null;
 };
 
 type QuoteStat = { code: string; count: number; titleFa: string };
@@ -41,22 +45,6 @@ type WorldList = {
   sourceUrl: string;
   quotes: QuoteStat[];
   markets: WorldMarket[];
-  xSummaryFa?: string | null;
-  xSourceNoteFa?: string | null;
-  signals?: WorldSignal[];
-};
-
-type WorldSignal = {
-  id: string;
-  side: 'BUY' | 'SELL' | string;
-  marketCode: string;
-  baseCode: string;
-  baseTitleFa: string;
-  titleFa: string;
-  reasonFa: string;
-  strength: number;
-  xSourceHintFa?: string | null;
-  languagesFa?: string | null;
 };
 
 type QuoteFilter = 'ALL' | string;
@@ -177,43 +165,25 @@ function MarketCard({ m, featured }: { m: WorldMarket; featured?: boolean }) {
           {m.tagsFa && featured && (
             <p className="mt-2 truncate text-[11px] text-navy-800/45">{m.tagsFa}</p>
           )}
-        </div>
-      </div>
-    </article>
-  );
-}
-
-function SignalCard({ s }: { s: WorldSignal }) {
-  const buy = s.side === 'BUY';
-  return (
-    <article
-      className={clsx(
-        'relative overflow-hidden rounded-2xl border p-5 shadow-soft',
-        buy ? 'border-emerald-700/25 bg-emerald-50/60' : 'border-red-700/25 bg-red-50/60',
-      )}
-    >
-      <div className="flex flex-wrap items-center gap-2">
-        <span
-          className={clsx(
-            'rounded-full px-2.5 py-0.5 text-xs font-semibold',
-            buy ? 'bg-emerald-700 text-white' : 'bg-red-700 text-white',
+          {m.yahooPriceNum != null && m.diffPct != null && (
+            <div className="mt-3 rounded-xl bg-navy-50/80 px-2.5 py-2">
+              <p className="text-[11px] font-semibold text-navy-800/70">اختلاف با بازار جهانی</p>
+              <p className="mt-0.5 text-[11px] text-navy-800/50">
+                یاهو فایننس: {formatPrice(String(m.yahooPriceNum), m.quoteCode)}
+              </p>
+              <p
+                className={clsx(
+                  'mt-0.5 text-xs font-medium tabular-nums',
+                  (m.diffPct ?? 0) >= 0 ? 'text-amber-800' : 'text-emerald-800',
+                )}
+              >
+                {(m.diffPct ?? 0) >= 0 ? '+' : ''}
+                {(m.diffPct ?? 0).toLocaleString('fa-IR', { maximumFractionDigits: 2 })}٪
+                {m.diffAbs != null ? ` · ${formatPrice(String(m.diffAbs), m.quoteCode)}` : ''}
+              </p>
+            </div>
           )}
-        >
-          {buy ? 'خرید' : 'فروش'}
-        </span>
-        <span className="font-semibold text-navy-900">{s.baseTitleFa}</span>
-        <span className="rounded-full bg-white/80 px-2 py-0.5 font-mono text-[10px] text-navy-800/60" dir="ltr">
-          {s.marketCode}
-        </span>
-        <span className="ms-auto text-xs text-navy-800/55">
-          قدرت {s.strength.toLocaleString('fa-IR', { maximumFractionDigits: 1 })} از ۱۰
-        </span>
-      </div>
-      <h3 className="mt-3 text-sm font-semibold text-navy-900">{s.titleFa}</h3>
-      <p className="mt-2 text-sm leading-7 text-navy-800/80">{s.reasonFa}</p>
-      <div className="mt-3 flex flex-wrap gap-2 text-[11px] text-navy-800/55">
-        {s.languagesFa && <span>زبان‌ها: {s.languagesFa}</span>}
-        {s.xSourceHintFa && <span>X: {s.xSourceHintFa}</span>}
+        </div>
       </div>
     </article>
   );
@@ -257,12 +227,7 @@ export default function WorldEconomyPage() {
     try {
       const res = await api<WorldList>('/world-markets/refresh', { method: 'POST' });
       setData(res);
-      toast.success(
-        `${res.symbolCount.toLocaleString('fa-IR')} نماد جایگزین شد` +
-          (res.signals?.length
-            ? ` و ${res.signals.length.toLocaleString('fa-IR')} سیگنال X ذخیره شد.`
-            : '.'),
-      );
+      toast.success(`${res.symbolCount.toLocaleString('fa-IR')} نماد جایگزین شد.`);
     } catch (e) {
       toast.error((e as Error).message);
     } finally {
@@ -333,12 +298,12 @@ export default function WorldEconomyPage() {
       {refreshing && (
         <WaitingOverlay
           title="در حال به‌روزرسانی اقتصاد دنیا"
-          description="همهٔ نمادها از بیت‌پین گرفته می‌شود و هم‌زمان فضای X به همهٔ زبان‌ها برای ۵ سیگنال قوی خرید/فروش خوانده می‌شود."
+          description="نمادها از بیت‌پین گرفته می‌شود و قیمت رمزارز با یاهو فایننس مقایسه می‌گردد."
           steps={[
             'دریافت فهرست بازارها از بیت‌پین',
             'ذخیره آخرین قیمت‌ها',
-            'مرور فضای X به همهٔ زبان‌ها',
-            'استخراج ۵ سیگنال قوی خرید و فروش',
+            'خواندن قیمت جهانی از یاهو فایننس',
+            'محاسبه اختلاف با بازار جهانی',
           ]}
         />
       )}
@@ -354,8 +319,8 @@ export default function WorldEconomyPage() {
               <p className="text-xs font-medium tracking-wide text-gold-400">بازار جهانی رمزارز</p>
               <h1 className="mt-1 text-3xl font-bold">اقتصاد دنیا</h1>
               <p className="mt-2 max-w-xl text-sm leading-7 text-white/70">
-                هر روز راس ۷ صبح تهران همهٔ نمادها ذخیره می‌شوند. همان لحظه فضای X به همهٔ زبان‌ها برای
-                قوی‌ترین سیگنال‌های خرید و فروش روی همین نمادها مرور می‌شود.
+                هر روز راس ۷ صبح تهران همهٔ نمادهای بیت‌پین ذخیره می‌شوند و مبلغ رمزارز با یاهو فایننس
+                مقایسه می‌گردد.
               </p>
             </div>
             <button className="btn-primary bg-gold-400 text-navy-900 hover:bg-gold-500" onClick={refresh} disabled={refreshing}>
@@ -383,28 +348,6 @@ export default function WorldEconomyPage() {
         </div>
       </section>
 
-      <section className="space-y-3">
-        <div>
-          <h2 className="text-lg font-semibold">۵ سیگنال قوی از شبکهٔ X</h2>
-          {data?.xSummaryFa && (
-            <p className="mt-1 text-sm leading-7 text-navy-800/70">{data.xSummaryFa}</p>
-          )}
-          {data?.xSourceNoteFa && (
-            <p className="mt-1 text-xs text-navy-800/50">{data.xSourceNoteFa}</p>
-          )}
-          <p className="mt-1 text-xs text-navy-800/45">خروجی آموزشی است؛ سیگنال قطعی خرید/فروش نیست.</p>
-        </div>
-        {(data?.signals?.length ?? 0) > 0 ? (
-          <div className="grid gap-4">
-            {(data?.signals ?? []).map((s) => (
-              <SignalCard key={s.id} s={s} />
-            ))}
-          </div>
-        ) : (
-          <p className="rounded-2xl border border-dashed border-navy-900/15 bg-white/70 px-4 py-6 text-sm leading-7 text-navy-800/60">
-            هنوز سیگنالی ذخیره نشده. با «به‌روزرسانی فوری» اخبار کف X به همهٔ زبان‌ها خوانده می‌شود و پنج سیگنال قوی روی نمادهای بیت‌پین اینجا می‌آید.
-          </p>
-        )}
       </section>
 
       {gainers.length > 0 && (

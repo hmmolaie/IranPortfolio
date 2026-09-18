@@ -33,6 +33,11 @@ export class AuthService {
     return this.tokenFor(user.id, user.email, user.role);
   }
 
+  sessionFor(user: { id: string; email: string; role: string; isActive: boolean }) {
+    if (!user.isActive) throw new UnauthorizedException('حساب کاربری غیرفعال است');
+    return this.tokenFor(user.id, user.email, user.role);
+  }
+
   private tokenFor(userId: string, email: string, role: string) {
     const accessToken = this.jwt.sign({ sub: userId, email, role });
     return { accessToken, user: { id: userId, email, role } };

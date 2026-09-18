@@ -7,6 +7,7 @@ import { api, getToken } from '@/lib/api';
 import { TELEGRAM_BOT_USERNAME } from '@/lib/telegram';
 import { TelegramBotLink } from '@/components/TelegramBotLink';
 import { useToast } from '@/components/Toast';
+import { WebAuthnSettings } from '@/components/WebAuthnSettings';
 
 type ProviderId = 'openrouter' | 'openai' | 'custom';
 
@@ -30,6 +31,7 @@ type LlmPrompt = {
 type SettingsTab =
   | 'profile'
   | 'password'
+  | 'webauthn'
   | 'funds'
   | 'prompts'
   | 'llm'
@@ -40,6 +42,7 @@ type SettingsTab =
 const TABS: { id: SettingsTab; label: string; adminOnly?: boolean }[] = [
   { id: 'profile', label: 'پروفایل' },
   { id: 'password', label: 'تغییر رمز عبور' },
+  { id: 'webauthn', label: 'اثر انگشت و چهره' },
   { id: 'funds', label: 'صندوق‌ها', adminOnly: true },
   { id: 'prompts', label: 'پرامپت‌ها', adminOnly: true },
   { id: 'llm', label: 'API مدل زبانی', adminOnly: true },
@@ -397,7 +400,7 @@ export default function SettingsPage() {
   }
 
   useEffect(() => {
-    if (!isAdmin && tab !== 'profile' && tab !== 'password') setTab('profile');
+    if (!isAdmin && tab !== 'profile' && tab !== 'password' && tab !== 'webauthn') setTab('profile');
   }, [isAdmin, tab]);
 
   function applyProvider(next: ProviderId) {
@@ -781,7 +784,7 @@ export default function SettingsPage() {
     <div className="space-y-6">
       <div>
         <h1 className="text-3xl font-bold">تنظیمات</h1>
-        <p className="mt-2 text-navy-800/70">پروفایل، پرامپت‌ها، صندوق‌ها، اتصال مدل زبانی، ربات و دستیار تلگرام</p>
+        <p className="mt-2 text-navy-800/70">پروفایل، ورود زیست‌سنجی، پرامپت‌ها، صندوق‌ها، اتصال مدل زبانی، ربات و دستیار تلگرام</p>
       </div>
 
       <div className="flex flex-col gap-6 lg:flex-row lg:items-start">
@@ -978,6 +981,8 @@ export default function SettingsPage() {
           </button>
         </form>
       )}
+
+      {tab === 'webauthn' && <WebAuthnSettings />}
 
       {tab === 'funds' && isAdmin && (
         <section className="space-y-4">

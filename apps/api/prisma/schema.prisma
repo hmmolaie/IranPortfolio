@@ -74,6 +74,38 @@ model User {
   llmPrompts  LlmPromptTemplate[]
   economicNewsBatches EconomicNewsBatch[]
   marketChats MarketChatMessage[]
+  webauthnCredentials WebAuthnCredential[]
+}
+
+/** کلید عبور دستگاه (اثر انگشت / چهره / PIN گوشی) برای ورود WebAuthn */
+model WebAuthnCredential {
+  id           String    @id @default(cuid())
+  userId       String
+  credentialId String    @unique
+  publicKey    Bytes
+  counter      Int       @default(0)
+  deviceType   String?
+  backedUp     Boolean   @default(false)
+  transports   String?
+  friendlyName String?
+  createdAt    DateTime  @default(now())
+  lastUsedAt   DateTime?
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId])
+}
+
+model WebAuthnChallenge {
+  id        String   @id @default(cuid())
+  userId    String?
+  kind      String
+  challenge String
+  expiresAt DateTime
+  createdAt DateTime @default(now())
+
+  @@index([challenge, kind])
+  @@index([expiresAt])
 }
 
 model UserProfile {
@@ -566,6 +598,13 @@ model WorldMarket {
   otcTradable    Boolean  @default(false)
   comingSoon     Boolean  @default(false)
   tagsFa         String?
+  /// قیمت هم‌ارز Yahoo Finance به واحد همان quote
+  yahooSymbol    String?
+  yahooPriceNum  Float?
+  /// بیت‌پین − یاهو (همان واحد)
+  diffAbs        Float?
+  /// درصد اختلاف نسبت به یاهو: (بیت‌پین − یاهو) / یاهو × ۱۰۰
+  diffPct        Float?
   fetchedAt      DateTime
   createdAt      DateTime @default(now())
   updatedAt      DateTime @updatedAt

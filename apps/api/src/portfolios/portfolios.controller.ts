@@ -4,6 +4,7 @@ import {
   Delete,
   Get,
   Param,
+  Patch,
   Post,
   Query,
   Req,
@@ -19,7 +20,6 @@ import {
   IsOptional,
   IsString,
   Min,
-  Max,
   ValidateNested,
 } from 'class-validator';
 import { Type } from 'class-transformer';
@@ -76,14 +76,35 @@ class AddItemDto {
   @IsEnum(AssetType)
   assetType!: AssetType;
 
+  @IsOptional()
+  @Type(() => Number)
   @IsNumber()
-  @Min(0.1)
-  @Max(100)
-  weightPct!: number;
+  @Min(0)
+  quantity?: number;
+
+  @IsOptional()
+  @Type(() => Number)
+  @IsNumber()
+  @Min(0)
+  amountRial?: number;
 
   @IsOptional()
   @IsString()
   reasonFa?: string;
+}
+
+class EditItemDto {
+  @IsOptional()
+  @Type(() => Number)
+  @IsNumber()
+  @Min(0)
+  quantity?: number;
+
+  @IsOptional()
+  @Type(() => Number)
+  @IsNumber()
+  @Min(0)
+  amountRial?: number;
 }
 
 class CashDto {
@@ -130,6 +151,48 @@ class ApplyStrategyDto {
   @ValidateNested({ each: true })
   @Type(() => StrategyItemDto)
   items!: StrategyItemDto[];
+}
+
+class ApplySuggestionDto {
+  @IsString()
+  titleFa!: string;
+
+  @IsString()
+  bodyFa!: string;
+
+  @IsOptional()
+  @IsString()
+  priority?: string;
+
+  @IsOptional()
+  @IsIn(['ADD', 'INCREASE', 'DECREASE', 'REMOVE', 'SET', 'SKIP'])
+  action?: 'ADD' | 'INCREASE' | 'DECREASE' | 'REMOVE' | 'SET' | 'SKIP';
+
+  @IsOptional()
+  @IsString()
+  symbol?: string;
+
+  @IsOptional()
+  @IsEnum(AssetType)
+  assetType?: AssetType;
+
+  @IsOptional()
+  @Type(() => Number)
+  @IsNumber()
+  @Min(0)
+  quantity?: number;
+
+  @IsOptional()
+  @Type(() => Number)
+  @IsNumber()
+  @Min(0)
+  amountRial?: number;
+
+  @IsOptional()
+  @Type(() => Number)
+  @IsNumber()
+  @Min(0)
+  weightPct?: number;
 }
 
 @Controller('portfolios')
@@ -222,6 +285,15 @@ export class PortfoliosController {
     return this.portfolios.analyzeCurrent(req.user.userId, id);
   }
 
+  @Post(':id/apply-suggestion')
+  applySuggestion(
+    @Req() req: { user: { userId: string } },
+    @Param('id') id: string,
+    @Body() dto: ApplySuggestionDto,
+  ) {
+    return this.portfolios.applySuggestion(req.user.userId, id, dto);
+  }
+
   @Post(':id/adjust')
   adjust(
     @Req() req: { user: { userId: string } },
@@ -238,6 +310,16 @@ export class PortfoliosController {
     @Body() dto: AddItemDto,
   ) {
     return this.portfolios.addItem(req.user.userId, id, dto);
+  }
+
+  @Patch(':id/items/:symbol')
+  editItem(
+    @Req() req: { user: { userId: string } },
+    @Param('id') id: string,
+    @Param('symbol') symbol: string,
+    @Body() dto: EditItemDto,
+  ) {
+    return this.portfolios.editItem(req.user.userId, id, decodeURIComponent(symbol), dto);
   }
 
   @Delete(':id/items/:symbol')

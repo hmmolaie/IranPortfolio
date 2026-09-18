@@ -4,10 +4,9 @@ import { Prisma } from '@prisma/client';
 import { PrismaService } from '../prisma/prisma.service';
 import { tehranDateFa, tehranDateKey } from '../news/tehran-date';
 import { PricesService } from '../prices/prices.service';
-import { LlmService } from '../llm/llm.service';
-import { UsersService } from '../users/users.service';
-
 import { BITPIN_MARKETS_URL } from '../prices/bitpin-spot';
+import { fetchYahooCryptoPrices, yahooSymbolFor } from './yahoo-crypto';
+
 const REFRESH_ID = 'latest';
 const CREATE_CHUNK = 250;
 
@@ -72,32 +71,6 @@ function asBool(v: unknown, fallback = false): boolean {
   return typeof v === 'boolean' ? v : fallback;
 }
 
-type XSignalLlmItem = {
-  side?: string;
-  marketCode?: string;
-  titleFa?: string;
-  reasonFa?: string;
-  strength?: number;
-  xSourceHintFa?: string;
-  languagesFa?: string;
-};
-
-type XSignalLlmOut = {
-  analysisSummaryFa?: string;
-  sourceNoteFa?: string;
-  items?: XSignalLlmItem[];
-};
-
-type MarketRef = {
-  code: string;
-  baseCode: string;
-  baseTitleFa: string;
-  quoteCode: string;
-  price: string;
-  changePct: number | null;
-  volumeNum: number | null;
-};
-
 @Injectable()
 export class WorldMarketsService implements OnModuleInit {
   private readonly logger = new Logger(WorldMarketsService.name);
@@ -106,8 +79,6 @@ export class WorldMarketsService implements OnModuleInit {
   constructor(
     private readonly prisma: PrismaService,
     private readonly prices: PricesService,
-    private readonly llm: LlmService,
-    private readonly users: UsersService,
   ) {}
 
   onModuleInit() {
@@ -138,14 +109,10 @@ export class WorldMarketsService implements OnModuleInit {
   }
 
   async list() {
-    const [refresh, markets, signals] = await Promise.all([
+    const [refresh, markets] = await Promise.all([
       this.prisma.worldMarketRefresh.findUnique({ where: { id: REFRESH_ID } }),
       this.prisma.worldMarket.findMany({
         orderBy: [{ volumeNum: 'desc' }, { titleFa: 'asc' }],
-      }),
-      this.prisma.worldMarketSignal.findMany({
-        orderBy: [{ sortOrder: 'asc' }, { strength: 'desc' }],
-        take: 5,
       }),
     ]);
 
@@ -160,9 +127,6 @@ export class WorldMarketsService implements OnModuleInit {
       dateLabelFa: refresh?.fetchedAt ? tehranDateFa(refresh.fetchedAt) : null,
       symbolCount: refresh?.symbolCount ?? markets.length,
       sourceUrl: refresh?.sourceUrl ?? BITPIN_MARKETS_URL,
-      xSummaryFa: refresh?.xSummaryFa ?? null,
-      xSourceNoteFa: refresh?.xSourceNoteFa ?? null,
-      signals,
       quotes: Object.entries(quoteCounts)
         .map(([code, count]) => ({
           code,
@@ -188,7 +152,7 @@ export class WorldMarketsService implements OnModuleInit {
         const row = this.mapMarket(item, fetchedAt);
         if (row) byCode.set(row.code, row);
       }
-      const rows = [...byCode.values()];
+      const rows = await this.attachYahooDiffs([...byCode.values()]);
       if (!rows.length) {
         throw new BadRequestException('پاسخ بیت‌پین هیچ نمادی نداشت');
       }
@@ -227,189 +191,61 @@ export class WorldMarketsService implements OnModuleInit {
       } catch (e) {
         this.logger.warn(`ذخیره دلار/طلا از بیت‌پین: ${(e as Error).message.slice(0, 180)}`);
       }
-      try {
-        await this.refreshXSignals(rows, fetchedAt);
-      } catch (e) {
-        this.logger.warn(`سیگنال X اقتصاد دنیا: ${(e as Error).message.slice(0, 180)}`);
-      }
       return this.list();
     } finally {
       this.refreshInFlight = false;
     }
   }
 
-  private async refreshXSignals(
-    rows: Prisma.WorldMarketCreateManyInput[],
-    fetchedAt: Date,
-  ) {
-    const ranked: MarketRef[] = rows
-      .filter((r) => r.tradable !== false && r.comingSoon !== true && r.suspended !== true)
-      .map((r) => ({
-        code: r.code,
-        baseCode: r.baseCode,
-        baseTitleFa: r.baseTitleFa,
-        quoteCode: r.quoteCode,
-        price: r.price,
-        changePct: r.changePct ?? null,
-        volumeNum: r.volumeNum ?? null,
-      }))
-      .sort((a, b) => (b.volumeNum ?? 0) - (a.volumeNum ?? 0));
-    const universe = ranked.slice(0, 120);
-    if (!universe.length) return;
-
-    const adminId = await this.users.getAdminUserId();
-    if (!adminId) {
-      this.logger.warn('کاربر admin نیست؛ سیگنال X اقتصاد دنیا رد شد');
-      return;
-    }
-
-    const system = `${await this.llm.getSystemPrompt(adminId, 'world_x_signals')}
-
-ابزار جستجوی زندهٔ X (x_search) در این درخواست فعال است. حتماً در X به چند زبان جستجو کن.`;
-    const userPrompt = JSON.stringify(
-      {
-        todayTehran: tehranDateKey(fetchedAt),
-        todayLabelFa: tehranDateFa(fetchedAt),
-        instruction:
-          'همین الان اخبار کف شبکهٔ X را به همهٔ زبان‌ها مرور کن و دقیقاً ۵ تا از قوی‌ترین سیگنال‌های خرید یا فروش را روی نمادهای همین فهرست بده. هر سیگنال باید روی یک marketCode مشخص باشد و دلیل فارسی داشته باشد.',
-        markets: universe.map((m) => ({
-          marketCode: m.code,
-          baseCode: m.baseCode,
-          nameFa: m.baseTitleFa,
-          quote: m.quoteCode,
-          price: m.price,
-          changePct: m.changePct,
-          volumeNum: m.volumeNum,
-        })),
-      },
-      null,
-      2,
-    );
-
-    let out: XSignalLlmOut;
+  private async attachYahooDiffs(rows: Prisma.WorldMarketCreateManyInput[]) {
+    const symbols = [
+      ...new Set(
+        rows
+          .map((r) => yahooSymbolFor(String(r.baseCode), String(r.quoteCode)))
+          .filter((s): s is string => Boolean(s)),
+      ),
+    ];
+    let yahooPrices = new Map<string, number>();
     try {
-      out = await this.llm.chatJson<XSignalLlmOut>('world_x_signals', system, userPrompt, adminId, {
-        liveSearch: {
-          x: true,
-          web: false,
-          fromDate: tehranDateKey(new Date(fetchedAt.getTime() - 2 * 24 * 60 * 60 * 1000)),
-          toDate: tehranDateKey(fetchedAt),
-        },
-      });
+      yahooPrices = await fetchYahooCryptoPrices(symbols);
     } catch (e) {
-      this.logger.warn(`مدل سیگنال X: ${(e as Error).message.slice(0, 180)}`);
-      return;
+      this.logger.warn(`یاهو فایننس: ${(e as Error).message.slice(0, 180)}`);
     }
 
-    const mapped = (Array.isArray(out.items) ? out.items : [])
-      .map((item) => this.mapXSignal(item, universe, fetchedAt))
-      .filter((row): row is NonNullable<typeof row> => Boolean(row));
+    const usdtIrt =
+      rows.find(
+        (r) =>
+          String(r.quoteCode) === 'IRT' &&
+          (String(r.baseCode) === 'USDT' || String(r.code) === 'USDT_IRT'),
+      )?.priceNum ?? null;
 
-    const unique: typeof mapped = [];
-    const seen = new Set<string>();
-    for (const row of mapped.sort((a, b) => b.strength - a.strength)) {
-      const key = `${row.side}:${row.marketCode}`;
-      if (seen.has(key)) continue;
-      seen.add(key);
-      unique.push(row);
-      if (unique.length >= 5) break;
-    }
-    if (unique.length < 5) {
-      for (const row of mapped) {
-        if (unique.some((u) => u.marketCode === row.marketCode && u.side === row.side)) continue;
-        unique.push(row);
-        if (unique.length >= 5) break;
+    const matched = rows.filter((r) => {
+      const y = yahooSymbolFor(String(r.baseCode), String(r.quoteCode));
+      return Boolean(y && yahooPrices.has(y));
+    }).length;
+    this.logger.log(`مقایسه یاهو: ${matched} از ${rows.length} نماد قیمت جهانی داشت`);
+
+    return rows.map((r) => {
+      const yahooSymbol = yahooSymbolFor(String(r.baseCode), String(r.quoteCode));
+      const rawYahoo = yahooSymbol ? yahooPrices.get(yahooSymbol) ?? null : null;
+      let yahooPriceNum: number | null = rawYahoo ?? null;
+      if (yahooPriceNum != null && String(r.quoteCode) === 'IRT' && usdtIrt != null && usdtIrt > 0) {
+        yahooPriceNum = yahooPriceNum * usdtIrt;
       }
-    }
-    if (!unique.length) {
-      this.logger.warn('مدل سیگنال X آیتم قابل‌نقشه به نماد بیت‌پین برنگرداند');
-      return;
-    }
-
-    await this.prisma.$transaction([
-      this.prisma.worldMarketSignal.deleteMany(),
-      this.prisma.worldMarketSignal.createMany({
-        data: unique.slice(0, 5).map((row, i) => ({ ...row, sortOrder: i })),
-      }),
-      this.prisma.worldMarketRefresh.update({
-        where: { id: REFRESH_ID },
-        data: {
-          xSummaryFa: (out.analysisSummaryFa ?? '').trim() || null,
-          xSourceNoteFa: (out.sourceNoteFa ?? '').trim() || null,
-        },
-      }),
-    ]);
-    this.logger.log(`سیگنال X اقتصاد دنیا: ${Math.min(unique.length, 5)} مورد ذخیره شد`);
-  }
-
-  private mapXSignal(
-    item: XSignalLlmItem,
-    universe: MarketRef[],
-    fetchedAt: Date,
-  ): {
-    side: string;
-    marketCode: string;
-    baseCode: string;
-    baseTitleFa: string;
-    titleFa: string;
-    reasonFa: string;
-    strength: number;
-    xSourceHintFa: string | null;
-    languagesFa: string | null;
-    fetchedAt: Date;
-    sortOrder: number;
-  } | null {
-    const reasonFa = (item.reasonFa ?? '').trim();
-    const titleFa = (item.titleFa ?? '').trim();
-    if (!reasonFa && !titleFa) return null;
-    const market = this.matchMarket(item.marketCode, titleFa, universe);
-    if (!market) return null;
-    const rawSide = (item.side ?? '').trim().toUpperCase();
-    const side =
-      rawSide === 'SELL' || /فروش|short|bear/i.test(item.side ?? '')
-        ? 'SELL'
-        : rawSide === 'BUY' || /خرید|long|bull/i.test(item.side ?? '')
-          ? 'BUY'
-          : null;
-    if (!side) return null;
-    const strengthNum = Number(item.strength);
-    const strength = Number.isFinite(strengthNum)
-      ? Math.min(10, Math.max(1, Math.round(strengthNum * 10) / 10))
-      : 7;
-    return {
-      side,
-      marketCode: market.code,
-      baseCode: market.baseCode,
-      baseTitleFa: market.baseTitleFa,
-      titleFa: titleFa || (side === 'BUY' ? `خرید ${market.baseTitleFa}` : `فروش ${market.baseTitleFa}`),
-      reasonFa: reasonFa || titleFa,
-      strength,
-      xSourceHintFa: (item.xSourceHintFa ?? '').trim() || null,
-      languagesFa: (item.languagesFa ?? '').trim() || null,
-      fetchedAt,
-      sortOrder: 0,
-    };
-  }
-
-  private matchMarket(rawCode: string | undefined, titleFa: string, universe: MarketRef[]): MarketRef | null {
-    const code = (rawCode ?? '').trim().toUpperCase().replace(/[-/]/g, '_');
-    if (code) {
-      const exact = universe.find((m) => m.code.toUpperCase() === code);
-      if (exact) return exact;
-      const base = code.split('_')[0];
-      const byBase = universe.filter((m) => m.baseCode.toUpperCase() === base);
-      const usdt = byBase.find((m) => m.quoteCode === 'USDT');
-      if (usdt) return usdt;
-      if (byBase[0]) return byBase[0];
-    }
-    const name = titleFa.trim();
-    if (name.length >= 2) {
-      const hit = universe.find(
-        (m) => m.baseTitleFa.includes(name) || name.includes(m.baseTitleFa) || name.includes(m.baseCode),
-      );
-      if (hit) return hit;
-    }
-    return null;
+      const bitpin = r.priceNum ?? null;
+      if (yahooPriceNum == null || yahooPriceNum <= 0 || bitpin == null || !(bitpin > 0)) {
+        return {
+          ...r,
+          yahooSymbol,
+          yahooPriceNum: null,
+          diffAbs: null,
+          diffPct: null,
+        };
+      }
+      const diffAbs = bitpin - yahooPriceNum;
+      const diffPct = (diffAbs / yahooPriceNum) * 100;
+      return { ...r, yahooSymbol, yahooPriceNum, diffAbs, diffPct };
+    });
   }
 
   private async fetchAllPages(): Promise<BitpinMarket[]> {

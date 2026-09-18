@@ -3,6 +3,7 @@ import {
   AssetType,
   PortfolioEventType,
   PortfolioStrategy,
+  Prisma,
   SnapshotKind,
 } from '@prisma/client';
 import { PrismaService } from '../prisma/prisma.service';
@@ -10,6 +11,7 @@ import { LlmService } from '../llm/llm.service';
 import { NewsService } from '../news/news.service';
 import { UsersService } from '../users/users.service';
 import { daysAgoDateKey } from '../news/tehran-date';
+import { foldFa, tokenizeMarketQuestion } from '../market/tehran-chat';
 
 @Injectable()
 export class PortfoliosService {
@@ -102,8 +104,7 @@ export class PortfoliosService {
             costBasisRial,
             marketValueRial,
             pnlRial,
-            /** ارزش روز برای وزن٪ و جمع تخصیص */
-            amountRial: marketValueRial,
+            amountRial: Number(item.amountRial) || 0,
           };
         }),
       })),
@@ -179,7 +180,7 @@ export class PortfoliosService {
     const lessons = await this.prisma.lesson.findMany({
       where: { userId: platformUserId },
       orderBy: { createdAt: 'desc' },
-      take: 20,
+      take: 30,
     });
     const economicNews = await this.news.getForPortfolioContext(userId, 40, 30);
     const fxHistory = await this.prisma.spotPriceDaily.findMany({
@@ -417,18 +418,29 @@ weightPct فقط درصد از همین سرمایه است (جمع هر است�
       take: 30,
     });
 
-    const context = `سبد: ${portfolio.name}
-استراتژی: ${portfolio.strategy}
-سرمایه: ${portfolio.capitalRial}
-آخرین پیشنهاد: ${latest?.strategySummaryFa ?? 'ندارد'}
-نمادها: ${latest?.items.map((i) => `${i.symbol}(${i.weightPct}%)`).join('، ') ?? ''}
-علاقه‌مندی کاربر: ${profile?.investmentPreferencesFa ?? ''}
-محدودیت‌ها: ${profile?.constraintsFa ?? ''}
-یادداشت سبد: ${portfolio.preferencesNoteFa ?? ''}`;
-
     const historyText = history
       .map((m) => `${m.role === 'user' ? 'کاربر' : 'دستیار'}: ${m.contentFa}`)
       .join('\n');
+
+    const recentUserText = history
+      .filter((m) => m.role === 'user')
+      .slice(-3)
+      .map((m) => m.contentFa)
+      .join('\n');
+
+    const holdingSymbols = (latest?.items ?? []).map((i) => i.symbol);
+    const marketStatus = await this.buildPortfolioChatMarketStatus(recentUserText, holdingSymbols);
+
+    const holdings = (latest?.items ?? []).map((i) => ({
+      symbol: i.symbol,
+      assetType: i.assetType,
+      quantity: i.quantity,
+      amountRial: i.amountRial,
+      lastPrice: (i as { lastPrice?: number | null }).lastPrice ?? i.unitPrice ?? null,
+      avgBuyPrice: i.avgBuyPrice ?? i.unitPrice ?? null,
+      pnlRial: (i as { pnlRial?: number | null }).pnlRial ?? null,
+      inPortfolio: true,
+    }));
 
     let reply: string;
     try {
@@ -436,9 +448,32 @@ weightPct فقط درصد از همین سرمایه است (جمع هر است�
       reply = await this.llm.chatText(
         'portfolio_chat',
         chatSystem,
-        `${context}
+        `دادهٔ سبد و بازار از پایگاه سبدیار (تنها منبع عدد):\n${JSON.stringify(
+          {
+            portfolio: {
+              name: portfolio.name,
+              strategy: portfolio.strategy,
+              capitalRial: portfolio.capitalRial,
+              cashRial: portfolio.cashRial,
+              latestSummaryFa: latest?.strategySummaryFa ?? null,
+              preferencesFa: profile?.investmentPreferencesFa ?? '',
+              constraintsFa: profile?.constraintsFa ?? '',
+              portfolioNoteFa: portfolio.preferencesNoteFa ?? '',
+            },
+            holdings,
+            marketStatus,
+            noteFa:
+              'اگر نماد در holdings نیست، در سبد فعلی نیست. وضعیت سهام/دلار/طلا را از marketStatus بگو.',
+          },
+          null,
+          2,
+        )}
 
-یادآوری محدوده: فقط به سؤالات مالی مربوط به همین سبد پاسخ بده. اگر سؤال نامرتبط بود، رد کن و به محدودهٔ سبد برگردان.
+قوانین این نوبت (بر محدودیت «فقط نمادهای داخل سبد» اولویت دارد):
+- به سؤال دربارهٔ سهام، صندوق بورسی، شاخص، دلار آزاد و طلا پاسخ بده حتی اگر در سبد نباشد.
+- اگر در سبد نبود، همین را بگو و فقط وضعیت بازار را از داده گزارش کن.
+- قیمت را از دانش عمومی نساز؛ اگر در JSON نبود بگو در دیتابیس نیست.
+- سؤال غیرمالی را کوتاه رد کن.
 
 گفتگو:
 ${historyText}`,
@@ -490,6 +525,153 @@ ${historyText}`,
     });
 
     return assistantMsg;
+  }
+
+  /** قیمت دلار/طلا و نمادهای ذکرشده در گفتگو — حتی اگر در سبد نباشند */
+  private async buildPortfolioChatMarketStatus(question: string, holdingSymbols: string[]) {
+    const foldedQ = foldFa(question);
+    const tokens = tokenizeMarketQuestion(question);
+    const holdingFolded = new Set(holdingSymbols.map((s) => foldFa(s)));
+
+    const wantGold = /طلا|سکه|انس|مثقال|عیار|PHYSICAL_GOLD/.test(foldedQ);
+    const wantUsd = /دلار|ارز|PHYSICAL_USD|\busd\b/.test(foldedQ);
+    const wantIndex = /شاخص|بورس/.test(foldedQ);
+
+    const [spot, macro, fxHistory] = await Promise.all([
+      this.prisma.spotPriceDaily.findFirst({ orderBy: { dateKey: 'desc' } }),
+      this.prisma.macroSnapshot.findFirst({ orderBy: { asOfDate: 'desc' } }),
+      this.prisma.spotPriceDaily.findMany({
+        where: { dateKey: { gte: daysAgoDateKey(14) } },
+        orderBy: { dateKey: 'asc' },
+        select: { dateKey: true, usdIrr: true, goldGramRial: true },
+        take: 16,
+      }),
+    ]);
+
+    const usdIrr =
+      (spot?.usdIrr && spot.usdIrr > 0 ? spot.usdIrr : null) ??
+      (macro?.usdIrr && macro.usdIrr > 0 ? macro.usdIrr : null);
+    const goldGramRial =
+      spot?.goldGramRial && spot.goldGramRial > 0
+        ? spot.goldGramRial
+        : usdIrr != null
+          ? usdIrr * 75
+          : null;
+
+    const tokenOr: Prisma.InstrumentWhereInput[] = tokens.flatMap((t) => {
+      const clauses: Prisma.InstrumentWhereInput[] = [{ symbol: t }];
+      if (t !== t.toUpperCase()) clauses.push({ symbol: t.toUpperCase() });
+      if (t.length >= 3) clauses.push({ nameFa: { contains: t } });
+      return clauses;
+    });
+
+    const rows = tokenOr.length
+      ? await this.prisma.instrument.findMany({
+          where: {
+            isActive: true,
+            assetType: {
+              in: [AssetType.STOCK, AssetType.FUND, AssetType.GOLD_ETF, AssetType.INDEX],
+            },
+            OR: tokenOr,
+          },
+          take: 24,
+          include: { priceBars: { orderBy: { tradeDate: 'desc' }, take: 6 } },
+        })
+      : [];
+
+    const goldEtfs =
+      wantGold
+        ? await this.prisma.instrument.findMany({
+            where: { isActive: true, assetType: AssetType.GOLD_ETF },
+            take: 4,
+            include: { priceBars: { orderBy: { tradeDate: 'desc' }, take: 6 } },
+          })
+        : [];
+
+    const indexRows = wantIndex
+      ? await this.prisma.instrument.findMany({
+          where: { isActive: true, symbol: { in: ['TEDPIX', 'TESWEQ'] } },
+          include: { priceBars: { orderBy: { tradeDate: 'desc' }, take: 6 } },
+        })
+      : [];
+
+    const merged = [...rows, ...goldEtfs, ...indexRows];
+    const seen = new Set<string>();
+    const scored = merged
+      .map((r) => {
+        const sym = foldFa(r.symbol);
+        const name = foldFa(r.nameFa);
+        let score = 0;
+        if (tokens.includes(sym) || (sym.length >= 3 && foldedQ.includes(sym))) score += 8;
+        if (tokens.some((t) => t.length >= 3 && name.includes(t))) score += 3;
+        if (wantGold && r.assetType === AssetType.GOLD_ETF) score += 4;
+        if (wantIndex && (r.symbol === 'TEDPIX' || r.symbol === 'TESWEQ')) score += 6;
+        if (r.assetType === AssetType.STOCK) score += 1;
+        return { ...r, score };
+      })
+      .filter((r) => r.score > 0)
+      .sort((a, b) => b.score - a.score);
+
+    const instruments: Array<{
+      symbol: string;
+      nameFa: string;
+      assetType: AssetType;
+      inPortfolio: boolean;
+      last: {
+        tradeDate: Date;
+        lastPrice: number | null;
+        closePrice: number | null;
+        eps: number | null;
+        pe: number | null;
+        volume: number | null;
+      } | null;
+      recentBars: Array<{ tradeDate: Date; lastPrice: number | null; closePrice: number | null }>;
+    }> = [];
+
+    for (const r of scored) {
+      const key = foldFa(r.symbol);
+      if (seen.has(r.id) || seen.has(key)) continue;
+      seen.add(r.id);
+      seen.add(key);
+      const last = r.priceBars[0] ?? null;
+      instruments.push({
+        symbol: r.symbol,
+        nameFa: r.nameFa,
+        assetType: r.assetType,
+        inPortfolio: holdingFolded.has(key),
+        last: last
+          ? {
+              tradeDate: last.tradeDate,
+              lastPrice: last.lastPrice,
+              closePrice: last.closePrice,
+              eps: last.eps,
+              pe: last.pe,
+              volume: last.volume,
+            }
+          : null,
+        recentBars: [...r.priceBars]
+          .reverse()
+          .map((b) => ({
+            tradeDate: b.tradeDate,
+            lastPrice: b.lastPrice,
+            closePrice: b.closePrice,
+          })),
+      });
+      if (instruments.length >= 8) break;
+    }
+
+    return {
+      askedGold: wantGold,
+      askedUsd: wantUsd,
+      usd: usdIrr != null ? { usdIrr, dateKey: spot?.dateKey ?? null } : null,
+      gold: goldGramRial != null ? { goldGramRial, dateKey: spot?.dateKey ?? null } : null,
+      fxRecent: fxHistory,
+      mentionedInstruments: instruments,
+      lookupNoteFa:
+        tokens.length && instruments.length === 0
+          ? 'نماد ذکرشده در دیتابیس قیمت یافت نشد.'
+          : null,
+    };
   }
 
   async rebalance(userId: string, portfolioId: string, noteFa?: string) {
@@ -649,13 +831,16 @@ ${historyText}`,
     data: {
       symbol: string;
       assetType: AssetType;
-      weightPct: number;
+      quantity?: number;
+      amountRial?: number;
       reasonFa?: string;
     },
   ) {
-    const portfolio = await this.get(userId, portfolioId);
-    const latest = portfolio.snapshots[0];
-    if (!latest) throw new NotFoundException('ابتدا یک پیشنهاد یا اسنپ‌شات بسازید');
+    const { latest } = await this.requireOwnedLatestSnapshot(
+      userId,
+      portfolioId,
+      'ابتدا یک پیشنهاد یا اسنپ‌شات بسازید',
+    );
 
     const symbol = data.symbol.trim();
     if (!symbol) throw new NotFoundException('نماد نامعتبر است');
@@ -663,41 +848,90 @@ ${historyText}`,
       throw new BadRequestException('این نماد از قبل در سبد هست');
     }
 
-    const remaining = Math.max(0, 100 - data.weightPct);
-    const currentTotal = latest.items.reduce((s, i) => s + i.weightPct, 0) || 100;
-    const scaled = latest.items.map((i) => ({
-      symbol: i.symbol,
-      weightPct: currentTotal ? (i.weightPct / currentTotal) * remaining : 0,
-      quantity: undefined as number | undefined,
-      assetType: i.assetType,
-      reasonFa: i.reasonFa,
-    }));
+    const priced = await this.latestPriceForSymbol(symbol, data.assetType);
+    const { quantity, amountRial } = this.resolveQtyAndAmount(
+      priced.price,
+      data.quantity,
+      data.amountRial,
+    );
 
-    scaled.push({
-      symbol,
-      weightPct: data.weightPct,
-      quantity: undefined,
-      assetType: data.assetType,
-      reasonFa: data.reasonFa ?? 'افزودن دستی توسط کاربر',
-    });
-
-    const snapshot = await this.adjustWeights(userId, portfolioId, scaled, { skipEvent: true });
-    await this.prisma.portfolioEvent.create({
-      data: {
-        portfolioId,
-        type: PortfolioEventType.BUY,
-        payload: { symbol, weightPct: data.weightPct, assetType: data.assetType },
-        noteFa: `افزودن نماد ${symbol}`,
+    const rows = [
+      ...latest.items.map((i) => this.holdingFromItem(i)),
+      {
+        symbol,
+        assetType: data.assetType,
+        quantity,
+        amountRial,
+        unitPrice: priced.price,
+        avgBuyPrice: priced.price,
+        reasonFa: data.reasonFa ?? 'افزودن دستی توسط کاربر',
+        instrumentId: priced.instrumentId,
       },
+    ];
+
+    return this.writeHoldingsSnapshot(portfolioId, latest, rows, {
+      type: PortfolioEventType.BUY,
+      payload: {
+        symbol,
+        quantity,
+        amountRial,
+        unitPrice: priced.price,
+        assetType: data.assetType,
+      },
+      noteFa: `افزودن نماد ${symbol}`,
     });
-    return snapshot;
+  }
+
+  async editItem(
+    userId: string,
+    portfolioId: string,
+    symbol: string,
+    data: { quantity?: number; amountRial?: number },
+  ) {
+    const { latest } = await this.requireOwnedLatestSnapshot(userId, portfolioId);
+    const key = symbol.trim();
+    const current = latest.items.find((i) => i.symbol === key);
+    if (!current) throw new NotFoundException('نماد در سبد یافت نشد');
+
+    const priced = await this.latestPriceForSymbol(current.symbol, current.assetType);
+    const { quantity, amountRial } = this.resolveQtyAndAmount(
+      priced.price,
+      data.quantity,
+      data.amountRial,
+    );
+
+    const prevQty = current.quantity ?? 0;
+    const prevAvg = current.avgBuyPrice ?? current.unitPrice ?? priced.price;
+    const avgBuyPrice = this.nextAvgBuyPrice(prevQty, prevAvg, quantity, priced.price);
+
+    const rows = latest.items.map((i) => {
+      if (i.symbol !== key) return this.holdingFromItem(i);
+      return {
+        symbol: current.symbol,
+        assetType: current.assetType,
+        quantity,
+        amountRial,
+        unitPrice: priced.price,
+        avgBuyPrice,
+        reasonFa: current.reasonFa,
+        instrumentId: priced.instrumentId ?? current.instrumentId ?? undefined,
+      };
+    });
+
+    return this.writeHoldingsSnapshot(portfolioId, latest, rows, {
+      type: PortfolioEventType.WEIGHT_EDIT,
+      payload: {
+        symbol: key,
+        quantity,
+        amountRial,
+        unitPrice: priced.price,
+      },
+      noteFa: `ویرایش تعداد/مبلغ ${key}`,
+    });
   }
 
   async removeItem(userId: string, portfolioId: string, symbol: string) {
-    const portfolio = await this.get(userId, portfolioId);
-    const latest = portfolio.snapshots[0];
-    if (!latest) throw new NotFoundException('نسخه‌ای برای ویرایش نیست');
-
+    const { latest } = await this.requireOwnedLatestSnapshot(userId, portfolioId);
     const remaining = latest.items.filter((i) => i.symbol !== symbol);
     if (remaining.length === latest.items.length) {
       throw new NotFoundException('نماد در سبد یافت نشد');
@@ -706,23 +940,184 @@ ${historyText}`,
       throw new BadRequestException('حداقل یک نماد باید در سبد بماند');
     }
 
-    const total = remaining.reduce((s, i) => s + i.weightPct, 0) || 100;
-    const items = remaining.map((i) => ({
-      symbol: i.symbol,
-      weightPct: (i.weightPct / total) * 100,
-      assetType: i.assetType,
-      reasonFa: i.reasonFa,
+    const rows = remaining.map((i) => this.holdingFromItem(i));
+    return this.writeHoldingsSnapshot(portfolioId, latest, rows, {
+      type: PortfolioEventType.SELL,
+      payload: { symbol },
+      noteFa: `حذف نماد ${symbol}`,
+    });
+  }
+
+  private holdingFromItem(item: {
+    symbol: string;
+    assetType: AssetType;
+    quantity: number;
+    amountRial: number;
+    unitPrice?: number | null;
+    avgBuyPrice?: number | null;
+    reasonFa: string;
+    instrumentId?: string | null;
+  }) {
+    const unitPrice = item.unitPrice ?? 0;
+    return {
+      symbol: item.symbol,
+      assetType: item.assetType,
+      quantity: item.quantity,
+      amountRial: item.amountRial,
+      unitPrice,
+      avgBuyPrice: item.avgBuyPrice ?? unitPrice,
+      reasonFa: item.reasonFa,
+      instrumentId: item.instrumentId ?? undefined,
+    };
+  }
+
+  private nextAvgBuyPrice(
+    prevQty: number,
+    prevAvg: number,
+    newQty: number,
+    lastPrice: number,
+  ) {
+    if (prevQty > 0 && newQty > prevQty + 1e-9) {
+      const added = newQty - prevQty;
+      return (prevQty * prevAvg + added * lastPrice) / newQty;
+    }
+    if (prevQty > 0) return prevAvg;
+    return lastPrice;
+  }
+
+  private resolveQtyAndAmount(
+    price: number,
+    quantity?: number,
+    amountRial?: number,
+  ): { quantity: number; amountRial: number } {
+    if (!(price > 0) || !Number.isFinite(price)) {
+      throw new BadRequestException('آخرین قیمت این نماد نامعتبر است');
+    }
+    const qtyOk = quantity != null && Number.isFinite(quantity) && quantity > 0;
+    const amtOk = amountRial != null && Number.isFinite(amountRial) && amountRial > 0;
+    if (qtyOk && !amtOk) {
+      return { quantity: quantity!, amountRial: quantity! * price };
+    }
+    if (amtOk && !qtyOk) {
+      return { quantity: amountRial! / price, amountRial: amountRial! };
+    }
+    if (qtyOk && amtOk) {
+      return { quantity: quantity!, amountRial: quantity! * price };
+    }
+    throw new BadRequestException('تعداد سهم یا مبلغ کل خرید را وارد کنید');
+  }
+
+  private async latestPriceForSymbol(
+    symbol: string,
+    assetType?: AssetType,
+  ): Promise<{ price: number; instrumentId?: string }> {
+    const key = symbol.trim();
+    const upper = key.toUpperCase();
+
+    if (assetType === AssetType.CASH || assetType === AssetType.DEPOSIT) {
+      return { price: 1 };
+    }
+
+    const universe = await this.buildUniverse();
+    const fromUniverse = universe.find(
+      (u) => u.symbol.trim() === key || u.symbol.trim().toUpperCase() === upper,
+    );
+    if (fromUniverse?.lastPrice != null && fromUniverse.lastPrice > 0) {
+      return {
+        price: fromUniverse.lastPrice,
+        instrumentId: fromUniverse.id.startsWith('synthetic-') ? undefined : fromUniverse.id,
+      };
+    }
+
+    const inst = await this.prisma.instrument.findFirst({
+      where: {
+        isActive: true,
+        symbol: { equals: key, mode: 'insensitive' },
+      },
+      include: { priceBars: { orderBy: { tradeDate: 'desc' }, take: 1 } },
+    });
+    const bar = inst?.priceBars[0];
+    const price = bar?.lastPrice ?? bar?.closePrice ?? null;
+    if (inst && price != null && price > 0) {
+      return { price, instrumentId: inst.id };
+    }
+
+    throw new BadRequestException(
+      `آخرین قیمت «${key}» در دیتابیس یافت نشد. ابتدا باید قیمت نماد در سیستم باشد.`,
+    );
+  }
+
+  private async requireOwnedLatestSnapshot(
+    userId: string,
+    portfolioId: string,
+    emptyMessage = 'نسخه‌ای برای ویرایش نیست',
+  ) {
+    const portfolio = await this.prisma.portfolio.findUnique({
+      where: { id: portfolioId },
+      include: {
+        snapshots: {
+          orderBy: { createdAt: 'desc' as const },
+          take: 1,
+          include: { items: true },
+        },
+      },
+    });
+    if (!portfolio) throw new NotFoundException('سبد یافت نشد');
+    if (portfolio.userId !== userId) throw new ForbiddenException();
+    const latest = portfolio.snapshots[0];
+    if (!latest) throw new NotFoundException(emptyMessage);
+    return { portfolio, latest };
+  }
+
+  private async writeHoldingsSnapshot(
+    portfolioId: string,
+    latest: { id: string; strategySummaryFa: string | null },
+    rows: Array<{
+      symbol: string;
+      assetType: AssetType;
+      quantity: number;
+      amountRial: number;
+      unitPrice: number;
+      avgBuyPrice: number;
+      reasonFa: string;
+      instrumentId?: string;
+    }>,
+    event: { type: PortfolioEventType; payload: object; noteFa: string },
+  ) {
+    const total = rows.reduce((s, r) => s + r.amountRial, 0);
+    const mapped = rows.map((r) => ({
+      symbol: r.symbol.trim(),
+      assetType: r.assetType,
+      weightPct: total > 0 ? (r.amountRial / total) * 100 : 0,
+      quantity: r.quantity,
+      amountRial: r.amountRial,
+      unitPrice: r.unitPrice,
+      avgBuyPrice: r.avgBuyPrice,
+      reasonFa: r.reasonFa,
+      ...(r.instrumentId ? { instrumentId: r.instrumentId } : {}),
     }));
 
-    const snapshot = await this.adjustWeights(userId, portfolioId, items, { skipEvent: true });
+    const snapshot = await this.prisma.portfolioSnapshot.create({
+      data: {
+        portfolioId,
+        kind: SnapshotKind.USER_ADJUSTED,
+        strategySummaryFa: latest.strategySummaryFa,
+        totalValueRial: total,
+        items: { create: mapped },
+        meta: { basedOn: latest.id },
+      },
+      include: { items: true },
+    });
+
     await this.prisma.portfolioEvent.create({
       data: {
         portfolioId,
-        type: PortfolioEventType.SELL,
-        payload: { symbol },
-        noteFa: `حذف نماد ${symbol}`,
+        type: event.type,
+        payload: event.payload,
+        noteFa: event.noteFa,
       },
     });
+
     return snapshot;
   }
 
@@ -743,10 +1138,14 @@ ${historyText}`,
     const enriched = await this.get(userId, main.id);
     const latest = enriched.snapshots[0];
     const rawItems = latest?.items ?? [];
-    const totalValue = rawItems.reduce((s, i) => s + (Number(i.amountRial) || 0), 0);
+    const totalValue = rawItems.reduce(
+      (s, i) => s + (Number((i as { marketValueRial?: number }).marketValueRial ?? i.amountRial) || 0),
+      0,
+    );
     const items = rawItems
       .map((i) => {
-        const amountRial = Number(i.amountRial) || 0;
+        const amountRial =
+          Number((i as { marketValueRial?: number }).marketValueRial ?? i.amountRial) || 0;
         const weightPct =
           totalValue > 0 ? (amountRial / totalValue) * 100 : Number(i.weightPct) || 0;
         return {
@@ -811,7 +1210,7 @@ ${historyText}`,
     const lessons = await this.prisma.lesson.findMany({
       where: { userId: platformUserId },
       orderBy: { createdAt: 'desc' },
-      take: 15,
+      take: 30,
     });
     const profile = await this.prisma.userProfile.findUnique({ where: { userId } });
 
@@ -870,7 +1269,17 @@ ${historyText}`,
       summaryFa: string;
       strengthsFa: string[];
       weaknessesFa: string[];
-      suggestions: Array<{ titleFa: string; bodyFa: string; priority?: string }>;
+      suggestions: Array<{
+        titleFa: string;
+        bodyFa: string;
+        priority?: string;
+        action?: string;
+        symbol?: string;
+        assetType?: string;
+        quantity?: number;
+        amountRial?: number;
+        weightPct?: number;
+      }>;
     };
 
     let analysis: AnalysisOut;
@@ -892,6 +1301,7 @@ ${historyText}`,
             titleFa: 'بررسی مجدد وزن‌ها',
             bodyFa: 'وزن سهام، طلا و نقد را با شرایط تورمی و اخبار روز تطبیق دهید.',
             priority: 'medium',
+            action: 'SKIP',
           },
         ],
       };
@@ -903,9 +1313,302 @@ ${historyText}`,
       summaryFa: analysis.summaryFa ?? '',
       strengthsFa: analysis.strengthsFa ?? [],
       weaknessesFa: analysis.weaknessesFa ?? [],
-      suggestions: analysis.suggestions ?? [],
+      suggestions: (analysis.suggestions ?? []).map((s) => this.normalizeAnalysisSuggestion(s)),
       analyzedAt: new Date().toISOString(),
     };
+  }
+
+  async applySuggestion(
+    userId: string,
+    portfolioId: string,
+    data: {
+      titleFa: string;
+      bodyFa: string;
+      priority?: string;
+      action?: 'ADD' | 'INCREASE' | 'DECREASE' | 'REMOVE' | 'SET' | 'SKIP';
+      symbol?: string;
+      assetType?: AssetType;
+      quantity?: number;
+      amountRial?: number;
+      weightPct?: number;
+    },
+  ) {
+    const concrete = this.isConcreteSuggestionAction(data);
+    const resolved = concrete
+      ? {
+          action: data.action as 'ADD' | 'INCREASE' | 'DECREASE' | 'REMOVE' | 'SET',
+          symbol: data.symbol!.trim(),
+          assetType: data.assetType,
+          quantity: data.quantity,
+          amountRial: data.amountRial,
+          weightPct: data.weightPct,
+          reasonFa: data.titleFa,
+        }
+      : await this.resolveSuggestionAction(userId, portfolioId, data);
+
+    if (resolved.action === 'SKIP' || !resolved.symbol.trim()) {
+      throw new BadRequestException(
+        'این پیشنهاد به‌صورت خودکار قابل اعمال نیست؛ فقط راهنمایی است.',
+      );
+    }
+
+    return this.executeSuggestionAction(userId, portfolioId, {
+      ...resolved,
+      reasonFa: resolved.reasonFa || data.titleFa,
+    });
+  }
+
+  private normalizeAnalysisSuggestion(s: {
+    titleFa?: string;
+    bodyFa?: string;
+    priority?: string;
+    action?: string;
+    symbol?: string;
+    assetType?: string;
+    quantity?: number;
+    amountRial?: number;
+    weightPct?: number;
+  }) {
+    const actionRaw = String(s.action ?? '').toUpperCase();
+    const action = (
+      ['ADD', 'INCREASE', 'DECREASE', 'REMOVE', 'SET', 'SKIP'] as const
+    ).includes(actionRaw as 'ADD')
+      ? (actionRaw as 'ADD' | 'INCREASE' | 'DECREASE' | 'REMOVE' | 'SET' | 'SKIP')
+      : undefined;
+    const assetType = Object.values(AssetType).includes(s.assetType as AssetType)
+      ? (s.assetType as AssetType)
+      : undefined;
+    const num = (v: number | undefined) =>
+      v != null && Number.isFinite(Number(v)) && Number(v) > 0 ? Number(v) : undefined;
+    return {
+      titleFa: s.titleFa ?? '',
+      bodyFa: s.bodyFa ?? '',
+      priority: s.priority,
+      action,
+      symbol: s.symbol?.trim() || undefined,
+      assetType,
+      quantity: num(s.quantity),
+      amountRial: num(s.amountRial),
+      weightPct: num(s.weightPct),
+    };
+  }
+
+  private isConcreteSuggestionAction(data: {
+    action?: string;
+    symbol?: string;
+    quantity?: number;
+    amountRial?: number;
+    weightPct?: number;
+  }) {
+    const action = data.action;
+    if (!action || action === 'SKIP' || !data.symbol?.trim()) return false;
+    if (action === 'REMOVE') return true;
+    return (
+      (data.quantity != null && data.quantity > 0) ||
+      (data.amountRial != null && data.amountRial > 0) ||
+      (data.weightPct != null && data.weightPct > 0)
+    );
+  }
+
+  private async resolveSuggestionAction(
+    userId: string,
+    portfolioId: string,
+    data: {
+      titleFa: string;
+      bodyFa: string;
+      action?: string;
+      symbol?: string;
+      assetType?: AssetType;
+      quantity?: number;
+      amountRial?: number;
+      weightPct?: number;
+    },
+  ) {
+    const portfolio = await this.get(userId, portfolioId);
+    const latest = portfolio.snapshots[0];
+    const universe = await this.buildUniverse();
+    const system = await this.llm.getSystemPrompt(userId, 'portfolio_apply_suggestion');
+    type Out = {
+      action?: string;
+      symbol?: string;
+      assetType?: string;
+      quantity?: number;
+      amountRial?: number;
+      weightPct?: number;
+      reasonFa?: string;
+    };
+    let out: Out;
+    try {
+      out = await this.llm.chatJson<Out>(
+        'portfolio_apply_suggestion',
+        system,
+        JSON.stringify(
+          {
+            suggestion: data,
+            capitalRial: portfolio.capitalRial,
+            cashRial: portfolio.cashRial,
+            holdings: (latest?.items ?? []).map((i) => ({
+              symbol: i.symbol,
+              assetType: i.assetType,
+              quantity: i.quantity,
+              amountRial: i.amountRial,
+            })),
+            universe: universe.slice(0, 80).map((u) => ({
+              symbol: u.symbol,
+              nameFa: u.nameFa,
+              assetType: u.assetType,
+              lastPrice: u.lastPrice,
+            })),
+          },
+          null,
+          2,
+        ),
+        userId,
+      );
+    } catch {
+      throw new BadRequestException('نتوانستیم این پیشنهاد را به یک معامله مشخص تبدیل کنیم.');
+    }
+    const normalized = this.normalizeAnalysisSuggestion({
+      titleFa: out.reasonFa || data.titleFa,
+      bodyFa: data.bodyFa,
+      action: out.action,
+      symbol: out.symbol,
+      assetType: out.assetType,
+      quantity: out.quantity,
+      amountRial: out.amountRial,
+      weightPct: out.weightPct,
+    });
+    return {
+      action: (normalized.action ?? 'SKIP') as
+        | 'ADD'
+        | 'INCREASE'
+        | 'DECREASE'
+        | 'REMOVE'
+        | 'SET'
+        | 'SKIP',
+      symbol: normalized.symbol ?? '',
+      assetType: normalized.assetType,
+      quantity: normalized.quantity,
+      amountRial: normalized.amountRial,
+      weightPct: normalized.weightPct,
+      reasonFa: normalized.titleFa,
+    };
+  }
+
+  private async executeSuggestionAction(
+    userId: string,
+    portfolioId: string,
+    act: {
+      action: 'ADD' | 'INCREASE' | 'DECREASE' | 'REMOVE' | 'SET';
+      symbol: string;
+      assetType?: AssetType;
+      quantity?: number;
+      amountRial?: number;
+      weightPct?: number;
+      reasonFa: string;
+    },
+  ) {
+    const { latest, portfolio } = await this.requireOwnedLatestSnapshot(userId, portfolioId);
+    const symbol = this.canonicalSuggestionSymbol(act.symbol, act.assetType);
+    const current = latest.items.find((i) => foldFa(i.symbol) === foldFa(symbol));
+    let action = act.action;
+    if (action === 'ADD' && current) action = 'INCREASE';
+    if ((action === 'INCREASE' || action === 'DECREASE' || action === 'SET') && !current) {
+      action = 'ADD';
+    }
+    if (action === 'REMOVE') {
+      return this.removeItem(userId, portfolioId, current?.symbol ?? symbol);
+    }
+
+    const assetType =
+      act.assetType ??
+      current?.assetType ??
+      this.inferSuggestionAssetType(symbol);
+    const priced = await this.latestPriceForSymbol(symbol, assetType);
+    const size = this.suggestionTradeSize(priced.price, portfolio.capitalRial, act);
+
+    let quantity: number;
+    let amountRial: number;
+    if (action === 'ADD' || action === 'SET') {
+      quantity = size.quantity;
+      amountRial = size.amountRial;
+    } else if (action === 'INCREASE') {
+      quantity = (current?.quantity ?? 0) + size.quantity;
+      amountRial = (current?.amountRial ?? 0) + size.amountRial;
+    } else {
+      quantity = Math.max(0, (current?.quantity ?? 0) - size.quantity);
+      amountRial = Math.max(0, (current?.amountRial ?? 0) - size.amountRial);
+    }
+
+    if (quantity <= 1e-9 || amountRial <= 1e-6) {
+      return this.removeItem(userId, portfolioId, current?.symbol ?? symbol);
+    }
+
+    const prevQty = current?.quantity ?? 0;
+    const prevAvg = current?.avgBuyPrice ?? current?.unitPrice ?? priced.price;
+    const avgBuyPrice = this.nextAvgBuyPrice(prevQty, prevAvg, quantity, priced.price);
+    const reasonFa = act.reasonFa || current?.reasonFa || 'اعمال پیشنهاد آنالیز';
+
+    const row = {
+      symbol,
+      assetType,
+      quantity,
+      amountRial,
+      unitPrice: priced.price,
+      avgBuyPrice,
+      reasonFa,
+      instrumentId: priced.instrumentId ?? current?.instrumentId ?? undefined,
+    };
+
+    const rows = current
+      ? latest.items.map((i) => (foldFa(i.symbol) === foldFa(symbol) ? row : this.holdingFromItem(i)))
+      : [...latest.items.map((i) => this.holdingFromItem(i)), row];
+
+    const eventType =
+      action === 'DECREASE' ? PortfolioEventType.SELL : PortfolioEventType.BUY;
+
+    return this.writeHoldingsSnapshot(portfolioId, latest, rows, {
+      type: eventType,
+      payload: {
+        fromAnalysis: true,
+        action,
+        symbol,
+        quantity,
+        amountRial,
+      },
+      noteFa: `اعمال پیشنهاد: ${act.reasonFa}`,
+    });
+  }
+
+  private suggestionTradeSize(
+    price: number,
+    capitalRial: number,
+    data: { quantity?: number; amountRial?: number; weightPct?: number },
+  ) {
+    if (data.amountRial != null && data.amountRial > 0) {
+      return this.resolveQtyAndAmount(price, undefined, data.amountRial);
+    }
+    if (data.weightPct != null && data.weightPct > 0) {
+      return this.resolveQtyAndAmount(price, undefined, (data.weightPct / 100) * capitalRial);
+    }
+    if (data.quantity != null && data.quantity > 0) {
+      return this.resolveQtyAndAmount(price, data.quantity, undefined);
+    }
+    throw new BadRequestException('مقدار این پیشنهاد برای اعمال مشخص نیست.');
+  }
+
+  private canonicalSuggestionSymbol(symbol: string, assetType?: AssetType) {
+    const t = symbol.trim();
+    if (assetType === AssetType.PHYSICAL_GOLD || /^PHYSICAL_GOLD$/i.test(t)) return 'PHYSICAL_GOLD';
+    if (assetType === AssetType.PHYSICAL_USD || /^PHYSICAL_USD$/i.test(t)) return 'PHYSICAL_USD';
+    return t;
+  }
+
+  private inferSuggestionAssetType(symbol: string): AssetType {
+    const t = foldFa(symbol);
+    if (t === foldFa('PHYSICAL_GOLD') || /طلای?\s*فیزیکی/.test(t)) return AssetType.PHYSICAL_GOLD;
+    if (t === foldFa('PHYSICAL_USD') || /دلار\s*فیزیکی/.test(t)) return AssetType.PHYSICAL_USD;
+    return AssetType.STOCK;
   }
 
   async cashEvent(

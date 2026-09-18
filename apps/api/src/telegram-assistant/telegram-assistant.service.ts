@@ -290,17 +290,25 @@ export class TelegramAssistantService {
       JSON.stringify({
         mode: wantsSummary(caption) ? 'summarize' : 'translate',
         pageCount: extracted.pageCount,
+        pageSizes: extracted.pageSizes,
         imageCount: extracted.images.length,
         text: extracted.text.slice(0, 36_000),
         imagePlaceholders: extracted.images.map((_, i) => `image-${i + 1}`),
+        layoutRulesFa: [
+          'تعداد صفحات و جداکنندهٔ <!--PAGE n--> را حفظ کن',
+          'عنوان، پاراگراف، فهرست و جدول را مثل سند اصلی نگه دار',
+          'جدول را فقط با Markdown جدول (| ستون |) بنویس',
+          'عنوان اضافه مثل «ترجمهٔ سند» نگذار',
+        ],
       }),
       adminId,
     );
     await this.progress(token, chatId, 'upload_document', 'در حال ساخت PDF راست‌چین با فونت فارسی…');
     const pdf = await buildRtlPdf({
-      titleFa: 'ترجمهٔ سند',
       markdownFa: md || extracted.text.slice(0, 8_000),
       images: extracted.images,
+      pageSize: extracted.pageSizes[0],
+      pageSizes: extracted.pageSizes,
     });
     await this.sendDocument(token, chatId, pdf, 'tarjome-farsi.pdf', 'PDF فارسی آماده است.');
   }

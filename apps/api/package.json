@@ -31,7 +31,8 @@
     "rxjs": "^7.8.1",
     "xlsx": "^0.18.5",
     "pdf-lib": "^1.17.1",
-    "@pdf-lib/fontkit": "^1.0.0"
+    "@pdf-lib/fontkit": "^1.0.0",
+    "@simplewebauthn/server": "^13.3.2"
   },
   "devDependencies": {
     "@nestjs/cli": "^11.0.2",

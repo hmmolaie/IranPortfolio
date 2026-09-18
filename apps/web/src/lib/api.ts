@@ -181,7 +181,12 @@ export async function api<T>(
   }
   const res = await fetch(apiUrl(path), { ...options, headers });
   if (!res.ok) {
-    if (res.status === 401 && options.auth !== false && path !== '/auth/login') {
+    if (
+      res.status === 401 &&
+      options.auth !== false &&
+      path !== '/auth/login' &&
+      !path.startsWith('/auth/webauthn/login')
+    ) {
       expireAndRedirect();
     }
     let message = 'خطای سرور';

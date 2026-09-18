@@ -61,16 +61,43 @@ type StrategyOption = {
   }>;
 };
 
+type AnalysisSuggestion = {
+  titleFa: string;
+  bodyFa: string;
+  priority?: string;
+  action?: 'ADD' | 'INCREASE' | 'DECREASE' | 'REMOVE' | 'SET' | 'SKIP';
+  symbol?: string;
+  assetType?: string;
+  quantity?: number;
+  amountRial?: number;
+  weightPct?: number;
+};
+
 type AnalysisResult = {
   score: number;
   summaryFa: string;
   strengthsFa: string[];
   weaknessesFa: string[];
-  suggestions: Array<{ titleFa: string; bodyFa: string; priority?: string }>;
+  suggestions: AnalysisSuggestion[];
   analyzedAt: string;
 };
 
 const ADDABLE_TYPES = Object.values(AssetType);
+
+function parseUserNumber(raw: string): number | null {
+  const normalized = raw
+    .trim()
+    .replace(/[۰-۹]/g, (ch) => String('۰۱۲۳۴۵۶۷۸۹'.indexOf(ch)))
+    .replace(/[٠-٩]/g, (ch) => String('٠١٢٣٤٥٦٧٨٩'.indexOf(ch)))
+    .replace(/,/g, '')
+    .replace(/٫/g, '.');
+  if (!normalized) return null;
+  const n = Number(normalized);
+  if (!Number.isFinite(n) || n <= 0) return null;
+  return n;
+}
+
+type HoldingEdit = { qty: string; amount: string; last: 'qty' | 'amount' };
 
 export default function PortfolioDetailPage() {
   const { id } = useParams<{ id: string }>();
@@ -90,9 +117,13 @@ export default function PortfolioDetailPage() {
 
   const [newSymbol, setNewSymbol] = useState('');
   const [newAssetType, setNewAssetType] = useState<AssetType>(AssetType.STOCK);
-  const [newWeight, setNewWeight] = useState('5');
+  const [addBy, setAddBy] = useState<'qty' | 'amount'>('qty');
+  const [newQty, setNewQty] = useState('');
+  const [newAmount, setNewAmount] = useState('');
+  const [edits, setEdits] = useState<Record<string, HoldingEdit>>({});
 
   const [analysis, setAnalysis] = useState<AnalysisResult | null>(null);
+  const [appliedSuggestions, setAppliedSuggestions] = useState<number[]>([]);
   const [confirmDelete, setConfirmDelete] = useState(false);
   const [deleting, setDeleting] = useState(false);
 
@@ -143,6 +174,16 @@ export default function PortfolioDetailPage() {
   async function addSymbol(e: FormEvent) {
     e.preventDefault();
     if (!newSymbol.trim()) return;
+    const quantity = addBy === 'qty' ? parseUserNumber(newQty) : null;
+    const amountRial = addBy === 'amount' ? parseUserNumber(newAmount) : null;
+    if (addBy === 'qty' && quantity == null) {
+      toast.error('تعداد سهم را وارد کنید.');
+      return;
+    }
+    if (addBy === 'amount' && amountRial == null) {
+      toast.error('مبلغ کل خرید را وارد کنید.');
+      return;
+    }
     setBusy('add');
     try {
       await api(`/portfolios/${id}/items`, {
@@ -150,13 +191,71 @@ export default function PortfolioDetailPage() {
         body: JSON.stringify({
           symbol: newSymbol.trim(),
           assetType: newAssetType,
-          weightPct: Number(newWeight),
+          ...(addBy === 'qty' ? { quantity } : { amountRial }),
         }),
       });
       setNewSymbol('');
-      setNewWeight('5');
+      setNewQty('');
+      setNewAmount('');
       await load();
       toast.success('نماد اضافه شد.');
+    } catch (err) {
+      toast.error((err as Error).message);
+    } finally {
+      setBusy('');
+    }
+  }
+
+  function rowEdit(item: Item): HoldingEdit {
+    return (
+      edits[item.symbol] ?? {
+        qty: String(item.quantity ?? ''),
+        amount: String(item.amountRial ?? ''),
+        last: 'qty',
+      }
+    );
+  }
+
+  function patchRowEdit(item: Item, patch: Partial<HoldingEdit>) {
+    setEdits((prev) => ({
+      ...prev,
+      [item.symbol]: {
+        ...(prev[item.symbol] ?? {
+          qty: String(item.quantity ?? ''),
+          amount: String(item.amountRial ?? ''),
+          last: 'qty' as const,
+        }),
+        ...patch,
+      },
+    }));
+  }
+
+  async function saveHolding(item: Item) {
+    const edit = rowEdit(item);
+    const body =
+      edit.last === 'qty'
+        ? { quantity: parseUserNumber(edit.qty) }
+        : { amountRial: parseUserNumber(edit.amount) };
+    const value = edit.last === 'qty' ? body.quantity : body.amountRial;
+    if (value == null) {
+      toast.error(
+        edit.last === 'qty' ? 'تعداد سهم را درست وارد کنید.' : 'مبلغ کل را درست وارد کنید.',
+      );
+      return;
+    }
+    setBusy(`edit:${item.symbol}`);
+    try {
+      await api(`/portfolios/${id}/items/${encodeURIComponent(item.symbol)}`, {
+        method: 'PATCH',
+        body: JSON.stringify(body),
+      });
+      setEdits((prev) => {
+        const next = { ...prev };
+        delete next[item.symbol];
+        return next;
+      });
+      await load();
+      toast.success('موقعیت به‌روز شد.');
     } catch (err) {
       toast.error((err as Error).message);
     } finally {
@@ -211,10 +310,39 @@ export default function PortfolioDetailPage() {
   async function analyzePortfolio() {
     setBusy('analyze');
     setAnalysis(null);
+    setAppliedSuggestions([]);
     try {
       const res = await api<AnalysisResult>(`/portfolios/${id}/analyze`, { method: 'POST' });
       setAnalysis(res);
       toast.success('آنالیز سبد انجام شد.');
+    } catch (err) {
+      toast.error((err as Error).message);
+    } finally {
+      setBusy('');
+    }
+  }
+
+  async function applyOneSuggestion(s: AnalysisSuggestion, index: number) {
+    if (s.action === 'SKIP' || appliedSuggestions.includes(index)) return;
+    setBusy(`apply-sugg:${index}`);
+    try {
+      await api(`/portfolios/${id}/apply-suggestion`, {
+        method: 'POST',
+        body: JSON.stringify({
+          titleFa: s.titleFa,
+          bodyFa: s.bodyFa,
+          ...(s.priority ? { priority: s.priority } : {}),
+          ...(s.action ? { action: s.action } : {}),
+          ...(s.symbol ? { symbol: s.symbol } : {}),
+          ...(s.assetType ? { assetType: s.assetType } : {}),
+          ...(s.quantity != null ? { quantity: s.quantity } : {}),
+          ...(s.amountRial != null ? { amountRial: s.amountRial } : {}),
+          ...(s.weightPct != null ? { weightPct: s.weightPct } : {}),
+        }),
+      });
+      setAppliedSuggestions((prev) => [...prev, index]);
+      await load();
+      toast.success('پیشنهاد روی سبد اعمال شد.');
     } catch (err) {
       toast.error((err as Error).message);
     } finally {
@@ -342,20 +470,6 @@ export default function PortfolioDetailPage() {
           <button
             className="btn-secondary"
             disabled={!!busy}
-            onClick={() => run('suggest', `/portfolios/${id}/suggest`)}
-          >
-            {busy === 'suggest' ? '...' : 'پیشنهاد سریع'}
-          </button>
-          <button
-            className="btn-secondary"
-            disabled={!!busy}
-            onClick={() => run('rebalance', `/portfolios/${id}/rebalance`)}
-          >
-            بازچینش
-          </button>
-          <button
-            className="btn-secondary"
-            disabled={!!busy}
             onClick={() => run('monthly', `/portfolios/${id}/monthly-evaluate`)}
           >
             ارزیابی ماهانه
@@ -404,14 +518,48 @@ export default function PortfolioDetailPage() {
           {analysis.suggestions.length > 0 && (
             <div className="space-y-2 border-t border-navy-900/10 pt-4">
               <h3 className="text-sm font-semibold">پیشنهادهای بهبود</h3>
-              {analysis.suggestions.map((s, i) => (
-                <article key={i} className="rounded-lg bg-navy-50/80 px-3 py-2">
-                  <div className="font-medium">{s.titleFa}</div>
-                  <p className="mt-1 text-sm leading-7 text-navy-800/75">{s.bodyFa}</p>
-                </article>
-              ))}
+              {analysis.suggestions.map((s, i) => {
+                const applied = appliedSuggestions.includes(i);
+                const skip = s.action === 'SKIP';
+                const rowBusy = busy === `apply-sugg:${i}`;
+                return (
+                  <article
+                    key={i}
+                    className="flex flex-wrap items-start justify-between gap-3 rounded-lg bg-navy-50/80 px-3 py-2"
+                  >
+                    <div className="min-w-0 flex-1">
+                      <div className="font-medium">{s.titleFa}</div>
+                      <p className="mt-1 text-sm leading-7 text-navy-800/75">{s.bodyFa}</p>
+                    </div>
+                    <button
+                      type="button"
+                      className="btn-primary shrink-0 px-3 py-1.5 text-xs"
+                      disabled={!!busy || skip || applied || !latest}
+                      title={
+                        skip ? 'این مورد فقط راهنمایی است و معاملهٔ مشخصی ندارد' : undefined
+                      }
+                      onClick={() => applyOneSuggestion(s, i)}
+                    >
+                      {rowBusy ? '...' : applied ? 'اعمال شد' : 'انجام شود'}
+                    </button>
+                  </article>
+                );
+              })}
             </div>
           )}
+          <div className="flex flex-col items-start gap-2 border-t border-navy-900/10 pt-4">
+            <p className="text-sm text-navy-800/65">
+              اگر می‌خواهید سبد با توجه به پیشنهادهای بالا بازچینش شود، از دکمهٔ زیر استفاده کنید.
+            </p>
+            <button
+              type="button"
+              className="btn-primary"
+              disabled={!!busy || !latest}
+              onClick={() => run('rebalance', `/portfolios/${id}/rebalance`)}
+            >
+              {busy === 'rebalance' ? '...' : 'بازچینش بر اساس این پیشنهادها'}
+            </button>
+          </div>
         </section>
       )}
 
@@ -454,9 +602,28 @@ export default function PortfolioDetailPage() {
               </article>
             ))}
           </div>
-          <button className="text-sm text-navy-800/60 hover:underline" onClick={() => setStrategies(null)}>
-            بستن
-          </button>
+          <div className="flex flex-col items-start gap-3">
+            <p className="text-sm text-navy-800/65">
+              اگر به‌جای انتخاب یکی از کارت‌ها می‌خواهید سبد یک‌جا با AI بازچینش شود:
+            </p>
+            <div className="flex flex-wrap items-center gap-3">
+              <button
+                type="button"
+                className="btn-primary"
+                disabled={!!busy || !latest}
+                onClick={() => run('rebalance', `/portfolios/${id}/rebalance`)}
+              >
+                {busy === 'rebalance' ? '...' : 'بازچینش سبد'}
+              </button>
+              <button
+                type="button"
+                className="text-sm text-navy-800/60 hover:underline"
+                onClick={() => setStrategies(null)}
+              >
+                بستن
+              </button>
+            </div>
+          </div>
         </section>
       )}
 
@@ -476,19 +643,24 @@ export default function PortfolioDetailPage() {
             <PortfolioPieChart
               items={latest.items.map((i) => ({
                 symbol: i.symbol,
-                weightPct: displayWeightPct(i.amountRial, itemsTotal),
+                weightPct: displayWeightPct(i.marketValueRial ?? i.amountRial, itemsTotal),
               }))}
             />
           </div>
 
           <div className="overflow-x-auto">
+            <p className="mb-3 text-xs leading-6 text-navy-800/60">
+              در هر ردیف تعداد یا مبلغ را عوض کنید و ذخیره کنید. فیلد دیگر از آخرین قیمت دیتابیس حساب
+              می‌شود. وزن٪ فقط نمایشی است.
+            </p>
             <table className="min-w-full text-sm">
               <thead>
                 <tr className="border-b border-navy-900/10 text-start">
                   <th className="py-2 pe-4 font-medium">نماد</th>
                   <th className="py-2 pe-4 font-medium">نوع</th>
                   <th className="py-2 pe-4 font-medium">وزن٪</th>
-                  <th className="py-2 pe-4 font-medium">مقدار</th>
+                  <th className="py-2 pe-4 font-medium">تعداد</th>
+                  <th className="py-2 pe-4 font-medium">مبلغ (ریال)</th>
                   <th className="py-2 pe-4 font-medium">میانگین خرید</th>
                   <th className="py-2 pe-4 font-medium">آخرین قیمت</th>
                   <th className="py-2 pe-4 font-medium">سود/زیان</th>
@@ -502,6 +674,8 @@ export default function PortfolioDetailPage() {
                   const avg = i.avgBuyPrice ?? i.unitPrice ?? null;
                   const last = i.lastPrice ?? null;
                   const pnl = i.pnlRial ?? (avg != null && last != null ? (last - avg) * i.quantity : 0);
+                  const edit = rowEdit(i);
+                  const rowBusy = busy === `edit:${i.symbol}`;
                   return (
                     <tr key={i.id} className="border-b border-navy-900/5 align-top">
                       <td className="py-3 pe-4 font-medium">{i.symbol}</td>
@@ -511,7 +685,30 @@ export default function PortfolioDetailPage() {
                       <td className="py-3 pe-4 tabular-nums text-navy-800/90">
                         {formatNum(displayWeightPct(market, itemsTotal))}٪
                       </td>
-                      <td className="py-3 pe-4 tabular-nums">{formatNum(i.quantity)}</td>
+                      <td className="py-3 pe-4">
+                        <input
+                          className="input min-w-[6.5rem] py-1 text-xs tabular-nums"
+                          inputMode="decimal"
+                          value={edit.qty}
+                          disabled={!!busy}
+                          onChange={(e) =>
+                            patchRowEdit(i, { qty: e.target.value, last: 'qty' })
+                          }
+                          aria-label={`تعداد ${i.symbol}`}
+                        />
+                      </td>
+                      <td className="py-3 pe-4">
+                        <input
+                          className="input min-w-[8rem] py-1 text-xs tabular-nums"
+                          inputMode="decimal"
+                          value={edit.amount}
+                          disabled={!!busy}
+                          onChange={(e) =>
+                            patchRowEdit(i, { amount: e.target.value, last: 'amount' })
+                          }
+                          aria-label={`مبلغ ${i.symbol}`}
+                        />
+                      </td>
                       <td className="py-3 pe-4 tabular-nums">
                         {avg != null ? formatRial(avg) : '—'}
                       </td>
@@ -527,14 +724,27 @@ export default function PortfolioDetailPage() {
                       </td>
                       <td className="py-3 pe-4 leading-6 text-navy-800/75">{i.reasonFa}</td>
                       <td className="py-3">
-                        <button
-                          type="button"
-                          className="text-xs text-red-700 hover:underline"
-                          disabled={!!busy}
-                          onClick={() => removeSymbol(i.symbol)}
-                        >
-                          حذف
-                        </button>
+                        <div className="flex flex-col items-start gap-1">
+                          <button
+                            type="button"
+                            className="text-xs text-navy-900 hover:underline disabled:opacity-40"
+                            disabled={!!busy || !edits[i.symbol]}
+                            onClick={() => saveHolding(i)}
+                          >
+                            {rowBusy ? '...' : 'ذخیره'}
+                          </button>
+                          <span className="text-[10px] text-navy-800/45">
+                            {edit.last === 'qty' ? 'بر اساس تعداد' : 'بر اساس مبلغ'}
+                          </span>
+                          <button
+                            type="button"
+                            className="text-xs text-red-700 hover:underline"
+                            disabled={!!busy}
+                            onClick={() => removeSymbol(i.symbol)}
+                          >
+                            حذف
+                          </button>
+                        </div>
                       </td>
                     </tr>
                   );
@@ -550,6 +760,11 @@ export default function PortfolioDetailPage() {
                   </td>
                   <td className="py-3 pe-4 font-semibold tabular-nums">
                     {formatNum(latest.items.reduce((s, i) => s + (i.quantity || 0), 0))}
+                  </td>
+                  <td className="py-3 pe-4 font-semibold tabular-nums">
+                    {formatRial(
+                      latest.items.reduce((s, i) => s + (i.amountRial || 0), 0),
+                    )}
                   </td>
                   <td className="py-3 pe-4 font-semibold tabular-nums text-navy-900">
                     <div className="text-[10px] font-normal text-navy-800/45">بهای تمام‌شده</div>
@@ -580,7 +795,7 @@ export default function PortfolioDetailPage() {
 
           <form
             onSubmit={addSymbol}
-            className="grid gap-3 border-t border-navy-900/10 pt-4 sm:grid-cols-4"
+            className="grid gap-3 border-t border-navy-900/10 pt-4 sm:grid-cols-2 lg:grid-cols-5"
           >
             <div>
               <label className="label">نماد جدید</label>
@@ -607,15 +822,28 @@ export default function PortfolioDetailPage() {
               </select>
             </div>
             <div>
-              <label className="label">وزن٪</label>
+              <label className="label">ورود با</label>
+              <select
+                className="input"
+                value={addBy}
+                onChange={(e) => setAddBy(e.target.value as 'qty' | 'amount')}
+              >
+                <option value="qty">تعداد سهم</option>
+                <option value="amount">مبلغ کل (ریال)</option>
+              </select>
+            </div>
+            <div>
+              <label className="label">
+                {addBy === 'qty' ? 'تعداد' : 'مبلغ کل (ریال)'}
+              </label>
               <input
                 className="input"
-                type="number"
-                min={0.1}
-                max={100}
-                step={0.1}
-                value={newWeight}
-                onChange={(e) => setNewWeight(e.target.value)}
+                inputMode="decimal"
+                value={addBy === 'qty' ? newQty : newAmount}
+                onChange={(e) =>
+                  addBy === 'qty' ? setNewQty(e.target.value) : setNewAmount(e.target.value)
+                }
+                placeholder={addBy === 'qty' ? 'مثلاً ۱۰۰' : 'مثلاً ۵۰۰۰۰۰۰۰'}
                 required
               />
             </div>
@@ -624,6 +852,9 @@ export default function PortfolioDetailPage() {
                 {busy === 'add' ? '...' : 'افزودن به سبد'}
               </button>
             </div>
+            <p className="text-xs leading-6 text-navy-800/55 sm:col-span-2 lg:col-span-5">
+              یکی از تعداد یا مبلغ را بدهید؛ دیگری از آخرین قیمت دیتابیس حساب می‌شود. وزن٪ لازم نیست.
+            </p>
           </form>
         </section>
       )}
@@ -633,8 +864,8 @@ export default function PortfolioDetailPage() {
           <div>
             <h2 className="text-lg font-semibold">گفتگو دربارهٔ سبد</h2>
             <p className="mt-1 text-sm text-navy-800/60">
-              دربارهٔ چرایی انتخاب سهام، محدودیت‌ها و علاقه‌مندی‌ها بپرسید؛ پاسخ‌ها و ترجیحات شما ذخیره
-              می‌شود.
+              دربارهٔ ترکیب سبد، محدودیت‌ها، و وضعیت سهام یا دلار و طلا بپرسید — حتی اگر آن نماد الان در
+              سبد نباشد. قیمت از دیتابیس خوانده می‌شود و ترجیحات شما ذخیره می‌گردد.
             </p>
           </div>
           <button
@@ -649,7 +880,7 @@ export default function PortfolioDetailPage() {
         <div className="max-h-80 space-y-3 overflow-y-auto rounded-lg bg-navy-50/60 p-4">
           {chat.length === 0 && (
             <p className="text-sm text-navy-800/50">
-              هنوز پیامی نیست. مثلاً بپرسید: «چرا این نمادها انتخاب شده‌اند؟»
+              هنوز پیامی نیست. مثلاً بپرسید: «وضعیت شپنا چطور است؟» یا «دلار و طلا امروز چه قیمتی دارند؟»
             </p>
           )}
           {chat.map((m) => (
@@ -671,7 +902,7 @@ export default function PortfolioDetailPage() {
             className="input flex-1"
             value={chatInput}
             onChange={(e) => setChatInput(e.target.value)}
-            placeholder="سؤال خود را بنویسید..."
+            placeholder="مثلاً وضعیت شپنا، دلار یا طلا..."
             disabled={chatBusy}
           />
           <button type="submit" className="btn-primary" disabled={chatBusy || !chatInput.trim()}>
