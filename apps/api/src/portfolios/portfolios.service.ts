@@ -1368,7 +1368,12 @@ ${historyText}`,
     }
 
     return this.executeSuggestionAction(userId, portfolioId, {
-      ...resolved,
+      action: resolved.action,
+      symbol: resolved.symbol,
+      assetType: resolved.assetType,
+      quantity: resolved.quantity,
+      amountRial: resolved.amountRial,
+      weightPct: resolved.weightPct,
       reasonFa: resolved.reasonFa || data.titleFa,
     });
   }

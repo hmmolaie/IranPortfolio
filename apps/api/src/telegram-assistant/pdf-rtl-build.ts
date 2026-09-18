@@ -110,7 +110,6 @@ export async function buildRtlPdf(opts: {
   let sizeIndex = 0;
   const sizeAt = (i: number) => sizes[Math.min(i, sizes.length - 1)] ?? A4;
 
-  let page: PDFPage;
   let pageW = 0;
   let pageH = 0;
   let margin = 48;
@@ -122,15 +121,16 @@ export async function buildRtlPdf(opts: {
     margin = Math.max(36, Math.min(pageW, pageH) * 0.07);
   };
 
-  const newPage = (sz?: PdfPageSize) => {
+  const makePage = (sz?: PdfPageSize): PDFPage => {
     applySize(sz ?? sizeAt(sizeIndex));
-    page = doc.addPage([pageW, pageH]);
     y = pageH - margin;
+    return doc.addPage([pageW, pageH]);
   };
 
-  const overflowPage = () => newPage(sizeAt(sizeIndex));
-
-  newPage(sizeAt(0));
+  let page = makePage(sizeAt(0));
+  const overflowPage = () => {
+    page = makePage(sizeAt(sizeIndex));
+  };
   const maxWidth = () => pageW - margin * 2;
 
   const drawText = (text: string, size: number) => {
@@ -209,7 +209,7 @@ export async function buildRtlPdf(opts: {
     if (item.kind === 'pagebreak') {
       if (started) {
         sizeIndex += 1;
-        newPage(sizeAt(sizeIndex));
+        page = makePage(sizeAt(sizeIndex));
       }
       started = true;
       continue;
