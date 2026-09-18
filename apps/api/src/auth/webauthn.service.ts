@@ -51,7 +51,6 @@ export class WebAuthnService {
       userID: new TextEncoder().encode(user.id),
       attestationType: 'none',
       timeout: 120_000,
-      preferredAuthenticatorType: 'localDevice',
       authenticatorSelection: {
         authenticatorAttachment: 'platform',
         residentKey: 'required',
