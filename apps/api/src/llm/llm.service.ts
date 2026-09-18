@@ -615,7 +615,14 @@ export class LlmService {
   async transcribeAudio(audio: Buffer, filename: string, userId?: string): Promise<string> {
     const creds = await this.resolveTtsCredentials(userId);
     const form = new FormData();
-    form.append('file', new Blob([new Uint8Array(audio)], { type: 'audio/mpeg' }), filename);
+    const mime = filename.endsWith('.webm')
+      ? 'audio/webm'
+      : filename.endsWith('.m4a') || filename.endsWith('.mp4')
+        ? 'audio/mp4'
+        : filename.endsWith('.ogg')
+          ? 'audio/ogg'
+          : 'audio/mpeg';
+    form.append('file', new Blob([new Uint8Array(audio)], { type: mime }), filename);
     form.append('model', 'whisper-1');
     form.append('response_format', 'text');
     const res = await fetch(`${creds.baseUrl}/audio/transcriptions`, {

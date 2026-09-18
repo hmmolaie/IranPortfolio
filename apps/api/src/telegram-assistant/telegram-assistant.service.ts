@@ -6,7 +6,12 @@ import { LlmService } from '../llm/llm.service';
 import { UsersService } from '../users/users.service';
 import { decryptSecret, encryptSecret } from '../common/secret-box';
 import { extractHttpUrls, explicitLanguage, fetchWebPage, wantsSummary } from './page-fetch';
-import { downloadYoutubeAudio, extractYoutubeId, youtubeTranscript } from './youtube';
+import {
+  downloadYoutubeAudio,
+  extractYoutubeId,
+  youtubeAudioFilename,
+  youtubeTranscript,
+} from './youtube';
 import { extractPdfContent } from './pdf-extract';
 import { buildRtlPdf } from './pdf-rtl-build';
 
@@ -306,27 +311,35 @@ export class TelegramAssistantService {
       token,
       chatId,
       'record_voice',
-      'لینک یوتیوب دریافت شد؛ لطفاً صبر کنید، ویدیو استخراج می‌شود…',
+      'لینک یوتیوب دریافت شد؛ لطفاً صبر کنید، در حال خواندن زیرنویس…',
     );
     const adminId = (await this.users.getAdminUserId()) ?? undefined;
-    let sourceText = await youtubeTranscript(videoId);
+    let sourceText: string | null = null;
+    try {
+      sourceText = await youtubeTranscript(videoId);
+    } catch (e) {
+      this.logger.warn(`زیرنویس یوتیوب ${videoId}: ${(e as Error).message.slice(0, 180)}`);
+    }
     if (!sourceText) {
-      await this.progress(token, chatId, 'record_voice', 'زیرنویس نبود؛ در حال گرفتن صدا و رونویسی…');
+      await this.progress(token, chatId, 'record_voice', 'زیرنویس پیدا نشد؛ در حال گرفتن صدا و رونویسی…');
       const audio = await downloadYoutubeAudio(videoId);
       if (!audio) {
         await this.sendText(
           token,
           chatId,
-          'متن یا صدای این ویدیو در دسترس نبود. اگر ویدیو زیرنویس دارد بعداً دوباره بفرستید.',
+          'متن این ویدیو استخراج نشد. یوتیوب زیرنویس عمومی نداشت و دریافت صدا هم ممکن نشد. ویدیوی دیگری با زیرنویس امتحان کنید.',
         );
         return;
       }
-      sourceText = await this.llm.transcribeAudio(audio, `${videoId}.m4a`, adminId);
+      const filename = youtubeAudioFilename(audio, videoId);
+      this.logger.log(`رونویسی یوتیوب ${videoId} حجم=${audio.length} فایل=${filename}`);
+      sourceText = await this.llm.transcribeAudio(audio, filename, adminId);
     }
     if (!sourceText?.trim()) {
       await this.sendText(token, chatId, 'متن ویدیو خالی بود.');
       return;
     }
+    this.logger.log(`متن یوتیوب ${videoId}: ${sourceText.length} نویسه`);
     await this.progress(
       token,
       chatId,
@@ -348,20 +361,29 @@ export class TelegramAssistantService {
     if (spoken) {
       await this.sendText(token, chatId, spoken);
     }
-    await this.progress(token, chatId, 'record_voice', 'در حال ساخت فایل صوتی فارسی با gpt-4o-mini-tts…');
     const parts = splitForTts(spoken || sourceText);
     if (!parts.length) {
       await this.sendText(token, chatId, 'متن فارسی برای ساخت صدا خالی بود.');
       return;
     }
-    for (let i = 0; i < parts.length; i++) {
-      const mp3 = await this.llm.speakTts(parts[i], adminId);
-      await this.sendAudio(
+    await this.progress(token, chatId, 'record_voice', 'در حال ساخت فایل صوتی فارسی…');
+    try {
+      for (let i = 0; i < parts.length; i++) {
+        const mp3 = await this.llm.speakTts(parts[i], adminId);
+        await this.sendAudio(
+          token,
+          chatId,
+          mp3,
+          parts.length > 1 ? `tarjome-farsi-${i + 1}.mp3` : 'tarjome-farsi.mp3',
+          i === 0 ? 'فایل صوتی فارسی آماده است.' : `بخش ${i + 1}`,
+        );
+      }
+    } catch (e) {
+      this.logger.warn(`TTS یوتیوب ${videoId}: ${(e as Error).message.slice(0, 180)}`);
+      await this.sendText(
         token,
         chatId,
-        mp3,
-        parts.length > 1 ? `tarjome-farsi-${i + 1}.mp3` : 'tarjome-farsi.mp3',
-        i === 0 ? 'فایل صوتی فارسی آماده است.' : `بخش ${i + 1}`,
+        `متن آماده شد ولی ساخت صدا ناموفق بود.\n${(e as Error).message.slice(0, 220)}`,
       );
     }
   }
