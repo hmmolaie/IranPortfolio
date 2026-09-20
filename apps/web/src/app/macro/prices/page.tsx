@@ -5,6 +5,7 @@ import { useEffect, useMemo, useRef, useState, type MouseEvent } from 'react';
 import { useRouter } from 'next/navigation';
 import { api, getToken } from '@/lib/api';
 import clsx from 'clsx';
+import { formatShamsiDate } from '@/lib/shamsi-date';
 
 type SpotRow = {
   id: string;
@@ -114,7 +115,7 @@ function DualSeriesChart({
       <div className="mb-3 flex flex-wrap items-baseline justify-between gap-2 px-1 text-white">
         <div>
           <div className="text-sm text-white/55">
-            {series === 'usd' ? 'دلار آزاد' : 'طلا (گرم)'} — {hiRow?.dateKey}
+            {series === 'usd' ? 'دلار آزاد' : 'طلا (گرم)'} — {formatShamsiDate(hiRow?.dateKey)}
           </div>
           <div className="mt-1 text-3xl font-semibold tracking-tight">{formatRial(hi.p)}</div>
         </div>
@@ -214,7 +215,7 @@ export default function MacroPricesPage() {
         </div>
         {latest && (
           <div className="rounded-xl bg-navy-50 px-4 py-3 text-sm text-navy-800/80">
-            <div>آخرین روز: {latest.dateKey}</div>
+            <div>آخرین روز: {formatShamsiDate(latest.dateKey)}</div>
             <div className="mt-1">دلار: {formatRial(latest.usdIrr)}</div>
             <div>طلا (گرم): {formatRial(latest.goldGramRial)}</div>
           </div>

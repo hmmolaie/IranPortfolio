@@ -608,7 +608,11 @@ export class LlmService {
     return hideNetworkBrand ? redactSocialNetworkBrandInFaFields(parsed) : parsed;
   }
 
-  async speakTts(text: string, userId?: string): Promise<Buffer> {
+  async speakTts(
+    text: string,
+    userId?: string,
+    opts?: { voice?: string; instructions?: string },
+  ): Promise<Buffer> {
     const creds = await this.resolveTtsCredentials(userId);
     const input = text.replace(/\s+/g, ' ').trim().slice(0, 4096);
     if (!input) throw new Error('متن خالی برای گفتار');
@@ -620,10 +624,11 @@ export class LlmService {
       },
       body: JSON.stringify({
         model: this.config.get<string>('TTS_MODEL') ?? 'gpt-4o-mini-tts',
-        voice: this.config.get<string>('TTS_VOICE') ?? 'nova',
+        voice: opts?.voice ?? this.config.get<string>('TTS_VOICE') ?? 'nova',
         input,
         response_format: 'mp3',
-        instructions: 'Speak in fluent, clear Persian (Farsi). Natural pace.',
+        instructions:
+          opts?.instructions ?? 'Speak in fluent, clear Persian (Farsi). Natural pace.',
       }),
       signal: AbortSignal.timeout(120_000),
     });

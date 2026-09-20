@@ -10,6 +10,7 @@ export const NEWS_LLM_PURPOSES = new Set([
   'world_x_signals',
   'portfolio_suggest_multi',
   'portfolio_analyze',
+  'telegram_digest_voice',
 ]);
 
 export function appendSocialNetworkOutputRule(systemPrompt: string): string {

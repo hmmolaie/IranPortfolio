@@ -4,6 +4,7 @@ import { useEffect, useState } from 'react';
 import { useRouter } from 'next/navigation';
 import { api, formatNum, getToken, getUserRole, setUserRole, UserRole } from '@/lib/api';
 import { useToast } from '@/components/Toast';
+import { formatShamsiDate } from '@/lib/shamsi-date';
 
 type NewsItem = {
   id: string;
@@ -77,15 +78,7 @@ function asSocialSource(text: string) {
 }
 
 function formatDateKey(key: string) {
-  try {
-    return new Intl.DateTimeFormat('fa-IR', {
-      year: 'numeric',
-      month: 'long',
-      day: 'numeric',
-    }).format(new Date(key + 'T12:00:00'));
-  } catch {
-    return key;
-  }
+  return formatShamsiDate(key);
 }
 
 function isOpportunity(item: NewsItem) {
@@ -191,8 +184,8 @@ export default function NewsPage() {
       <div className="flex flex-wrap items-end justify-between gap-4">
         <div>
           <h1 className="text-3xl font-bold">اخبار اقتصادی ایران</h1>
-          {data?.todayLabelFa && (
-            <p className="mt-1 text-sm text-navy-800/50">امروز: {data.todayLabelFa}</p>
+          {data?.todayKey && (
+            <p className="mt-1 text-sm text-navy-800/50">امروز: {formatShamsiDate(data.todayKey)}</p>
           )}
         </div>
         {isAdmin && (

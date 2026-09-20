@@ -1192,11 +1192,11 @@ ${historyText}`,
     let analysis: Awaited<ReturnType<PortfoliosService['analyzeCurrent']>> | null = null;
     if (latest) {
       try {
-        analysis = await this.analyzeCurrent(userId, main.id);
+        analysis = await this.analyzeCurrent(userId, main.id, { pastTenseFa: true });
       } catch (e) {
         analysis = {
           score: 50,
-          summaryFa: `آنالیز امروز در دسترس نبود. (${(e as Error).message.slice(0, 120)})`,
+          summaryFa: `آنالیز سبد در دسترس نبود. (${(e as Error).message.slice(0, 120)})`,
           strengthsFa: [],
           weaknessesFa: [],
           suggestions: [],
@@ -1221,7 +1221,7 @@ ${historyText}`,
     };
   }
 
-  async analyzeCurrent(userId: string, portfolioId: string) {
+  async analyzeCurrent(userId: string, portfolioId: string, opts?: { pastTenseFa?: boolean }) {
     const portfolio = await this.get(userId, portfolioId);
     const latest = portfolio.snapshots[0];
     if (!latest) throw new NotFoundException('سبدی برای آنالیز وجود ندارد');
@@ -1258,7 +1258,14 @@ ${historyText}`,
       };
     });
 
-    const system = await this.llm.getSystemPrompt(userId, 'portfolio_analyze');
+    let system = await this.llm.getSystemPrompt(userId, 'portfolio_analyze');
+    if (opts?.pastTenseFa) {
+      system += `
+
+این خروجی برای پیام تلگرام است.
+summaryFa، نقاط قوت و ضعف را با فعل گذشته گزارش کن؛ مثل «بازار این‌گونه شد» نه «بازار این‌گونه است».
+عنوان و متن پیشنهاد را هم گذشته بنویس؛ مثل «پیشنهاد این بود که…». فیلدهای action/symbol/amountRial را عوض نکن.`;
+    }
     const userPrompt = JSON.stringify(
       {
         portfolio: {

@@ -4,12 +4,14 @@ import { ConfigService } from '@nestjs/config';
 import { PrismaService } from '../prisma/prisma.service';
 import { decryptSecret, encryptSecret } from '../common/secret-box';
 import { normalizeIranMobile } from '../common/iran-mobile';
-import { tehranDateFa, tehranDateKey, tehranTimeParts } from '../news/tehran-date';
+import { tehranDateKey, tehranDateWithWeekdayFa, tehranTimeParts } from '../news/tehran-date';
 import { PortfoliosService } from '../portfolios/portfolios.service';
 import { NewsService } from '../news/news.service';
 import { replaceSocialNetworkBrandFa } from '../llm/social-source-wording';
 import { UsersService } from '../users/users.service';
+import { LlmService } from '../llm/llm.service';
 import { renderPortfolioPiePng } from './pie-chart-png';
+import { fallbackDigestVoiceScript, trimSpokenScript } from './digest-voice';
 import {
   DEFAULT_TELEGRAM_BOT_NAME_FA,
   DEFAULT_TELEGRAM_BOT_URL,
@@ -48,6 +50,18 @@ type TelegramUpdate = {
 
 const CONFIG_ID = 'default';
 const TG_API = 'https://api.telegram.org';
+const FEMALE_TTS_VOICES = new Set([
+  'nova',
+  'shimmer',
+  'coral',
+  'sage',
+  'alloy',
+  'fable',
+  'ballad',
+  'verse',
+]);
+const DIGEST_TTS_INSTRUCTIONS =
+  'Speak as an Iranian woman news presenter. Fluent contemporary Iranian Persian, not Dari. Warm, clear, natural pace. Past-tense reporting. Do not rush; keep the whole briefing under two minutes.';
 
 const STRATEGY_FA: Record<string, string> = {
   GROWTH: 'رشدی',
@@ -71,6 +85,7 @@ export class TelegramService implements OnModuleInit {
     private readonly portfolios: PortfoliosService,
     private readonly news: NewsService,
     private readonly users: UsersService,
+    private readonly llm: LlmService,
   ) {}
 
   onModuleInit() {
@@ -290,12 +305,13 @@ export class TelegramService implements OnModuleInit {
       }
 
       const newsText = this.formatNewsSection(cfg.botNameFa, batch);
+      const newsVoice = await this.renderNewsVoiceMp3(cfg.botNameFa, batch);
       let sentCount = 0;
       let failedCount = 0;
       for (const r of recipients) {
         if (!r.telegramChatId) continue;
         try {
-          await this.sendPersonalized(token, r.telegramChatId, r.userId, newsText);
+          await this.sendPersonalized(token, r.telegramChatId, r.userId, newsText, newsVoice);
           sentCount += 1;
         } catch (e) {
           failedCount += 1;
@@ -405,7 +421,7 @@ export class TelegramService implements OnModuleInit {
       const name = this.resolveBotNameFa(botNameFa);
       await this.tg(token, 'sendMessage', {
         chat_id: chatId,
-        text: `اتصال برقرار شد. هر روز ساعت ۸:۳۰ صبح، نمودار سبد، پیشنهاد بهبود و خلاصهٔ اخبار ${name} برایتان می‌آید.`,
+        text: `اتصال برقرار شد. هر روز ساعت ۸:۳۰ صبح، نمودار سبد، پیشنهاد بهبود، خلاصهٔ اخبار ${name} و فایل صوتی فارسی همان اخبار برایتان می‌آید.`,
         reply_markup: { remove_keyboard: true },
       });
       return;
@@ -429,6 +445,7 @@ export class TelegramService implements OnModuleInit {
     chatId: string,
     userId: string,
     newsText: string,
+    newsVoice: Buffer | null,
   ) {
     const briefing = await this.portfolios.telegramPortfolioBriefing(userId);
     if (briefing.hasPortfolio && briefing.items.length) {
@@ -457,14 +474,14 @@ export class TelegramService implements OnModuleInit {
     } else if (briefing.hasPortfolio) {
       await this.tg(token, 'sendMessage', {
         chat_id: chatId,
-        text: `<b>سبد «${escapeHtml(briefing.name)}»</b>\nهنوز نمادی در این سبد ثبت نشده. بعد از تشکیل ترکیب، نمودار صبحگاهی فعال می‌شود.`,
+        text: `<b>سبد «${escapeHtml(briefing.name)}»</b>\n${this.digestDateLabel()}\nنمادی در این سبد ثبت نشده بود.`,
         parse_mode: 'HTML',
         disable_web_page_preview: true,
       });
     } else {
       await this.tg(token, 'sendMessage', {
         chat_id: chatId,
-        text: '<b>سبد سهام</b>\nهنوز سبدی در سایت ثبت نشده. بعد از ساخت سبد، نمودار و پیشنهاد بهبود هم در پیام صبح می‌آید.',
+        text: `<b>سبد سهام</b>\n${this.digestDateLabel()}\nسبدی در سایت ثبت نشده بود.`,
         parse_mode: 'HTML',
         disable_web_page_preview: true,
       });
@@ -478,6 +495,19 @@ export class TelegramService implements OnModuleInit {
         disable_web_page_preview: true,
       });
     }
+    if (newsVoice?.length) {
+      try {
+        await this.sendAudio(
+          token,
+          chatId,
+          newsVoice,
+          'akhbar-farsi.mp3',
+          `اخبار و فرصت‌ها — ${this.digestDateLabel()}`,
+        );
+      } catch (e) {
+        this.logger.warn(`ارسال صوت اخبار ناموفق: ${(e as Error).message.slice(0, 160)}`);
+      }
+    }
   }
 
   private formatChartCaption(briefing: Extract<
@@ -488,14 +518,15 @@ export class TelegramService implements OnModuleInit {
     const strategy = STRATEGY_FA[briefing.strategy] ?? briefing.strategy;
     const lines: string[] = [
       `<b>نمودار سبد «${name}»</b>`,
+      this.digestDateLabel(),
       `استراتژی: ${escapeHtml(strategy)}`,
-      `ارزش روز: ${faNum(briefing.totalValueRial)} ریال`,
-      '',
+      `ارزش ثبت‌شده: ${faNum(briefing.totalValueRial)} ریال`,
     ];
     const pnl = briefing.items.reduce((s, i) => s + i.pnlRial, 0);
     if (pnl !== 0) {
-      lines.splice(3, 0, `سود/زیان تقریبی: ${faNum(pnl)} ریال`);
+      lines.push(`سود/زیان تقریبی: ${faNum(pnl)} ریال`);
     }
+    lines.push('');
     if (briefing.fx?.usdIrr) {
       lines.push(`دلار: ${faNum(briefing.fx.usdIrr)} ریال`);
     }
@@ -525,8 +556,9 @@ export class TelegramService implements OnModuleInit {
     if (!a) return null;
     const lines: string[] = [
       '<b>پیشنهاد بهبود سبد</b>',
-      'بر اساس قیمت بورس، نرخ ارز/طلا و اخبار امروز',
-      `امتیاز فعلی: ${toFaDigit(a.score)} از ۱۰۰`,
+      this.digestDateLabel(),
+      'بر اساس قیمت بورس، نرخ ارز/طلا و اخباری که ثبت شده بود',
+      `امتیاز سبد: ${toFaDigit(a.score)} از ۱۰۰`,
       '',
     ];
     if (a.summaryFa?.trim()) {
@@ -547,20 +579,35 @@ export class TelegramService implements OnModuleInit {
     return text;
   }
 
+  private digestDateLabel(): string {
+    return escapeHtml(tehranDateWithWeekdayFa());
+  }
+
   private formatNewsSection(botNameFa: string | null, batch: NewsBatchRow | null | undefined): string {
-    if (!batch?.items?.length) return '';
     const brand = escapeHtml((botNameFa ?? '').trim() || 'سبدیار');
-    const dateLabel = escapeHtml(tehranDateFa());
-    const lines: string[] = [`<b>${brand}</b> — فرصت‌ها و اخبار ${dateLabel}`, ''];
-    if (batch.summaryFa?.trim()) {
-      lines.push(escapeHtml(replaceSocialNetworkBrandFa(batch.summaryFa.trim())), '');
+    const lines: string[] = [`<b>${brand}</b>`, this.digestDateLabel(), ''];
+
+    const items = batch?.items ?? [];
+    const opportunities = items.filter((i) => i.category === 'opportunity' || i.isRetailActionable);
+    const macros = items.filter((i) => !opportunities.includes(i));
+
+    if (macros.length || batch?.summaryFa?.trim()) {
+      lines.push('<b>بازار این‌گونه شد</b>');
+      if (batch?.summaryFa?.trim()) {
+        lines.push(escapeHtml(replaceSocialNetworkBrandFa(batch.summaryFa.trim())), '');
+      }
+      for (const [idx, item] of macros.slice(0, 7).entries()) {
+        lines.push(`${toFaDigit(idx + 1)}) <b>${escapeHtml(replaceSocialNetworkBrandFa(item.titleFa))}</b>`);
+        const body = item.marketImpactFa || item.summaryFa;
+        if (body) lines.push(escapeHtml(replaceSocialNetworkBrandFa(body)));
+        lines.push('');
+      }
+    } else {
+      lines.push('خبر اثرگذاری بر اقتصاد ایران دیده نشد.', '');
     }
 
-    const opportunities = batch.items.filter((i) => i.category === 'opportunity' || i.isRetailActionable);
-    const macros = batch.items.filter((i) => !opportunities.includes(i));
-
     if (opportunities.length) {
-      lines.push('<b>فرصت‌های قابل اقدام برای سرمایه‌گذار خرد</b>');
+      lines.push('<b>فرصت‌های سرمایه‌گذاری که دیده شد</b>');
       for (const [idx, item] of opportunities.slice(0, 3).entries()) {
         lines.push(`${toFaDigit(idx + 1)}) <b>${escapeHtml(replaceSocialNetworkBrandFa(item.titleFa))}</b>`);
         if (item.deadlineFa) lines.push(`مهلت: ${escapeHtml(item.deadlineFa)}`);
@@ -570,22 +617,194 @@ export class TelegramService implements OnModuleInit {
         if (item.officialSourceFa) lines.push(`منبع رسمی: ${escapeHtml(item.officialSourceFa)}`);
         lines.push('');
       }
-    }
-
-    if (macros.length) {
-      lines.push('<b>اخبار مؤثر بر سبد</b>');
-      for (const [idx, item] of macros.slice(0, 7).entries()) {
-        lines.push(`${toFaDigit(idx + 1)}) <b>${escapeHtml(replaceSocialNetworkBrandFa(item.titleFa))}</b>`);
-        const body = item.marketImpactFa || item.summaryFa;
-        if (body) lines.push(escapeHtml(replaceSocialNetworkBrandFa(body)));
-        lines.push('');
-      }
+    } else {
+      lines.push('فرصت سرمایه‌گذاری دیده نشد.', '');
     }
 
     lines.push('این پیام مشاورهٔ سرمایه‌گذاری قطعی نیست.');
     let text = lines.join('\n').trim();
     if (text.length > 3900) text = `${text.slice(0, 3890)}…`;
     return text;
+  }
+
+  private femaleTtsVoice(): string {
+    const configured = (this.config.get<string>('TTS_VOICE') ?? '').trim().toLowerCase();
+    return FEMALE_TTS_VOICES.has(configured) ? configured : 'nova';
+  }
+
+  private async renderNewsVoiceMp3(
+    botNameFa: string | null,
+    batch: NewsBatchRow | null | undefined,
+  ): Promise<Buffer | null> {
+    const items = batch?.items ?? [];
+    const opportunities = items.filter((i) => i.category === 'opportunity' || i.isRetailActionable);
+    const macros = items.filter((i) => !opportunities.includes(i));
+    const dateLabel = tehranDateWithWeekdayFa();
+    let script = fallbackDigestVoiceScript({
+      dateLabel,
+      summaryFa: batch?.summaryFa,
+      macros,
+      opportunities,
+    });
+
+    const adminId = await this.users.getAdminUserId();
+    try {
+      const system = await this.llm.getSystemPrompt(adminId ?? undefined, 'telegram_digest_voice');
+      const spoken = await this.llm.chatText(
+        'telegram_digest_voice',
+        system,
+        JSON.stringify(
+          {
+            dateLabelFa: dateLabel,
+            brandFa: (botNameFa ?? '').trim() || 'سبدیار',
+            summaryFa: batch?.summaryFa ?? null,
+            news: macros.slice(0, 7).map((i) => ({
+              titleFa: i.titleFa,
+              summaryFa: i.summaryFa,
+              marketImpactFa: i.marketImpactFa,
+            })),
+            opportunities: opportunities.slice(0, 3).map((i) => ({
+              titleFa: i.titleFa,
+              summaryFa: i.summaryFa,
+              participateHowFa: i.participateHowFa,
+              deadlineFa: i.deadlineFa,
+            })),
+          },
+          null,
+          2,
+        ),
+        adminId ?? undefined,
+      );
+      const cleaned = replaceSocialNetworkBrandFa((spoken || '').replace(/\s+/g, ' ').trim());
+      if (cleaned) script = trimSpokenScript(cleaned);
+    } catch (e) {
+      this.logger.warn(
+        `متن گفتار اخبار ناموفق؛ متن آماده استفاده شد: ${(e as Error).message.slice(0, 160)}`,
+      );
+    }
+
+    if (!script) return null;
+    try {
+      return await this.llm.speakTts(script, adminId ?? undefined, {
+        voice: this.femaleTtsVoice(),
+        instructions: DIGEST_TTS_INSTRUCTIONS,
+      });
+    } catch (e) {
+      this.logger.warn(`ساخت صوت اخبار ناموفق: ${(e as Error).message.slice(0, 160)}`);
+      return null;
+    }
+  }
+
+  private async sendAudio(
+    token: string,
+    chatId: string,
+    buf: Buffer,
+    filename: string,
+    caption: string,
+  ) {
+    const form = new FormData();
+    form.append('chat_id', chatId);
+    form.append('caption', caption.slice(0, 1000));
+    form.append('audio', new Blob([new Uint8Array(buf)], { type: 'audio/mpeg' }), filename);
+    const res = await fetch(`${TG_API}/bot${token}/sendAudio`, {
+      method: 'POST',
+      body: form,
+      signal: AbortSignal.timeout(60_000),
+    });
+    const json = (await res.json()) as { ok?: boolean; description?: string };
+    if (!res.ok || !json.ok) {
+      throw new Error(json.description || `خطای ارسال صوت ${res.status}`);
+    }
+  }
+
+  private femaleTtsVoice(): string {
+    const configured = (this.config.get<string>('TTS_VOICE') ?? '').trim().toLowerCase();
+    return FEMALE_TTS_VOICES.has(configured) ? configured : 'nova';
+  }
+
+  private async renderNewsVoiceMp3(
+    botNameFa: string | null,
+    batch: NewsBatchRow | null | undefined,
+  ): Promise<Buffer | null> {
+    const items = batch?.items ?? [];
+    const opportunities = items.filter((i) => i.category === 'opportunity' || i.isRetailActionable);
+    const macros = items.filter((i) => !opportunities.includes(i));
+    const dateLabel = tehranDateWithWeekdayFa();
+    let script = fallbackDigestVoiceScript({
+      dateLabel,
+      summaryFa: batch?.summaryFa,
+      macros,
+      opportunities,
+    });
+
+    const adminId = await this.users.getAdminUserId();
+    try {
+      const system = await this.llm.getSystemPrompt(adminId ?? undefined, 'telegram_digest_voice');
+      const spoken = await this.llm.chatText(
+        'telegram_digest_voice',
+        system,
+        JSON.stringify(
+          {
+            dateLabelFa: dateLabel,
+            brandFa: (botNameFa ?? '').trim() || 'سبدیار',
+            summaryFa: batch?.summaryFa ?? null,
+            news: macros.slice(0, 7).map((i) => ({
+              titleFa: i.titleFa,
+              summaryFa: i.summaryFa,
+              marketImpactFa: i.marketImpactFa,
+            })),
+            opportunities: opportunities.slice(0, 3).map((i) => ({
+              titleFa: i.titleFa,
+              summaryFa: i.summaryFa,
+              participateHowFa: i.participateHowFa,
+              deadlineFa: i.deadlineFa,
+            })),
+          },
+          null,
+          2,
+        ),
+        adminId ?? undefined,
+      );
+      const cleaned = replaceSocialNetworkBrandFa((spoken || '').replace(/\s+/g, ' ').trim());
+      if (cleaned) script = trimSpokenScript(cleaned);
+    } catch (e) {
+      this.logger.warn(
+        `متن گفتار اخبار ناموفق؛ متن آماده استفاده شد: ${(e as Error).message.slice(0, 160)}`,
+      );
+    }
+
+    if (!script) return null;
+    try {
+      return await this.llm.speakTts(script, adminId ?? undefined, {
+        voice: this.femaleTtsVoice(),
+        instructions: DIGEST_TTS_INSTRUCTIONS,
+      });
+    } catch (e) {
+      this.logger.warn(`ساخت صوت اخبار ناموفق: ${(e as Error).message.slice(0, 160)}`);
+      return null;
+    }
+  }
+
+  private async sendAudio(
+    token: string,
+    chatId: string,
+    buf: Buffer,
+    filename: string,
+    caption: string,
+  ) {
+    const form = new FormData();
+    form.append('chat_id', chatId);
+    form.append('caption', caption.slice(0, 1000));
+    form.append('audio', new Blob([new Uint8Array(buf)], { type: 'audio/mpeg' }), filename);
+    const res = await fetch(`${TG_API}/bot${token}/sendAudio`, {
+      method: 'POST',
+      body: form,
+      signal: AbortSignal.timeout(60_000),
+    });
+    const json = (await res.json()) as { ok?: boolean; description?: string };
+    if (!res.ok || !json.ok) {
+      throw new Error(json.description || `خطای ارسال صوت ${res.status}`);
+    }
   }
 
   private async sendPhoto(token: string, chatId: string, png: Buffer, caption: string) {

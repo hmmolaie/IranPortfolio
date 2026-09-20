@@ -4,6 +4,7 @@ import { FormEvent, useEffect, useState } from 'react';
 import { useRouter } from 'next/navigation';
 import { api, apiUrl, getToken } from '@/lib/api';
 import { WaitingOverlay } from '@/components/WaitingOverlay';
+import { formatShamsiDate } from '@/lib/shamsi-date';
 
 type Lesson = {
   id: string;
@@ -101,7 +102,7 @@ export default function LessonsPage() {
             <h2 className="text-lg font-semibold">{l.titleFa}</h2>
             <p className="mt-2 whitespace-pre-line leading-7 text-navy-800/80">{l.bodyFa}</p>
             <p className="mt-3 text-xs text-navy-800/40">
-              {sourceLabel(l.source)} · {new Date(l.createdAt).toLocaleDateString('fa-IR')}
+              {sourceLabel(l.source)} · {formatShamsiDate(l.createdAt)}
             </p>
           </article>
         ))}

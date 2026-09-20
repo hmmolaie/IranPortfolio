@@ -3,6 +3,7 @@
 import { useEffect, useState } from 'react';
 import { api } from '@/lib/api';
 import { useToast } from '@/components/Toast';
+import { formatShamsiDate } from '@/lib/shamsi-date';
 import {
   canUsePlatformBiometrics,
   defaultDeviceName,
@@ -87,10 +88,8 @@ export function WebAuthnSettings() {
             <div>
               <div className="text-sm font-medium">{row.friendlyName || 'دستگاه ثبت‌شده'}</div>
               <div className="mt-0.5 text-xs text-navy-800/45">
-                {new Date(row.createdAt).toLocaleDateString('fa-IR')}
-                {row.lastUsedAt
-                  ? ` · آخرین ورود ${new Date(row.lastUsedAt).toLocaleDateString('fa-IR')}`
-                  : ''}
+                {formatShamsiDate(row.createdAt)}
+                {row.lastUsedAt ? ` · آخرین ورود ${formatShamsiDate(row.lastUsedAt)}` : ''}
               </div>
             </div>
             <button

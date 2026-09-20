@@ -6,6 +6,7 @@ import clsx from 'clsx';
 import { api, getToken } from '@/lib/api';
 import { WaitingOverlay } from '@/components/WaitingOverlay';
 import { ForexGraphView } from '@/components/ForexGraphView';
+import { formatShamsiDateTime } from '@/lib/shamsi-date';
 
 type Hop = {
   from: string;
@@ -122,11 +123,7 @@ type SnapshotMeta = {
 };
 
 function formatWhen(iso: string) {
-  return new Date(iso).toLocaleString('fa-IR', {
-    timeZone: 'Asia/Tehran',
-    dateStyle: 'medium',
-    timeStyle: 'medium',
-  });
+  return formatShamsiDateTime(iso);
 }
 
 function formatPct(n: number) {

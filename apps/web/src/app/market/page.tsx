@@ -6,6 +6,7 @@ import { useRouter } from 'next/navigation';
 import clsx from 'clsx';
 import { WaitingOverlay } from '@/components/WaitingOverlay';
 import { TehranMarketChat } from '@/components/TehranMarketChat';
+import { formatShamsiDateTime } from '@/lib/shamsi-date';
 
 type Quote = {
   id: string;
@@ -207,13 +208,7 @@ export default function MarketPage() {
 
   const totalIndex = indices.find((i) => i.key === 'total');
   const equalIndex = indices.find((i) => i.key === 'equalWeight');
-  const updatedLabel = updatedAt
-    ? new Intl.DateTimeFormat('fa-IR', {
-        dateStyle: 'medium',
-        timeStyle: 'short',
-        timeZone: 'Asia/Tehran',
-      }).format(new Date(updatedAt))
-    : null;
+  const updatedLabel = updatedAt ? formatShamsiDateTime(updatedAt) : null;
 
   return (
     <div className="space-y-6">

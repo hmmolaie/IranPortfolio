@@ -25,8 +25,19 @@ export function tehranHour(d = new Date()): number {
 
 /** تاریخ شمسی برای نمایش */
 export function tehranDateFa(d = new Date()): string {
-  return new Intl.DateTimeFormat('fa-IR', {
+  return new Intl.DateTimeFormat('fa-IR-u-ca-persian', {
     timeZone: 'Asia/Tehran',
+    year: 'numeric',
+    month: 'long',
+    day: 'numeric',
+  }).format(d);
+}
+
+/** تاریخ شمسی با نام روز هفته — برای پیام تلگرام */
+export function tehranDateWithWeekdayFa(d = new Date()): string {
+  return new Intl.DateTimeFormat('fa-IR-u-ca-persian', {
+    timeZone: 'Asia/Tehran',
+    weekday: 'long',
     year: 'numeric',
     month: 'long',
     day: 'numeric',

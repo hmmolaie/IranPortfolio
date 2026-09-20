@@ -7,6 +7,7 @@ import { api, formatNum, formatRial, getToken } from '@/lib/api';
 import { PortfolioPieChart } from '@/components/PortfolioPieChart';
 import { ConfirmDeletePortfolioModal } from '@/components/ConfirmDeletePortfolioModal';
 import { useToast } from '@/components/Toast';
+import { formatShamsiDate, formatShamsiDateTime } from '@/lib/shamsi-date';
 
 type Item = {
   id: string;
@@ -447,11 +448,7 @@ export default function PortfolioDetailPage() {
         <div>
           <h1 className="text-3xl font-bold">{p.name}</h1>
           <p className="mt-1 text-sm text-navy-800/55">
-            تاریخ تشکیل{' '}
-            {new Intl.DateTimeFormat('fa-IR', {
-              dateStyle: 'long',
-              timeZone: 'Asia/Tehran',
-            }).format(new Date(p.createdAt))}
+            تاریخ تشکیل {formatShamsiDate(p.createdAt, 'long')}
           </p>
           <p className="mt-2 text-navy-800/70">
             سرمایه {formatRial(p.capitalRial)} · نقد {formatRial(p.cashRial)}
@@ -973,7 +970,7 @@ export default function PortfolioDetailPage() {
             <li key={e.id} className="flex justify-between gap-4 border-b border-navy-900/5 py-2">
               <span>{e.noteFa ?? e.type}</span>
               <span className="text-navy-800/50">
-                {new Date(e.createdAt).toLocaleString('fa-IR')}
+                {formatShamsiDateTime(e.createdAt)}
               </span>
             </li>
           ))}

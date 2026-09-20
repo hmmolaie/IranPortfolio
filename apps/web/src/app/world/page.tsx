@@ -6,6 +6,7 @@ import clsx from 'clsx';
 import { api, formatNum, getToken } from '@/lib/api';
 import { useToast } from '@/components/Toast';
 import { WaitingOverlay } from '@/components/WaitingOverlay';
+import { formatShamsiDateTime } from '@/lib/shamsi-date';
 
 type WorldMarket = {
   id: string;
@@ -281,13 +282,7 @@ export default function WorldEconomyPage() {
   const gridItems = showFeatured ? filtered.slice(6) : filtered;
   const shown = gridItems.slice(0, visible);
 
-  const fetchedLabel = data?.fetchedAt
-    ? new Intl.DateTimeFormat('fa-IR', {
-        dateStyle: 'medium',
-        timeStyle: 'short',
-        timeZone: 'Asia/Tehran',
-      }).format(new Date(data.fetchedAt))
-    : 'هنوز همگام نشده';
+  const fetchedLabel = data?.fetchedAt ? formatShamsiDateTime(data.fetchedAt) : 'هنوز همگام نشده';
 
   if (loading) {
     return <p className="text-navy-800/60">در حال بارگذاری...</p>;

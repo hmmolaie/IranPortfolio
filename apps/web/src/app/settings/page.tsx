@@ -8,6 +8,7 @@ import { TELEGRAM_BOT_USERNAME } from '@/lib/telegram';
 import { TelegramBotLink } from '@/components/TelegramBotLink';
 import { useToast } from '@/components/Toast';
 import { WebAuthnSettings } from '@/components/WebAuthnSettings';
+import { formatShamsiDate } from '@/lib/shamsi-date';
 
 type ProviderId = 'openrouter' | 'openai' | 'custom';
 
@@ -899,8 +900,7 @@ export default function SettingsPage() {
               <br />
               ۲. ربات را در تلگرام باز کنید، /start بزنید و همان شماره را بفرستید.
               <br />
-              هر روز ۸:۳۰ نمودار سبد، پیشنهاد بهبود با دادهٔ بورس و ارز و اخبار، و حداکثر ۳ فرصت سرمایه‌گذاری
-              برایتان می‌آید.
+              هر روز ۸:۳۰ نمودار سبد، پیشنهاد بهبود، اخبار و فرصت‌های سرمایه‌گذاری به‌صورت متن و فایل صوتی فارسی با صدای زن (حداکثر حدود دو دقیقه) برایتان می‌آید.
             </p>
             <p className="text-sm">
               لینک ربات:
@@ -1342,7 +1342,7 @@ export default function SettingsPage() {
           </div>
           {spotLatest && (
             <div className="rounded-lg border border-navy-100 bg-white px-3 py-3 text-sm text-navy-800/80">
-              <div>آخرین ذخیره: {spotLatest.dateKey ?? '—'}</div>
+              <div>آخرین ذخیره: {formatShamsiDate(spotLatest.dateKey)}</div>
               <div className="mt-1">
                 دلار:{' '}
                 {spotLatest.usdIrr != null
@@ -1397,7 +1397,7 @@ export default function SettingsPage() {
             <TelegramBotLink />
             <br />
             نام کاربری پیش‌فرض را عوض نکنید مگر ربات دیگری می‌سازید. توکن را از BotFather بگیرید و
-            ذخیره کنید. سرویس API باید روشن بماند تا ساعت ۸:۳۰ پیام برود. کاربر باید موبایل را در
+            ذخیره کنید. سرویس API باید روشن بماند تا ساعت ۸:۳۰ پیام برود. اخبار و فرصت‌ها هم به‌صورت فایل صوتی فارسی با صدای زن (حداکثر حدود دو دقیقه) فرستاده می‌شود. کاربر باید موبایل را در
             پروفایل ثبت کند و ربات را استارت کند؛ تلگرام با شماره به‌تنهایی پیام نمی‌فرستد.
           </p>
           <div>
@@ -1446,7 +1446,7 @@ export default function SettingsPage() {
             </div>
             {tgMeta.lastDigest && (
               <div className="mt-1">
-                آخرین ارسال: {tgMeta.lastDigest.dateKey} — موفق{' '}
+                آخرین ارسال: {formatShamsiDate(tgMeta.lastDigest.dateKey)} — موفق{' '}
                 {tgMeta.lastDigest.sentCount.toLocaleString('fa-IR')}
                 {tgMeta.lastDigest.skippedReasonFa
                   ? ` — ${tgMeta.lastDigest.skippedReasonFa}`

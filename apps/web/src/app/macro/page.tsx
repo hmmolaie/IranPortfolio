@@ -5,6 +5,7 @@ import Link from 'next/link';
 import { useRouter } from 'next/navigation';
 import { api, formatNum, formatRial, getToken } from '@/lib/api';
 import { useToast } from '@/components/Toast';
+import { formatShamsiDate } from '@/lib/shamsi-date';
 
 type Macro = {
   inflationPct?: number | null;
@@ -21,12 +22,8 @@ type Macro = {
 
 function asOfLabel(iso?: string | null) {
   if (!iso) return null;
-  const d = new Date(iso);
-  if (Number.isNaN(d.getTime())) return null;
-  return new Intl.DateTimeFormat('fa-IR', {
-    dateStyle: 'medium',
-    timeZone: 'Asia/Tehran',
-  }).format(d);
+  const label = formatShamsiDate(iso);
+  return label === '—' ? null : label;
 }
 
 export default function MacroPage() {
@@ -190,7 +187,7 @@ export default function MacroPage() {
             {macro?.usdIrr ? formatRial(macro.usdIrr) : '—'}
           </div>
           {macro?.spotDateKey && (
-            <div className="mt-1 text-xs text-navy-800/45">{macro.spotDateKey}</div>
+            <div className="mt-1 text-xs text-navy-800/45">{formatShamsiDate(macro.spotDateKey)}</div>
           )}
         </div>
         <div className="card">
@@ -199,7 +196,7 @@ export default function MacroPage() {
             {macro?.goldGramRial ? formatRial(macro.goldGramRial) : '—'}
           </div>
           {macro?.spotDateKey && (
-            <div className="mt-1 text-xs text-navy-800/45">{macro.spotDateKey}</div>
+            <div className="mt-1 text-xs text-navy-800/45">{formatShamsiDate(macro.spotDateKey)}</div>
           )}
         </div>
         <div className="card">

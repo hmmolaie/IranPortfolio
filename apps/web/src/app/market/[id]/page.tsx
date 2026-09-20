@@ -6,6 +6,7 @@ import { useParams, useRouter } from 'next/navigation';
 import { ASSET_TYPE_LABELS_FA, AssetType } from '@sabadyar/shared';
 import { api, formatNum, getToken } from '@/lib/api';
 import clsx from 'clsx';
+import { formatShamsiDate } from '@/lib/shamsi-date';
 
 type Bar = {
   tradeDate: string;
@@ -212,7 +213,7 @@ function InteractiveChart({
             fill="rgba(11,31,58,0.4)"
             fontSize={10}
           >
-            {new Date(bars[i].tradeDate).toLocaleDateString('fa-IR')}
+            {formatShamsiDate(bars[i].tradeDate, 'short')}
           </text>
         ))}
 
@@ -239,7 +240,7 @@ function InteractiveChart({
                   {formatPct(hiPct)}
                 </span>
                 <span className="ms-1.5 text-navy-800/45">
-                  {new Date(hiBar.tradeDate).toLocaleDateString('fa-IR')}
+                  {formatShamsiDate(hiBar.tradeDate, 'short')}
                 </span>
               </div>
             </foreignObject>
@@ -318,9 +319,10 @@ export default function MarketInstrumentPage() {
   const up = (stats.changePct ?? 0) >= 0;
   const rangeLabel =
     visible.length >= 2
-      ? `${new Date(visible[0].tradeDate).toLocaleDateString('fa-IR')} – ${new Date(
+      ? `${formatShamsiDate(visible[0].tradeDate, 'short')} – ${formatShamsiDate(
           visible[visible.length - 1].tradeDate,
-        ).toLocaleDateString('fa-IR')}`
+          'short',
+        )}`
       : '';
 
   return (
@@ -359,10 +361,7 @@ export default function MarketInstrumentPage() {
         {stats.asOf && (
           <p className="mt-2 text-xs text-navy-800/45">
             به‌روزرسانی:{' '}
-            {new Date(stats.asOf).toLocaleString('fa-IR', {
-              dateStyle: 'medium',
-              timeZone: 'Asia/Tehran',
-            })}
+            {formatShamsiDate(stats.asOf)}
           </p>
         )}
       </div>

@@ -5,6 +5,7 @@ import { useRouter } from 'next/navigation';
 import clsx from 'clsx';
 import { api, getToken } from '@/lib/api';
 import { useToast } from '@/components/Toast';
+import { formatShamsiDate } from '@/lib/shamsi-date';
 
 type AppUser = {
   id: string;
@@ -176,7 +177,7 @@ export default function AdminUsersPage() {
                 <td className="px-4 py-3 font-medium">{u.name || '—'}</td>
                 <td className="px-4 py-3">{u.email}</td>
                 <td className="px-4 py-3 text-navy-800/70">
-                  {new Date(u.createdAt).toLocaleDateString('fa-IR')}
+                  {formatShamsiDate(u.createdAt)}
                 </td>
                 <td className="px-4 py-3">
                   <span
