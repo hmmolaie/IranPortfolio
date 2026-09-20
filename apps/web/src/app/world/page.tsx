@@ -318,9 +318,12 @@ export default function WorldEconomyPage() {
                 مقایسه می‌گردد.
               </p>
             </div>
-            <button className="btn-primary bg-gold-400 text-navy-900 hover:bg-gold-500" onClick={refresh} disabled={refreshing}>
-              {refreshing ? 'در حال به‌روزرسانی...' : 'به‌روزرسانی فوری'}
-            </button>
+            <div className="flex flex-col items-start gap-1 sm:items-end">
+              <button className="btn-primary bg-gold-400 text-navy-900 hover:bg-gold-500" onClick={refresh} disabled={refreshing}>
+                {refreshing ? 'در حال به‌روزرسانی...' : 'به‌روزرسانی فوری'}
+              </button>
+              <p className="text-xs text-white/55">آخرین به‌روزرسانی: {fetchedLabel}</p>
+            </div>
           </div>
           <div className="relative mt-6 grid gap-3 sm:grid-cols-4">
             <div className="rounded-2xl bg-white/10 px-4 py-3">
