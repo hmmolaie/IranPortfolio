@@ -50,16 +50,8 @@ type TelegramUpdate = {
 
 const CONFIG_ID = 'default';
 const TG_API = 'https://api.telegram.org';
-const FEMALE_TTS_VOICES = new Set([
-  'nova',
-  'shimmer',
-  'coral',
-  'sage',
-  'alloy',
-  'fable',
-  'ballad',
-  'verse',
-]);
+/** فقط صداهای زنانه؛ اگر TTS_VOICE چیز دیگری بود nova استفاده می‌شود */
+const FEMALE_TTS_VOICES = new Set(['nova', 'shimmer', 'coral', 'sage']);
 const DIGEST_TTS_INSTRUCTIONS =
   'Speak as an Iranian woman news presenter. Fluent contemporary Iranian Persian, not Dari. Warm, clear, natural pace. Past-tense reporting. Do not rush; keep the whole briefing under two minutes.';
 
@@ -497,13 +489,12 @@ export class TelegramService implements OnModuleInit {
     }
     if (newsVoice?.length) {
       try {
-        await this.sendAudio(
-          token,
-          chatId,
-          newsVoice,
-          'akhbar-farsi.mp3',
-          `اخبار و فرصت‌ها — ${this.digestDateLabel()}`,
-        );
+        await this.sendAudio(token, chatId, newsVoice, {
+          filename: 'akhbar-sabadyar.mp3',
+          caption: `اخبار و فرصت‌های سرمایه‌گذاری — ${tehranDateWithWeekdayFa()}`,
+          title: 'اخبار و فرصت‌های سرمایه‌گذاری',
+          performer: 'سبدیار',
+        });
       } catch (e) {
         this.logger.warn(`ارسال صوت اخبار ناموفق: ${(e as Error).message.slice(0, 160)}`);
       }
@@ -699,103 +690,14 @@ export class TelegramService implements OnModuleInit {
     token: string,
     chatId: string,
     buf: Buffer,
-    filename: string,
-    caption: string,
+    meta: { filename: string; caption: string; title?: string; performer?: string },
   ) {
     const form = new FormData();
     form.append('chat_id', chatId);
-    form.append('caption', caption.slice(0, 1000));
-    form.append('audio', new Blob([new Uint8Array(buf)], { type: 'audio/mpeg' }), filename);
-    const res = await fetch(`${TG_API}/bot${token}/sendAudio`, {
-      method: 'POST',
-      body: form,
-      signal: AbortSignal.timeout(60_000),
-    });
-    const json = (await res.json()) as { ok?: boolean; description?: string };
-    if (!res.ok || !json.ok) {
-      throw new Error(json.description || `خطای ارسال صوت ${res.status}`);
-    }
-  }
-
-  private femaleTtsVoice(): string {
-    const configured = (this.config.get<string>('TTS_VOICE') ?? '').trim().toLowerCase();
-    return FEMALE_TTS_VOICES.has(configured) ? configured : 'nova';
-  }
-
-  private async renderNewsVoiceMp3(
-    botNameFa: string | null,
-    batch: NewsBatchRow | null | undefined,
-  ): Promise<Buffer | null> {
-    const items = batch?.items ?? [];
-    const opportunities = items.filter((i) => i.category === 'opportunity' || i.isRetailActionable);
-    const macros = items.filter((i) => !opportunities.includes(i));
-    const dateLabel = tehranDateWithWeekdayFa();
-    let script = fallbackDigestVoiceScript({
-      dateLabel,
-      summaryFa: batch?.summaryFa,
-      macros,
-      opportunities,
-    });
-
-    const adminId = await this.users.getAdminUserId();
-    try {
-      const system = await this.llm.getSystemPrompt(adminId ?? undefined, 'telegram_digest_voice');
-      const spoken = await this.llm.chatText(
-        'telegram_digest_voice',
-        system,
-        JSON.stringify(
-          {
-            dateLabelFa: dateLabel,
-            brandFa: (botNameFa ?? '').trim() || 'سبدیار',
-            summaryFa: batch?.summaryFa ?? null,
-            news: macros.slice(0, 7).map((i) => ({
-              titleFa: i.titleFa,
-              summaryFa: i.summaryFa,
-              marketImpactFa: i.marketImpactFa,
-            })),
-            opportunities: opportunities.slice(0, 3).map((i) => ({
-              titleFa: i.titleFa,
-              summaryFa: i.summaryFa,
-              participateHowFa: i.participateHowFa,
-              deadlineFa: i.deadlineFa,
-            })),
-          },
-          null,
-          2,
-        ),
-        adminId ?? undefined,
-      );
-      const cleaned = replaceSocialNetworkBrandFa((spoken || '').replace(/\s+/g, ' ').trim());
-      if (cleaned) script = trimSpokenScript(cleaned);
-    } catch (e) {
-      this.logger.warn(
-        `متن گفتار اخبار ناموفق؛ متن آماده استفاده شد: ${(e as Error).message.slice(0, 160)}`,
-      );
-    }
-
-    if (!script) return null;
-    try {
-      return await this.llm.speakTts(script, adminId ?? undefined, {
-        voice: this.femaleTtsVoice(),
-        instructions: DIGEST_TTS_INSTRUCTIONS,
-      });
-    } catch (e) {
-      this.logger.warn(`ساخت صوت اخبار ناموفق: ${(e as Error).message.slice(0, 160)}`);
-      return null;
-    }
-  }
-
-  private async sendAudio(
-    token: string,
-    chatId: string,
-    buf: Buffer,
-    filename: string,
-    caption: string,
-  ) {
-    const form = new FormData();
-    form.append('chat_id', chatId);
-    form.append('caption', caption.slice(0, 1000));
-    form.append('audio', new Blob([new Uint8Array(buf)], { type: 'audio/mpeg' }), filename);
+    form.append('caption', meta.caption.slice(0, 1000));
+    if (meta.title) form.append('title', meta.title);
+    if (meta.performer) form.append('performer', meta.performer);
+    form.append('audio', new Blob([new Uint8Array(buf)], { type: 'audio/mpeg' }), meta.filename);
     const res = await fetch(`${TG_API}/bot${token}/sendAudio`, {
       method: 'POST',
       body: form,
