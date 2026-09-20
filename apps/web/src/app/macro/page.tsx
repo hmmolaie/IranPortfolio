@@ -9,6 +9,8 @@ import { useToast } from '@/components/Toast';
 type Macro = {
   inflationPct?: number | null;
   interestRatePct?: number | null;
+  inflationAsOf?: string | null;
+  interestRateAsOf?: string | null;
   usdIrr?: number | null;
   goldGramRial?: number | null;
   geoRiskScore?: number | null;
@@ -16,6 +18,16 @@ type Macro = {
   spotDateKey?: string | null;
   sourceNoteFa?: string | null;
 };
+
+function asOfLabel(iso?: string | null) {
+  if (!iso) return null;
+  const d = new Date(iso);
+  if (Number.isNaN(d.getTime())) return null;
+  return new Intl.DateTimeFormat('fa-IR', {
+    dateStyle: 'medium',
+    timeZone: 'Asia/Tehran',
+  }).format(d);
+}
 
 export default function MacroPage() {
   const router = useRouter();
@@ -157,10 +169,20 @@ export default function MacroPage() {
         <div className="card">
           <div className="text-sm text-navy-800/50">تورم</div>
           <div className="mt-2 text-2xl font-semibold">{formatNum(macro?.inflationPct)}٪</div>
+          {asOfLabel(macro?.inflationAsOf) && (
+            <div className="mt-1 text-xs text-navy-800/45">
+              آخرین ثبت: {asOfLabel(macro?.inflationAsOf)}
+            </div>
+          )}
         </div>
         <div className="card">
           <div className="text-sm text-navy-800/50">نرخ بهره</div>
           <div className="mt-2 text-2xl font-semibold">{formatNum(macro?.interestRatePct)}٪</div>
+          {asOfLabel(macro?.interestRateAsOf) && (
+            <div className="mt-1 text-xs text-navy-800/45">
+              آخرین ثبت: {asOfLabel(macro?.interestRateAsOf)}
+            </div>
+          )}
         </div>
         <div className="card">
           <div className="text-sm text-navy-800/50">دلار آزاد (تتر)</div>

@@ -302,7 +302,7 @@ export class PortfoliosService {
           ? `این ایجاد اولیه سبد است. سرمایه کل ${portfolio.capitalRial} ریال و استراتژی ${portfolio.strategy} است.
 فقط weightPct بده (جمع ≈ ۱۰۰). جمع ارزش سبد نباید از ${portfolio.capitalRial} ریال بیشتر شود.
 سهامی پیشنهاد نکن که قیمت یک واحدش از سهم بودجه‌اش بیشتر باشد.
-حتماً lessons، fundHoldings (موجودی/خرید/فروش صندوق‌ها)، economicNews (حداکثر ۷ خبر اثرگذار بر اقتصاد ایران از X)، investmentOpportunities (حداکثر ۳ فرصت) و fxHistory (دلار/طلا ~۳۰ روز) را در تصمیم و در reasonFa/strategySummaryFa منعکس کن.
+حتماً lessons، fundHoldings (موجودی/خرید/فروش صندوق‌ها)، economicNews (حداکثر ۷ خبر اثرگذار بر اقتصاد ایران از شبکه اجتماعی)، investmentOpportunities (حداکثر ۳ فرصت) و fxHistory (دلار/طلا ~۳۰ روز) را در تصمیم و در reasonFa/strategySummaryFa منعکس کن.
 PHYSICAL_GOLD / PHYSICAL_USD در صورت مناسب بودن مجاز است.`
           : `چند استراتژی متفاوت پیشنهاد بده. سرمایه کل ${portfolio.capitalRial} ریال است.
 weightPct فقط درصد از همین سرمایه است (جمع هر استراتژی ≈ ۱۰۰). ارزش کل هر استراتژی مساوی همین سرمایه است و نباید بیشتر شود.

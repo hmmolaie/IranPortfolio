@@ -36,6 +36,17 @@ class AskDto {
   question!: string;
 }
 
+function lastFinite<T extends { asOfDate: Date }>(
+  rows: T[],
+  pick: (row: T) => number | null | undefined,
+): { value: number; asOfDate: Date } | null {
+  for (const row of rows) {
+    const v = pick(row);
+    if (v != null && Number.isFinite(v)) return { value: v, asOfDate: row.asOfDate };
+  }
+  return null;
+}
+
 @Controller('macro')
 export class MacroController {
   constructor(
@@ -46,13 +57,32 @@ export class MacroController {
 
   @Get('latest')
   async latest() {
-    const [macro, spot] = await Promise.all([
-      this.prisma.macroSnapshot.findFirst({ orderBy: { asOfDate: 'desc' } }),
+    const [snapshots, spot] = await Promise.all([
+      this.prisma.macroSnapshot.findMany({
+        orderBy: { asOfDate: 'desc' },
+        take: 120,
+      }),
       this.prices.latest(),
     ]);
+    const macro = snapshots[0];
     if (!macro && !spot) return null;
+
+    const inflation = lastFinite(snapshots, (s) => s.inflationPct);
+    const interest = lastFinite(snapshots, (s) => s.interestRatePct);
+    const latestDay = macro?.asOfDate?.getTime();
+
     return {
       ...(macro ?? {}),
+      inflationPct: inflation?.value ?? null,
+      interestRatePct: interest?.value ?? null,
+      inflationAsOf:
+        inflation && latestDay != null && inflation.asOfDate.getTime() !== latestDay
+          ? inflation.asOfDate.toISOString()
+          : null,
+      interestRateAsOf:
+        interest && latestDay != null && interest.asOfDate.getTime() !== latestDay
+          ? interest.asOfDate.toISOString()
+          : null,
       usdIrr: spot?.usdIrr ?? macro?.usdIrr ?? null,
       goldGramRial: spot?.goldGramRial ?? null,
       spotDateKey: spot?.dateKey ?? null,
@@ -78,20 +108,21 @@ export class MacroController {
       spotUsd = spot?.usdIrr && spot.usdIrr > 0 ? spot.usdIrr : undefined;
     }
 
-    const saved = await this.prisma.macroSnapshot.upsert({
+    const prev = await this.prisma.macroSnapshot.findFirst({ orderBy: { asOfDate: 'desc' } });
+    await this.prisma.macroSnapshot.upsert({
       where: { asOfDate },
-      create: { asOfDate, ...rest, ...(spotUsd != null ? { usdIrr: spotUsd } : {}) },
+      create: {
+        asOfDate,
+        inflationPct: rest.inflationPct ?? prev?.inflationPct,
+        interestRatePct: rest.interestRatePct ?? prev?.interestRatePct,
+        geoRiskScore: rest.geoRiskScore ?? prev?.geoRiskScore,
+        summaryFa: rest.summaryFa ?? prev?.summaryFa,
+        ...(spotUsd != null ? { usdIrr: spotUsd } : {}),
+      },
       update: { ...rest, ...(spotUsd != null ? { usdIrr: spotUsd } : {}) },
     });
 
-    const spotLatest = await this.prices.latest();
-    return {
-      ...saved,
-      usdIrr: spotLatest?.usdIrr ?? saved.usdIrr ?? null,
-      goldGramRial: spotLatest?.goldGramRial ?? null,
-      spotDateKey: spotLatest?.dateKey ?? null,
-      sourceNoteFa: spotLatest && 'sourceNoteFa' in spotLatest ? spotLatest.sourceNoteFa : null,
-    };
+    return this.latest();
   }
 
   @Post('ask')

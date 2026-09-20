@@ -65,6 +65,17 @@ const KIND_FA: Record<string, string> = {
   other: 'سایر فرصت‌ها',
 };
 
+function asSocialSource(text: string) {
+  return text
+    .replace(/شبکهٔ?\s*اجتماعی\s*X/gi, 'شبکه اجتماعی')
+    .replace(/شبکهٔ?\s*X(\s*\(\s*توییتر\s*\))?/gi, 'شبکه اجتماعی')
+    .replace(/فضای\s*X/gi, 'شبکه اجتماعی')
+    .replace(/جستجوی\s*(زندهٔ?\s*)?X/gi, 'جستجوی شبکه اجتماعی')
+    .replace(/\bTwitter\b/gi, 'شبکه اجتماعی')
+    .replace(/توییتر/g, 'شبکه اجتماعی')
+    .replace(/(^|[\s،,.؛:«»"])X(?=[\s،,.؛:»"]|$)/g, '$1شبکه اجتماعی');
+}
+
 function formatDateKey(key: string) {
   try {
     return new Intl.DateTimeFormat('fa-IR', {
@@ -86,7 +97,7 @@ function NewsCard({ item }: { item: NewsItem }) {
   return (
     <article className="card">
       <div className="flex flex-wrap items-start justify-between gap-2">
-        <h3 className="text-base font-semibold">{item.titleFa}</h3>
+        <h3 className="text-base font-semibold">{asSocialSource(item.titleFa)}</h3>
         <div className="flex flex-wrap gap-2 text-xs">
           {opp && (
             <span className="rounded bg-gold-400/25 px-2 py-0.5 text-gold-500">
@@ -103,10 +114,11 @@ function NewsCard({ item }: { item: NewsItem }) {
           )}
         </div>
       </div>
-      <p className="mt-2 text-sm leading-7 text-navy-800/80">{item.summaryFa}</p>
+      <p className="mt-2 text-sm leading-7 text-navy-800/80">{asSocialSource(item.summaryFa)}</p>
       {item.marketImpactFa && (
         <p className="mt-2 text-sm leading-7">
-          <strong>{opp ? 'چرا فرصت است:' : 'اثر محتمل روی اقتصاد ایران:'}</strong> {item.marketImpactFa}
+          <strong>{opp ? 'چرا فرصت است:' : 'اثر محتمل روی اقتصاد ایران:'}</strong>{' '}
+          {asSocialSource(item.marketImpactFa)}
         </p>
       )}
       {item.participateHowFa && (
@@ -120,7 +132,7 @@ function NewsCard({ item }: { item: NewsItem }) {
         </p>
       )}
       <div className="mt-2 flex flex-wrap gap-3 text-xs text-navy-800/55">
-        {item.xSourceHintFa && <span>{item.xSourceHintFa}</span>}
+        {item.xSourceHintFa && <span>{asSocialSource(item.xSourceHintFa)}</span>}
         {item.officialSourceFa && <span>منبع رسمی: {item.officialSourceFa}</span>}
         {item.sectorsFa && <span>بخش‌ها: {item.sectorsFa}</span>}
       </div>
@@ -185,7 +197,7 @@ export default function NewsPage() {
         </div>
         {isAdmin && (
           <button className="btn-primary" onClick={refresh} disabled={loading}>
-            {loading ? 'در حال جستجوی X با Grok...' : 'به‌روزرسانی اخبار'}
+            {loading ? 'در حال جستجوی شبکه اجتماعی...' : 'به‌روزرسانی اخبار'}
           </button>
         )}
       </div>
@@ -193,7 +205,9 @@ export default function NewsPage() {
       {todayBatch?.summaryFa && (
         <section className="card">
           <h2 className="text-lg font-semibold">خلاصه امروز</h2>
-          <p className="mt-2 whitespace-pre-line leading-7 text-navy-800/80">{todayBatch.summaryFa}</p>
+          <p className="mt-2 whitespace-pre-line leading-7 text-navy-800/80">
+            {asSocialSource(todayBatch.summaryFa)}
+          </p>
         </section>
       )}
 
@@ -214,7 +228,9 @@ export default function NewsPage() {
           <section key={batch.id} className="space-y-4">
             <h2 className="text-lg font-semibold">{formatDateKey(batch.newsDateKey)}</h2>
             {batch.summaryFa && batch.newsDateKey !== data.todayKey && (
-              <p className="whitespace-pre-line text-sm leading-7 text-navy-800/70">{batch.summaryFa}</p>
+              <p className="whitespace-pre-line text-sm leading-7 text-navy-800/70">
+                {asSocialSource(batch.summaryFa)}
+              </p>
             )}
 
             {macros.length > 0 && (

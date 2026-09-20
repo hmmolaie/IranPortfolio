@@ -65,7 +65,7 @@ function parseRss(xml: string): XPostSnippet[] {
       tagText(block, 'name') ||
       (url.match(/(?:x\.com|twitter\.com|nitter\.[^/]+)\/([A-Za-z0-9_]+)/i)?.[1] ?? '');
     out.push({
-      accountFa: creator ? `@${creator.replace(/^@/, '')}` : 'X',
+      accountFa: creator ? `@${creator.replace(/^@/, '')}` : 'شبکه اجتماعی',
       textFa,
       url: url || undefined,
       published: tagText(block, 'pubDate') || tagText(block, 'updated') || tagText(block, 'published') || undefined,
@@ -154,7 +154,7 @@ export async function fetchIranEconomyXFeed(limit = 36): Promise<{
   return {
     posts,
     sourceNoteFa: posts.length
-      ? `فید کمکی RSS از X (${posts.length} پست) از ${hosts.join('، ') || 'جستجوی چندزبانه'}`
-      : 'فید RSS عمومی خالی بود؛ خبر از جستجوی زندهٔ مدل در شبکهٔ X می‌آید',
+      ? `فید کمکی شبکه اجتماعی (${posts.length} پست) از ${hosts.join('، ') || 'جستجوی چندزبانه'}`
+      : 'فید کمکی خالی بود؛ خبر از جستجوی زندهٔ مدل در شبکه اجتماعی می‌آید',
   };
 }

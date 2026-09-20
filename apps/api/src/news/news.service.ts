@@ -2,6 +2,7 @@ import { Injectable, Logger, OnModuleInit } from '@nestjs/common';
 import { Cron } from '@nestjs/schedule';
 import { PrismaService } from '../prisma/prisma.service';
 import { LlmService } from '../llm/llm.service';
+import { SOCIAL_NETWORK_LABEL_FA, replaceSocialNetworkBrandFa } from '../llm/social-source-wording';
 import { UsersService } from '../users/users.service';
 import { daysAgoDateKey, tehranDateFa, tehranDateKey, tehranHour } from './tehran-date';
 
@@ -146,7 +147,7 @@ export class NewsService implements OnModuleInit {
         maxItems: MAX_MACRO_ITEMS,
         recentHeadlinesToAvoidRepeat: recentHeadlines,
         instruction:
-          'در کل فضای X به هر زبانی بگرد. حداکثر ۷ مطلب از معتبرترین حساب‌هایی که چیزی نوشته‌اند که ممکن است روی اقتصاد ایران اثر بگذارد. همه را فارسی بنویس. تکراری نسبت به recentHeadlinesToAvoidRepeat نده.',
+          'در کل فضای شبکه اجتماعی به هر زبانی بگرد. حداکثر ۷ مطلب از معتبرترین حساب‌هایی که چیزی نوشته‌اند که ممکن است روی اقتصاد ایران اثر بگذارد. همه را فارسی بنویس. تکراری نسبت به recentHeadlinesToAvoidRepeat نده. در متن فارسی خروجی نام X یا توییتر ننویس؛ فقط بگو شبکه اجتماعی.',
       }),
       this.runGrokSearch(ownerId, 'economic_opportunity_refresh', {
         todayTehran: newsDateKey,
@@ -154,7 +155,7 @@ export class NewsService implements OnModuleInit {
         maxItems: MAX_OPPORTUNITY_ITEMS,
         recentHeadlinesToAvoidRepeat: recentHeadlines,
         instruction:
-          'در کل فضای X به هر زبانی بگرد. حداکثر ۳ مطلب از معتبرترین حساب‌ها درباره عرضه اولیه، ثبت‌نام خودرو، حراج سکه یا ارز، آربیتراژ، یا بازار مستعد رشد. همه را فارسی بنویس.',
+          'در کل فضای شبکه اجتماعی به هر زبانی بگرد. حداکثر ۳ مطلب از معتبرترین حساب‌ها درباره عرضه اولیه، ثبت‌نام خودرو، حراج سکه یا ارز، آربیتراژ، یا بازار مستعد رشد. همه را فارسی بنویس. در متن فارسی خروجی نام X یا توییتر ننویس؛ فقط بگو شبکه اجتماعی.',
       }),
     ]);
 
@@ -170,13 +171,14 @@ export class NewsService implements OnModuleInit {
     }));
     const items = [...macros, ...opportunities];
     const analysisSummaryFa = [newsOut.analysisSummaryFa, oppOut.analysisSummaryFa]
-      .map((s) => (s ?? '').trim())
+      .map((s) => replaceSocialNetworkBrandFa((s ?? '').trim()))
       .filter(Boolean)
       .join('\n\n');
-    const sourceNoteFa = [newsOut.sourceNoteFa, oppOut.sourceNoteFa]
-      .map((s) => (s ?? '').trim())
-      .filter(Boolean)
-      .join(' · ') || null;
+    const sourceNoteFa =
+      [newsOut.sourceNoteFa, oppOut.sourceNoteFa]
+        .map((s) => replaceSocialNetworkBrandFa((s ?? '').trim()))
+        .filter(Boolean)
+        .join(' · ') || null;
 
     const existing = await this.prisma.economicNewsBatch.findUnique({
       where: { userId_newsDateKey: { userId: ownerId, newsDateKey } },
@@ -291,20 +293,31 @@ export class NewsService implements OnModuleInit {
   }
 
   private cleanItem(item: NewsLlmItem): NewsLlmItem | null {
-    const titleFa = (item.titleFa ?? '').replace(/\s+/g, ' ').trim().slice(0, 220);
-    const summaryFa = (item.summaryFa ?? '').replace(/\s+/g, ' ').trim().slice(0, 2000);
+    const titleFa = replaceSocialNetworkBrandFa((item.titleFa ?? '').replace(/\s+/g, ' ').trim()).slice(0, 220);
+    const summaryFa = replaceSocialNetworkBrandFa((item.summaryFa ?? '').replace(/\s+/g, ' ').trim()).slice(
+      0,
+      2000,
+    );
     if (!titleFa && !summaryFa) return null;
     const blob = `${titleFa} ${summaryFa} ${item.marketImpactFa ?? ''}`;
     if (/macroSnapshot|bitpin|TSETMC/i.test(blob)) return null;
-    const hint = [item.xSourceHintFa, item.accountNameFa]
-      .map((s) => (s ?? '').trim())
-      .filter(Boolean)
-      .join(' · ');
+    const hint = replaceSocialNetworkBrandFa(
+      [item.xSourceHintFa, item.accountNameFa]
+        .map((s) => (s ?? '').trim())
+        .filter(Boolean)
+        .join(' · '),
+    );
     return {
       ...item,
       titleFa: titleFa || summaryFa.slice(0, 80),
       summaryFa: summaryFa || titleFa,
-      xSourceHintFa: hint || item.officialSourceFa?.trim() || 'X',
+      marketImpactFa: item.marketImpactFa
+        ? replaceSocialNetworkBrandFa(item.marketImpactFa)
+        : item.marketImpactFa,
+      participateHowFa: item.participateHowFa
+        ? replaceSocialNetworkBrandFa(item.participateHowFa)
+        : item.participateHowFa,
+      xSourceHintFa: hint || item.officialSourceFa?.trim() || SOCIAL_NETWORK_LABEL_FA,
     };
   }
 

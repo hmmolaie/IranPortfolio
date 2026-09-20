@@ -7,6 +7,7 @@ import { normalizeIranMobile } from '../common/iran-mobile';
 import { tehranDateFa, tehranDateKey, tehranTimeParts } from '../news/tehran-date';
 import { PortfoliosService } from '../portfolios/portfolios.service';
 import { NewsService } from '../news/news.service';
+import { replaceSocialNetworkBrandFa } from '../llm/social-source-wording';
 import { UsersService } from '../users/users.service';
 import { renderPortfolioPiePng } from './pie-chart-png';
 import {
@@ -529,14 +530,14 @@ export class TelegramService implements OnModuleInit {
       '',
     ];
     if (a.summaryFa?.trim()) {
-      lines.push(escapeHtml(a.summaryFa.trim()), '');
+      lines.push(escapeHtml(replaceSocialNetworkBrandFa(a.summaryFa.trim())), '');
     }
     const suggestions = (a.suggestions ?? []).slice(0, 5);
     if (suggestions.length) {
       lines.push('<b>اقدام‌های پیشنهادی</b>');
       suggestions.forEach((s, idx) => {
-        lines.push(`${toFaDigit(idx + 1)}) <b>${escapeHtml(s.titleFa)}</b>`);
-        if (s.bodyFa) lines.push(escapeHtml(s.bodyFa));
+        lines.push(`${toFaDigit(idx + 1)}) <b>${escapeHtml(replaceSocialNetworkBrandFa(s.titleFa))}</b>`);
+        if (s.bodyFa) lines.push(escapeHtml(replaceSocialNetworkBrandFa(s.bodyFa)));
         lines.push('');
       });
     }
@@ -552,7 +553,7 @@ export class TelegramService implements OnModuleInit {
     const dateLabel = escapeHtml(tehranDateFa());
     const lines: string[] = [`<b>${brand}</b> — فرصت‌ها و اخبار ${dateLabel}`, ''];
     if (batch.summaryFa?.trim()) {
-      lines.push(escapeHtml(batch.summaryFa.trim()), '');
+      lines.push(escapeHtml(replaceSocialNetworkBrandFa(batch.summaryFa.trim())), '');
     }
 
     const opportunities = batch.items.filter((i) => i.category === 'opportunity' || i.isRetailActionable);
@@ -561,9 +562,11 @@ export class TelegramService implements OnModuleInit {
     if (opportunities.length) {
       lines.push('<b>فرصت‌های قابل اقدام برای سرمایه‌گذار خرد</b>');
       for (const [idx, item] of opportunities.slice(0, 3).entries()) {
-        lines.push(`${toFaDigit(idx + 1)}) <b>${escapeHtml(item.titleFa)}</b>`);
+        lines.push(`${toFaDigit(idx + 1)}) <b>${escapeHtml(replaceSocialNetworkBrandFa(item.titleFa))}</b>`);
         if (item.deadlineFa) lines.push(`مهلت: ${escapeHtml(item.deadlineFa)}`);
-        if (item.participateHowFa) lines.push(`چطور: ${escapeHtml(item.participateHowFa)}`);
+        if (item.participateHowFa) {
+          lines.push(`چطور: ${escapeHtml(replaceSocialNetworkBrandFa(item.participateHowFa))}`);
+        }
         if (item.officialSourceFa) lines.push(`منبع رسمی: ${escapeHtml(item.officialSourceFa)}`);
         lines.push('');
       }
@@ -572,9 +575,9 @@ export class TelegramService implements OnModuleInit {
     if (macros.length) {
       lines.push('<b>اخبار مؤثر بر سبد</b>');
       for (const [idx, item] of macros.slice(0, 7).entries()) {
-        lines.push(`${toFaDigit(idx + 1)}) <b>${escapeHtml(item.titleFa)}</b>`);
+        lines.push(`${toFaDigit(idx + 1)}) <b>${escapeHtml(replaceSocialNetworkBrandFa(item.titleFa))}</b>`);
         const body = item.marketImpactFa || item.summaryFa;
-        if (body) lines.push(escapeHtml(body));
+        if (body) lines.push(escapeHtml(replaceSocialNetworkBrandFa(body)));
         lines.push('');
       }
     }

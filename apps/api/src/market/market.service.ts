@@ -40,6 +40,18 @@ const MARKET_INDICES = [
   },
 ];
 
+type MarketIndexKey = (typeof MARKET_INDICES)[number]['key'];
+type IndexLiveSnap = { lastValue: number; changePct: number | null };
+
+function isEqualWeightIndexName(name: string): boolean {
+  return /هم\s*وزن/.test(foldFa(name));
+}
+
+function isTotalIndexName(name: string): boolean {
+  const n = foldFa(name);
+  return /شاخص\s*کل/.test(n) && !/هم\s*وزن/.test(n);
+}
+
 /** تاریخ تقویمی تهران (بازار ایران)، نه UTC کانتینر */
 function tehranNow(): Date {
   return new Date(new Date().toLocaleString('en-US', { timeZone: 'Asia/Tehran' }));
@@ -92,6 +104,7 @@ type IngestRow = Record<string, unknown>;
 export class MarketService {
   private readonly logger = new Logger(MarketService.name);
   private ingestInFlight = false;
+  private indexSnapshotInFlight: Promise<number> | null = null;
 
   constructor(
     private readonly prisma: PrismaService,
@@ -131,7 +144,7 @@ export class MarketService {
         : {}),
     };
 
-    const [total, instruments] = await Promise.all([
+    const [total, instruments, lastInstrument, lastBar] = await Promise.all([
       this.prisma.instrument.count({ where }),
       this.prisma.instrument.findMany({
         where,
@@ -145,6 +158,13 @@ export class MarketService {
           },
         },
       }),
+      this.prisma.instrument.aggregate({
+        where: { isActive: true },
+        _max: { updatedAt: true },
+      }),
+      this.prisma.priceBar.aggregate({
+        _max: { createdAt: true },
+      }),
     ]);
 
     const items = instruments.map((i) => ({
@@ -156,12 +176,21 @@ export class MarketService {
       last: i.priceBars[0] ?? null,
     }));
 
+    const stamps = [lastInstrument._max.updatedAt, lastBar._max.createdAt].filter(
+      (d): d is Date => d instanceof Date,
+    );
+    const updatedAt =
+      stamps.length > 0
+        ? new Date(Math.max(...stamps.map((d) => d.getTime()))).toISOString()
+        : null;
+
     return {
       items,
       total,
       page,
       pageSize: take,
       totalPages: Math.max(1, Math.ceil(total / take)),
+      updatedAt,
     };
   }
 
@@ -670,7 +699,16 @@ export class MarketService {
 
   async getMarketIndices(historyDays = 60) {
     const take = Math.min(Math.max(historyDays, 5), 365);
-    return this.readMarketIndices(take);
+    let out = await this.readMarketIndices(take);
+    if (out.some((i) => i.lastValue == null)) {
+      try {
+        await this.ensureLatestIndexValues();
+        out = await this.readMarketIndices(take);
+      } catch (e) {
+        this.logger.warn(`تکمیل شاخص برای نمایش: ${(e as Error).message}`);
+      }
+    }
+    return out;
   }
 
   private async readMarketIndices(take: number) {
@@ -765,7 +803,158 @@ export class MarketService {
       }
     }
 
-    // به‌روزرسانی مقدار لحظه‌ای امروز از لیست شاخص‌های منتخب
+    // مقدار روز جاری: اول BrsApi (سرور خارج ایران)، بعد TSETMC
+    try {
+      upserted += await this.persistLiveIndexSnapshot();
+    } catch (e) {
+      this.logger.warn(`شاخص لحظه‌ای: ${(e as Error).message}`);
+    }
+
+    this.logger.log(`شاخص‌ها: ${upserted} ردیف ذخیره شد`);
+    return { upserted };
+  }
+
+  private async ensureLatestIndexValues() {
+    if (this.indexSnapshotInFlight) return this.indexSnapshotInFlight;
+    this.indexSnapshotInFlight = this.persistLiveIndexSnapshot().finally(() => {
+      this.indexSnapshotInFlight = null;
+    });
+    return this.indexSnapshotInFlight;
+  }
+
+  private async persistLiveIndexSnapshot(): Promise<number> {
+    const snaps: Partial<Record<MarketIndexKey, IndexLiveSnap>> = {
+      ...(await this.fetchBrsApiIndexSnapshot()),
+    };
+    if (!snaps.total || !snaps.equalWeight) {
+      const tse = await this.fetchTsetmcLiveIndexSnapshot();
+      if (!snaps.total && tse.total) snaps.total = tse.total;
+      if (!snaps.equalWeight && tse.equalWeight) snaps.equalWeight = tse.equalWeight;
+    }
+    const tradeDate = todayDateOnly();
+    let upserted = 0;
+    for (const def of MARKET_INDICES) {
+      const snap = snaps[def.key];
+      if (!snap?.lastValue) continue;
+      const instrument = await this.prisma.instrument.upsert({
+        where: { insCode: def.insCode },
+        create: {
+          insCode: def.insCode,
+          symbol: def.symbol,
+          nameFa: def.nameFa,
+          assetType: AssetType.INDEX,
+        },
+        update: {
+          symbol: def.symbol,
+          nameFa: def.nameFa,
+          assetType: AssetType.INDEX,
+          isActive: true,
+        },
+      });
+      await this.prisma.priceBar.upsert({
+        where: {
+          instrumentId_tradeDate: { instrumentId: instrument.id, tradeDate },
+        },
+        create: {
+          instrumentId: instrument.id,
+          tradeDate,
+          lastPrice: snap.lastValue,
+          closePrice: snap.lastValue,
+        },
+        update: {
+          lastPrice: snap.lastValue,
+          closePrice: snap.lastValue,
+        },
+      });
+      upserted += 1;
+    }
+    return upserted;
+  }
+
+  private async fetchBrsApiIndexSnapshot(): Promise<Partial<Record<MarketIndexKey, IndexLiveSnap>>> {
+    const key = process.env.BRS_API_KEY?.trim();
+    if (!key) return {};
+    const out: Partial<Record<MarketIndexKey, IndexLiveSnap>> = {};
+    try {
+      const data = await this.fetchJson(
+        `https://Api.BrsApi.ir/Tsetmc/Index.php?key=${encodeURIComponent(key)}&type=1`,
+      );
+      const row: IngestRow = Array.isArray(data) ? (data[0] as IngestRow) : (data as IngestRow);
+      const total = this.num(row?.index ?? row?.Index);
+      const equal = this.num(row?.index_equalWeight ?? row?.indexEqualWeight);
+      if (total != null && total > 0) {
+        out.total = {
+          lastValue: total,
+          changePct: this.indexChangePct(total, row?.index_change_percent ?? row?.index_change),
+        };
+      }
+      if (equal != null && equal > 0) {
+        out.equalWeight = {
+          lastValue: equal,
+          changePct: this.indexChangePct(
+            equal,
+            row?.index_equalWeight_change_percent ?? row?.index_equalWeight_change,
+          );
+        };
+      }
+    } catch (e) {
+      this.logger.warn(`شاخص BrsApi type=1: ${(e as Error).message}`);
+    }
+    if (out.total && out.equalWeight) return out;
+
+    try {
+      const data = await this.fetchJson(
+        `https://Api.BrsApi.ir/Tsetmc/Index.php?key=${encodeURIComponent(key)}&type=3`,
+      );
+      const list: IngestRow[] = Array.isArray(data)
+        ? data
+        : Array.isArray(data?.data)
+          ? data.data
+          : [];
+      for (const row of list) {
+        const name = String(row.name ?? row.lVal30 ?? row.title ?? '');
+        const value = this.num(row.index ?? row.last ?? row.xDrNivJIdx004);
+        if (value == null || !(value > 0)) continue;
+        const snap: IndexLiveSnap = {
+          lastValue: value,
+          changePct: this.indexChangePct(value, row.index_change_percent ?? row.index_change),
+        };
+        if (!out.equalWeight && isEqualWeightIndexName(name)) out.equalWeight = snap;
+        else if (!out.total && isTotalIndexName(name)) out.total = snap;
+      }
+    } catch (e) {
+      this.logger.warn(`شاخص BrsApi type=3: ${(e as Error).message}`);
+    }
+    return out;
+  }
+
+  private async fetchTsetmcLiveIndexSnapshot(): Promise<Partial<Record<MarketIndexKey, IndexLiveSnap>>> {
+    const out: Partial<Record<MarketIndexKey, IndexLiveSnap>> = {};
+    try {
+      const data = await this.fetchJson('https://cdn.tsetmc.com/api/MarketData/GetMarketOverview/1');
+      const ov = (data?.marketOverview ?? data) as IngestRow;
+      const total = this.num(ov?.indexLastValue ?? ov?.indexValue);
+      const equal = this.num(ov?.indexEqualWeightedLastValue ?? ov?.indexEqualWeightedValue);
+      if (total != null && total > 0) {
+        out.total = {
+          lastValue: total,
+          changePct: this.indexChangePct(total, ov?.indexChangePercent ?? ov?.indexChange),
+        };
+      }
+      if (equal != null && equal > 0) {
+        out.equalWeight = {
+          lastValue: equal,
+          changePct: this.indexChangePct(
+            equal,
+            ov?.indexEqualWeightedChangePercent ?? ov?.indexEqualWeightedChange,
+          ),
+        };
+      }
+    } catch (e) {
+      this.logger.warn(`نمای کلی شاخص TSETMC: ${(e as Error).message}`);
+    }
+    if (out.total && out.equalWeight) return out;
+
     try {
       const live = await this.fetchJson(
         'https://cdn.tsetmc.com/api/Index/GetIndexB1LastAll/SelectedIndexes/1',
@@ -775,46 +964,72 @@ export class MarketService {
         : Array.isArray(live)
           ? live
           : [];
-      const tradeDate = todayDateOnly();
       for (const def of MARKET_INDICES) {
-        const row = list.find((x) => String(x.insCode) === def.insCode);
-        const value = this.num(row?.xDrNivJIdx004 ?? row?.lastValue);
+        if (out[def.key]) continue;
+        const row = list.find((x) => {
+          const name = String(x.lVal30 ?? x.name ?? '');
+          if (def.key === 'equalWeight') return isEqualWeightIndexName(name);
+          return isTotalIndexName(name);
+        });
+        const value = this.indexLevelFromRow(row);
         if (value == null) continue;
-        const instrument = await this.prisma.instrument.findUnique({
-          where: { insCode: def.insCode },
-        });
-        if (!instrument) continue;
-        await this.prisma.priceBar.upsert({
-          where: {
-            instrumentId_tradeDate: { instrumentId: instrument.id, tradeDate },
-          },
-          create: {
-            instrumentId: instrument.id,
-            tradeDate,
-            lastPrice: value,
-            closePrice: value,
-            raw: row as Prisma.InputJsonValue,
-          },
-          update: {
-            lastPrice: value,
-            closePrice: value,
-            raw: row as Prisma.InputJsonValue,
-          },
-        });
-        upserted += 1;
+        out[def.key] = {
+          lastValue: value,
+          changePct: this.indexChangePct(value, row?.xVarIdxJRfV ?? row?.indexChange),
+        };
       }
     } catch (e) {
-      this.logger.warn(`شاخص لحظه‌ای: ${(e as Error).message}`);
+      this.logger.warn(`لیست شاخص TSETMC: ${(e as Error).message}`);
     }
+    return out;
+  }
 
-    this.logger.log(`شاخص‌ها: ${upserted} ردیف ذخیره شد`);
-    return { upserted };
+  private indexLevelFromRow(row?: IngestRow): number | null {
+    if (!row) return null;
+    return this.num(
+      row.xDrNivJIdx004 ??
+        row.xNivInesJIdx004 ??
+        row.xNivJIdx004 ??
+        row.lastValue ??
+        row.index ??
+        row.pClosing,
+    );
+  }
+
+  private indexChangePct(last: number, raw: unknown): number | null {
+    const n = this.num(raw);
+    if (n == null) return null;
+    if (Math.abs(n) <= 40) return n;
+    if (last - n === 0) return null;
+    return (n / (last - n)) * 100;
   }
 
   private async fetchIndexHistory(
     insCode: string,
   ): Promise<Array<{ tradeDate: Date; value: number }>> {
-    // اولویت: تاریخچه قیمت پایانی CDN
+    try {
+      const data = await this.fetchJson(`https://cdn.tsetmc.com/api/Index/GetIndexB2History/${insCode}`);
+      const list: IngestRow[] = Array.isArray(data?.indexB2)
+        ? data.indexB2
+        : Array.isArray(data?.indexB1)
+          ? data.indexB1
+          : Array.isArray(data)
+            ? data
+            : [];
+      const points = list
+        .map((row) => {
+          const dEven = String(row.dEven ?? row.date ?? '').replace(/\D/g, '');
+          const value = this.indexLevelFromRow(row);
+          if (dEven.length !== 8 || value == null || !(value > 0)) return null;
+          return { tradeDate: dEvenToDate(dEven), value };
+        })
+        .filter((x): x is { tradeDate: Date; value: number } => Boolean(x));
+      if (points.length) return points;
+    } catch (e) {
+      this.logger.warn(`تاریخچه شاخص B2 (${insCode}): ${(e as Error).message}`);
+    }
+
+    // اولویت بعدی: تاریخچه قیمت پایانی CDN (گاهی برای خود شاخص هم داده می‌دهد)
     try {
       const data = await this.fetchJson(
         `https://cdn.tsetmc.com/api/ClosingPrice/GetClosingPriceDailyList/${insCode}/90`,
@@ -827,7 +1042,7 @@ export class MarketService {
       const points = list
         .map((row) => {
           const dEven = String(row.dEven ?? row.date ?? '').replace(/\D/g, '');
-          const value = this.num(row.pClosing ?? row.closePrice ?? row.price ?? row.last);
+          const value = this.num(row.pClosing ?? row.closePrice ?? row.price ?? row.last ?? row.xDrNivJIdx004);
           if (dEven.length !== 8 || value == null || !(value > 0)) return null;
           return { tradeDate: dEvenToDate(dEven), value };
         })
@@ -1202,7 +1417,14 @@ export class MarketService {
 
   private num(v: unknown): number | null {
     if (v === null || v === undefined || v === '') return null;
-    const n = Number(v);
+    if (typeof v === 'number') return Number.isFinite(v) ? v : null;
+    let s = String(v)
+      .trim()
+      .replace(/,/g, '')
+      .replace(/٫/g, '.')
+      .replace(/[−–]/g, '-');
+    if (s.endsWith('-') && !s.startsWith('-')) s = `-${s.slice(0, -1)}`;
+    const n = Number(s);
     return Number.isFinite(n) ? n : null;
   }
 }

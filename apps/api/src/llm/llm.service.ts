@@ -4,6 +4,12 @@ import { ConfigService } from '@nestjs/config';
 import { UserRole } from '@prisma/client';
 import { PrismaService } from '../prisma/prisma.service';
 import { LLM_PROMPT_DEFAULTS, isValidPromptPurpose } from './prompt-defaults';
+import {
+  NEWS_LLM_PURPOSES,
+  SOCIAL_NETWORK_LABEL_FA,
+  appendSocialNetworkOutputRule,
+  redactSocialNetworkBrandInFaFields,
+} from './social-source-wording';
 
 type LlmCreds = { baseUrl: string; model: string; apiKey: string; fallbackModels: string[] };
 
@@ -41,7 +47,7 @@ export type LlmLiveSearch = {
 
 export type LlmChatOptions = {
   liveSearch?: boolean | LlmLiveSearch;
-  /** اگر در فهرست مدل‌ها Grok باشد، برای جستجوی X همان را جلو می‌اندازد */
+  /** اگر در فهرست مدل‌ها Grok باشد، برای جستجوی شبکه اجتماعی همان را جلو می‌اندازد */
   preferGrok?: boolean;
 };
 
@@ -157,7 +163,8 @@ export class LlmService {
     const custom = await this.prisma.llmPromptTemplate.findUnique({
       where: { userId_purpose: { userId: promptUserId, purpose } },
     });
-    return custom?.systemPrompt ?? fallback;
+    const prompt = custom?.systemPrompt ?? fallback;
+    return NEWS_LLM_PURPOSES.has(purpose) ? appendSocialNetworkOutputRule(prompt) : prompt;
   }
 
   async savePrompt(userId: string, purpose: string, systemPrompt: string) {
@@ -513,7 +520,7 @@ export class LlmService {
         }
       }
     }
-    throw this.humanizeError(lastErr ?? new Error('جستجوی زندهٔ X در دسترس نبود'));
+    throw this.humanizeError(lastErr ?? new Error(`جستجوی زندهٔ ${SOCIAL_NETWORK_LABEL_FA} در دسترس نبود`));
   }
 
   private async callChatJsonCompletions(
@@ -555,24 +562,28 @@ export class LlmService {
   ): Promise<T> {
     const creds = await this.resolveCredentials(userId);
     const search = normalizeLiveSearch(options?.liveSearch);
+    const hideNetworkBrand = NEWS_LLM_PURPOSES.has(purpose) || (Boolean(search) && search?.x !== false);
+    const system = hideNetworkBrand ? appendSocialNetworkOutputRule(systemPrompt) : systemPrompt;
     let usedModel = creds.model;
     let content: string;
     let citations: string[] = [];
 
     if (search) {
       try {
-        const r = await this.callResponsesForJson(creds, systemPrompt, userPrompt, search, options?.preferGrok);
+        const r = await this.callResponsesForJson(creds, system, userPrompt, search, options?.preferGrok);
         content = r.content;
         usedModel = r.model;
         citations = r.citations;
       } catch (e) {
-        this.logger.warn(`جستجوی زنده X ناموفق؛ ادامه بدون ابزار جستجو: ${(e as Error).message.slice(0, 180)}`);
-        const r = await this.callChatJsonCompletions(creds, systemPrompt, userPrompt);
+        this.logger.warn(
+          `جستجوی زندهٔ ${SOCIAL_NETWORK_LABEL_FA} ناموفق؛ ادامه بدون ابزار جستجو: ${(e as Error).message.slice(0, 180)}`,
+        );
+        const r = await this.callChatJsonCompletions(creds, system, userPrompt);
         content = r.content;
         usedModel = r.model;
       }
     } else {
-      const r = await this.callChatJsonCompletions(creds, systemPrompt, userPrompt);
+      const r = await this.callChatJsonCompletions(creds, system, userPrompt);
       content = r.content;
       usedModel = r.model;
     }
@@ -581,7 +592,7 @@ export class LlmService {
       data: {
         userId,
         purpose,
-        prompt: `${systemPrompt}\n---\n${userPrompt}`,
+        prompt: `${system}\n---\n${userPrompt}`,
         response: citations.length ? `${content}\n---\n${citations.join('\n')}` : content,
         model: usedModel,
       },
@@ -591,10 +602,10 @@ export class LlmService {
     if (citations.length && parsed && typeof parsed === 'object' && !Array.isArray(parsed)) {
       const rec = parsed as { sourceNoteFa?: string };
       if (!rec.sourceNoteFa?.trim()) {
-        rec.sourceNoteFa = `جستجوی زندهٔ X: ${citations.slice(0, 8).join('، ')}`;
+        rec.sourceNoteFa = `جستجوی زندهٔ ${SOCIAL_NETWORK_LABEL_FA}`;
       }
     }
-    return parsed;
+    return hideNetworkBrand ? redactSocialNetworkBrandInFaFields(parsed) : parsed;
   }
 
   async speakTts(text: string, userId?: string): Promise<Buffer> {

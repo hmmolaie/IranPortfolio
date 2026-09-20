@@ -223,12 +223,7 @@ export class PricesService {
     });
 
     if (row.usdIrr != null && row.usdIrr > 0) {
-      const macroDate = new Date(dateKey + 'T00:00:00.000Z');
-      await this.prisma.macroSnapshot.upsert({
-        where: { asOfDate: macroDate },
-        create: { asOfDate: macroDate, usdIrr: row.usdIrr },
-        update: { usdIrr: row.usdIrr },
-      });
+      await this.syncMacroUsd(dateKey, row.usdIrr);
     }
 
     return row;
@@ -389,18 +384,32 @@ export class PricesService {
     });
 
     if (parsed.usdIrr != null) {
-      const macroDate = new Date(dateKey + 'T00:00:00.000Z');
-      await this.prisma.macroSnapshot.upsert({
-        where: { asOfDate: macroDate },
-        create: { asOfDate: macroDate, usdIrr: parsed.usdIrr },
-        update: { usdIrr: parsed.usdIrr },
-      });
+      await this.syncMacroUsd(dateKey, parsed.usdIrr);
     }
 
     this.logger.log(
       `قیمت ${dateKey}: دلار=${parsed.usdIrr ?? '—'} طلاگرم۱۸=${parsed.goldGramRial ?? '—'}`,
     );
     return { ...row, sourceNoteFa: this.sourceNoteFa(row.sourceRaw) };
+  }
+
+  private async syncMacroUsd(dateKey: string, usdIrr: number) {
+    const macroDate = new Date(dateKey + 'T00:00:00.000Z');
+    const prev = await this.prisma.macroSnapshot.findFirst({
+      orderBy: { asOfDate: 'desc' },
+    });
+    await this.prisma.macroSnapshot.upsert({
+      where: { asOfDate: macroDate },
+      create: {
+        asOfDate: macroDate,
+        usdIrr,
+        inflationPct: prev?.inflationPct,
+        interestRatePct: prev?.interestRatePct,
+        geoRiskScore: prev?.geoRiskScore,
+        summaryFa: prev?.summaryFa,
+      },
+      update: { usdIrr },
+    });
   }
 
   private sourceNoteFa(raw: unknown): string | null {

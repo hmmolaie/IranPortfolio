@@ -39,6 +39,7 @@ type Portfolio = {
   strategy: string;
   capitalRial: number;
   cashRial: number;
+  createdAt: string;
   snapshots: Snapshot[];
   events: Array<{ id: string; type: string; noteFa?: string | null; createdAt: string }>;
 };
@@ -83,6 +84,9 @@ type AnalysisResult = {
 };
 
 const ADDABLE_TYPES = Object.values(AssetType);
+
+/** پیشنهاد چند استراتژی فعلاً از UI پنهان است. */
+const SHOW_MULTI_STRATEGY = false;
 
 function parseUserNumber(raw: string): number | null {
   const normalized = raw
@@ -442,6 +446,13 @@ export default function PortfolioDetailPage() {
       <div className="flex flex-wrap items-start justify-between gap-4">
         <div>
           <h1 className="text-3xl font-bold">{p.name}</h1>
+          <p className="mt-1 text-sm text-navy-800/55">
+            تاریخ تشکیل{' '}
+            {new Intl.DateTimeFormat('fa-IR', {
+              dateStyle: 'long',
+              timeZone: 'Asia/Tehran',
+            }).format(new Date(p.createdAt))}
+          </p>
           <p className="mt-2 text-navy-800/70">
             سرمایه {formatRial(p.capitalRial)} · نقد {formatRial(p.cashRial)}
             {latest && (
@@ -460,13 +471,15 @@ export default function PortfolioDetailPage() {
           >
             {busy === 'analyze' ? '...' : 'آنالیز سبد جاری با AI'}
           </button>
-          <button
-            className="btn-primary"
-            disabled={!!busy || strategiesBusy}
-            onClick={loadStrategies}
-          >
-            {strategiesBusy ? '...' : 'پیشنهاد چند استراتژی AI'}
-          </button>
+          {SHOW_MULTI_STRATEGY && (
+            <button
+              className="btn-primary"
+              disabled
+              onClick={loadStrategies}
+            >
+              پیشنهاد چند استراتژی AI
+            </button>
+          )}
           <button
             className="btn-secondary"
             disabled={!!busy}
@@ -563,7 +576,7 @@ export default function PortfolioDetailPage() {
         </section>
       )}
 
-      {strategies && strategies.length > 0 && (
+      {SHOW_MULTI_STRATEGY && strategies && strategies.length > 0 && (
         <section className="space-y-4">
           <h2 className="text-lg font-semibold">استراتژی‌های پیشنهادی</h2>
           <div className="grid gap-4 lg:grid-cols-2">

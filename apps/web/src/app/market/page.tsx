@@ -27,6 +27,7 @@ type QuotesPage = {
   page: number;
   pageSize: number;
   totalPages: number;
+  updatedAt?: string | null;
 };
 
 type IngestResult = {
@@ -93,10 +94,10 @@ function IndexSparkline({ index }: { index: MarketIndex }) {
   }
 
   return (
-    <div className="flex min-w-[9.5rem] items-center gap-2 rounded-xl border border-navy-900/10 bg-white px-3 py-2 shadow-sm">
-      <div className="min-w-0 flex-1">
-        <div className="truncate text-[11px] text-navy-800/55">{index.nameFa}</div>
-        <div className="mt-0.5 text-sm font-semibold tabular-nums text-navy-900">
+    <div className="flex shrink-0 items-center gap-3 rounded-xl border border-navy-900/10 bg-white px-3 py-2 shadow-sm">
+      <div className="shrink-0">
+        <div className="text-[11px] text-navy-800/55">{index.nameFa}</div>
+        <div className="mt-0.5 text-base font-semibold tabular-nums leading-6 text-navy-900">
           {formatIndexValue(index.lastValue)}
         </div>
         {pct && (
@@ -105,7 +106,7 @@ function IndexSparkline({ index }: { index: MarketIndex }) {
           </div>
         )}
       </div>
-      <div className="w-[7.5rem] shrink-0">
+      <div className="hidden w-[7.5rem] shrink-0 sm:block">
         {values.length >= 2 ? (
           <svg viewBox="0 0 120 36" className="h-9 w-full" aria-hidden>
             <path d={area} fill={fill} />
@@ -131,6 +132,7 @@ export default function MarketPage() {
   const [msg, setMsg] = useState('');
   const [loading, setLoading] = useState(false);
   const [isAdmin, setIsAdmin] = useState(false);
+  const [updatedAt, setUpdatedAt] = useState<string | null>(null);
 
   async function load(nextPage = page) {
     const params = new URLSearchParams();
@@ -143,6 +145,7 @@ export default function MarketPage() {
     setTotal(data.total ?? 0);
     setTotalPages(data.totalPages ?? 1);
     setPage(data.page ?? nextPage);
+    setUpdatedAt(data.updatedAt ?? null);
   }
 
   async function loadIndices() {
@@ -204,6 +207,13 @@ export default function MarketPage() {
 
   const totalIndex = indices.find((i) => i.key === 'total');
   const equalIndex = indices.find((i) => i.key === 'equalWeight');
+  const updatedLabel = updatedAt
+    ? new Intl.DateTimeFormat('fa-IR', {
+        dateStyle: 'medium',
+        timeStyle: 'short',
+        timeZone: 'Asia/Tehran',
+      }).format(new Date(updatedAt))
+    : null;
 
   return (
     <div className="space-y-6">
@@ -222,22 +232,27 @@ export default function MarketPage() {
       )}
 
       <div className="flex flex-wrap items-end justify-between gap-4">
-        <div className="flex min-w-0 flex-wrap items-center gap-3 sm:gap-4">
-          <div>
-            <h1 className="text-3xl font-bold">بازار سهام تهران</h1>
-            <p className="mt-2 text-navy-800/70">قیمت، EPS و P/E ذخیره‌شده</p>
-          </div>
-          <div className="flex flex-wrap items-center gap-2">
-            {totalIndex && <IndexSparkline index={totalIndex} />}
-            {equalIndex && <IndexSparkline index={equalIndex} />}
-          </div>
+        <div>
+          <h1 className="text-3xl font-bold">بازار سهام تهران</h1>
+          <p className="mt-2 text-navy-800/70">قیمت، EPS و P/E ذخیره‌شده</p>
         </div>
-        {isAdmin && (
-          <button className="btn-primary" onClick={ingest} disabled={loading}>
-            {loading ? 'در حال دریافت...' : 'به‌روزرسانی از TSETMC'}
-          </button>
-        )}
+        <div className="flex flex-col items-end gap-1">
+          {isAdmin && (
+            <button className="btn-primary" onClick={ingest} disabled={loading}>
+              {loading ? 'در حال دریافت...' : 'به‌روزرسانی از TSETMC'}
+            </button>
+          )}
+          <p className="text-xs text-navy-800/50">
+            آخرین به‌روزرسانی: {updatedLabel ?? 'هنوز انجام نشده'}
+          </p>
+        </div>
       </div>
+      {(totalIndex || equalIndex) && (
+        <div className="flex flex-wrap items-center gap-2">
+          {totalIndex && <IndexSparkline index={totalIndex} />}
+          {equalIndex && <IndexSparkline index={equalIndex} />}
+        </div>
+      )}
 
       {msg && <p className="text-sm text-navy-800/80">{msg}</p>}
 
