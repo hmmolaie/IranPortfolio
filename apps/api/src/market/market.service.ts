@@ -894,7 +894,7 @@ export class MarketService {
           changePct: this.indexChangePct(
             equal,
             row?.index_equalWeight_change_percent ?? row?.index_equalWeight_change,
-          );
+          ),
         };
       }
     } catch (e) {
