@@ -117,9 +117,15 @@ export class NewsService implements OnModuleInit {
       orderBy: { newsDateKey: 'desc' },
       include: { items: { orderBy: { sortOrder: 'asc' } } },
     });
+    const lastRefresh = await this.prisma.economicNewsBatch.findFirst({
+      where: { userId: ownerId },
+      orderBy: { updatedAt: 'desc' },
+      select: { updatedAt: true },
+    });
     return {
       todayKey: tehranDateKey(),
       todayLabelFa: tehranDateFa(),
+      lastRefreshAt: lastRefresh?.updatedAt ?? null,
       batches,
     };
   }

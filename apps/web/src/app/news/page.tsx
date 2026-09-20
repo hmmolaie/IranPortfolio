@@ -4,7 +4,7 @@ import { useEffect, useState } from 'react';
 import { useRouter } from 'next/navigation';
 import { api, formatNum, getToken, getUserRole, setUserRole, UserRole } from '@/lib/api';
 import { useToast } from '@/components/Toast';
-import { formatShamsiDate } from '@/lib/shamsi-date';
+import { formatShamsiDate, formatShamsiDateTime } from '@/lib/shamsi-date';
 
 type NewsItem = {
   id: string;
@@ -35,6 +35,7 @@ type NewsBatch = {
 type NewsListResponse = {
   todayKey: string;
   todayLabelFa: string;
+  lastRefreshAt?: string | null;
   batches: NewsBatch[];
 };
 
@@ -188,11 +189,17 @@ export default function NewsPage() {
             <p className="mt-1 text-sm text-navy-800/50">امروز: {formatShamsiDate(data.todayKey)}</p>
           )}
         </div>
-        {isAdmin && (
-          <button className="btn-primary" onClick={refresh} disabled={loading}>
-            {loading ? 'در حال جستجوی شبکه اجتماعی...' : 'به‌روزرسانی اخبار'}
-          </button>
-        )}
+        <div className="flex flex-col items-start gap-1 sm:items-end">
+          {isAdmin && (
+            <button className="btn-primary" onClick={refresh} disabled={loading}>
+              {loading ? 'در حال جستجوی شبکه اجتماعی...' : 'به‌روزرسانی اخبار'}
+            </button>
+          )}
+          <p className="text-xs text-navy-800/50">
+            آخرین به‌روزرسانی:{' '}
+            {data?.lastRefreshAt ? formatShamsiDateTime(data.lastRefreshAt) : 'هنوز انجام نشده'}
+          </p>
+        </div>
       </div>
 
       {todayBatch?.summaryFa && (
