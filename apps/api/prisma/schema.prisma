@@ -541,10 +541,37 @@ model WorldMarketRefresh {
   dateKey      String
   symbolCount  Int
   sourceUrl    String
+  /// خلاصهٔ اخبار کلان جهان همان همگام‌سازی
   xSummaryFa   String?
+  /// رسانه‌ها و کانال‌هایی که خبر از آن‌ها خوانده شد
   xSourceNoteFa String?
   createdAt    DateTime @default(now())
   updatedAt    DateTime @updatedAt
+}
+
+/// حداکثر ۵ خبر مهم اقتصاد کلان جهان (به‌ویژه آمریکا) اثرگذار بر نفت، طلا، دلار، فلزات و رمزارز
+model WorldMacroNews {
+  id              String   @id @default(cuid())
+  dateKey         String
+  titleFa         String
+  summaryFa       String
+  /// اثر بر نفت، طلا، دلار، فلزات یا رمزارز
+  assetImpactFa   String?
+  /// اثر محتمل بر اقتصاد کلان یا بورس ایران
+  iranImpactFa    String?
+  /// دارایی‌های اثرپذیر: نفت، طلا، دلار، مس، بیت‌کوین
+  assetsFa        String?
+  /// bullish | bearish | neutral | mixed
+  impactDirection String?
+  relevanceScore  Float?
+  /// رسانه یا کانال معتبر منتشرکننده
+  sourceHintFa    String?
+  sortOrder       Int      @default(0)
+  fetchedAt       DateTime
+  createdAt       DateTime @default(now())
+
+  @@index([dateKey])
+  @@index([sortOrder])
 }
 
 /** پنج سیگنال خرید/فروش از فضای X روی نمادهای اقتصاد دنیا */

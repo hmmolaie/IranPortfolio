@@ -2,13 +2,36 @@ import { BadRequestException, Injectable, Logger, OnModuleInit } from '@nestjs/c
 import { Cron } from '@nestjs/schedule';
 import { Prisma } from '@prisma/client';
 import { PrismaService } from '../prisma/prisma.service';
-import { tehranDateFa, tehranDateKey } from '../news/tehran-date';
+import { daysAgoDateKey, tehranDateFa, tehranDateKey } from '../news/tehran-date';
 import { PricesService } from '../prices/prices.service';
+import { LlmService } from '../llm/llm.service';
+import { UsersService } from '../users/users.service';
 import { BITPIN_MARKETS_URL } from '../prices/bitpin-spot';
 import { fetchYahooCryptoPrices, yahooSymbolFor } from './yahoo-crypto';
 
 const REFRESH_ID = 'latest';
 const CREATE_CHUNK = 250;
+const MAX_MACRO_NEWS = 5;
+const MACRO_NEWS_LESSON_SOURCE = 'world_macro_news';
+
+type MacroNewsLlmItem = {
+  titleFa?: unknown;
+  summaryFa?: unknown;
+  assetImpactFa?: unknown;
+  iranImpactFa?: unknown;
+  assetsFa?: unknown;
+  impactDirection?: unknown;
+  relevanceScore?: unknown;
+  sourceHintFa?: unknown;
+  lessonTitleFa?: unknown;
+  lessonBodyFa?: unknown;
+};
+
+type MacroNewsLlmOut = {
+  analysisSummaryFa?: unknown;
+  sourceNoteFa?: unknown;
+  items?: unknown;
+};
 
 type BitpinTag = { name?: unknown; name_en?: unknown };
 type BitpinCurrency = {
@@ -71,6 +94,17 @@ function asBool(v: unknown, fallback = false): boolean {
   return typeof v === 'boolean' ? v : fallback;
 }
 
+function normalizeLessonTitle(s: string): string {
+  return s.replace(/\s+/g, ' ').trim().toLowerCase();
+}
+
+/** متن فارسی مدل؛ «null» و خط تیره را خالی حساب می‌کند */
+function faText(v: unknown, maxChars: number): string {
+  const t = asText(v).replace(/\s+/g, ' ').trim();
+  if (!t || /^(null|none|n\/a|-|—)$/i.test(t)) return '';
+  return t.slice(0, maxChars);
+}
+
 @Injectable()
 export class WorldMarketsService implements OnModuleInit {
   private readonly logger = new Logger(WorldMarketsService.name);
@@ -79,6 +113,8 @@ export class WorldMarketsService implements OnModuleInit {
   constructor(
     private readonly prisma: PrismaService,
     private readonly prices: PricesService,
+    private readonly llm: LlmService,
+    private readonly users: UsersService,
   ) {}
 
   onModuleInit() {
@@ -109,10 +145,14 @@ export class WorldMarketsService implements OnModuleInit {
   }
 
   async list() {
-    const [refresh, markets] = await Promise.all([
+    const [refresh, markets, macroNews] = await Promise.all([
       this.prisma.worldMarketRefresh.findUnique({ where: { id: REFRESH_ID } }),
       this.prisma.worldMarket.findMany({
         orderBy: [{ volumeNum: 'desc' }, { titleFa: 'asc' }],
+      }),
+      this.prisma.worldMacroNews.findMany({
+        orderBy: [{ sortOrder: 'asc' }, { createdAt: 'desc' }],
+        take: MAX_MACRO_NEWS,
       }),
     ]);
 
@@ -134,8 +174,31 @@ export class WorldMarketsService implements OnModuleInit {
           titleFa: code === 'IRT' ? 'تومان' : code === 'USDT' ? 'تتر' : code,
         }))
         .sort((a, b) => b.count - a.count),
+      macroNews,
+      macroNewsSummaryFa: refresh?.xSummaryFa ?? null,
+      macroNewsSourceNoteFa: refresh?.xSourceNoteFa ?? null,
       markets,
     };
+  }
+
+  /** اخبار کلان جهان برای زمینهٔ پیشنهاد و آنالیز سبد */
+  async recentMacroNews(limit = MAX_MACRO_NEWS) {
+    return this.prisma.worldMacroNews.findMany({
+      where: { dateKey: { gte: daysAgoDateKey(7) } },
+      orderBy: [{ dateKey: 'desc' }, { sortOrder: 'asc' }],
+      take: limit,
+      select: {
+        dateKey: true,
+        titleFa: true,
+        summaryFa: true,
+        assetImpactFa: true,
+        iranImpactFa: true,
+        assetsFa: true,
+        impactDirection: true,
+        relevanceScore: true,
+        sourceHintFa: true,
+      },
+    });
   }
 
   async refreshFromBitpin() {
@@ -191,9 +254,142 @@ export class WorldMarketsService implements OnModuleInit {
       } catch (e) {
         this.logger.warn(`ذخیره دلار/طلا از بیت‌پین: ${(e as Error).message.slice(0, 180)}`);
       }
+      try {
+        await this.refreshMacroNews(dateKey, fetchedAt);
+      } catch (e) {
+        this.logger.warn(`اخبار کلان جهان: ${(e as Error).message.slice(0, 180)}`);
+      }
       return this.list();
     } finally {
       this.refreshInFlight = false;
+    }
+  }
+
+  /** حداکثر ۵ خبر مهم اقتصاد کلان جهان و آمریکا؛ درس‌های پایدار هم در Lesson ذخیره می‌شوند */
+  private async refreshMacroNews(dateKey: string, fetchedAt: Date) {
+    const adminId = (await this.users.getAdminUserId()) ?? undefined;
+    const system = await this.llm.getSystemPrompt(adminId, 'world_macro_news');
+    const previous = await this.prisma.worldMacroNews.findMany({
+      orderBy: { createdAt: 'desc' },
+      take: 10,
+      select: { titleFa: true },
+    });
+
+    const out = await this.llm.chatJson<MacroNewsLlmOut>(
+      'world_macro_news',
+      system,
+      JSON.stringify(
+        {
+          todayTehran: dateKey,
+          todayLabelFa: tehranDateFa(fetchedAt),
+          maxItems: MAX_MACRO_NEWS,
+          recentHeadlinesToAvoidRepeat: previous.map((p) => p.titleFa),
+          instruction:
+            'مهم‌ترین اخبار اقتصاد کلان جهان و مهم‌تر از همه آمریکا را از رسانه‌های معتبر و پربازدید بخوان؛ فقط خبرهایی که روی قیمت نفت، طلا، دلار، فلزات یا رمزارز اثر دارد. حداکثر ۵ خبر. اگر خبری روی اقتصاد کلان یا بورس ایران هم اثر می‌گذارد در iranImpactFa بنویس. اگر درس پایداری برای سبد سهام داشت lessonTitleFa و lessonBodyFa را پر کن.',
+        },
+        null,
+        2,
+      ),
+      adminId,
+      {
+        preferGrok: true,
+        liveSearch: { x: true, web: true, fromDate: daysAgoDateKey(3), toDate: dateKey },
+      },
+    );
+
+    const items = Array.isArray(out?.items) ? (out.items as MacroNewsLlmItem[]) : [];
+    const rows = items
+      .map((item, idx) => this.mapMacroNews(item, idx, dateKey, fetchedAt))
+      .filter((r): r is Prisma.WorldMacroNewsCreateManyInput => Boolean(r))
+      .slice(0, MAX_MACRO_NEWS);
+
+    if (!rows.length) {
+      this.logger.warn(`مدل برای ${dateKey} خبر کلان جهانی برنگرداند؛ اخبار قبلی نگه داشته شد`);
+      return;
+    }
+
+    await this.prisma.$transaction(async (tx) => {
+      await tx.worldMacroNews.deleteMany();
+      await tx.worldMacroNews.createMany({ data: rows });
+      await tx.worldMarketRefresh.update({
+        where: { id: REFRESH_ID },
+        data: {
+          xSummaryFa: faText(out?.analysisSummaryFa, 2000) || null,
+          xSourceNoteFa: faText(out?.sourceNoteFa, 600) || null,
+        },
+      });
+    });
+    this.logger.log(`اخبار کلان جهان ${dateKey}: ${rows.length} خبر ذخیره شد`);
+
+    await this.saveMacroNewsLessons(items, dateKey);
+  }
+
+  private mapMacroNews(
+    item: MacroNewsLlmItem,
+    idx: number,
+    dateKey: string,
+    fetchedAt: Date,
+  ): Prisma.WorldMacroNewsCreateManyInput | null {
+    const titleFa = faText(item.titleFa, 220);
+    const summaryFa = faText(item.summaryFa, 2000);
+    if (titleFa.length < 4 || summaryFa.length < 20) return null;
+    const direction = faText(item.impactDirection, 20).toLowerCase();
+    const score = asFinite(item.relevanceScore);
+    return {
+      dateKey,
+      titleFa,
+      summaryFa,
+      assetImpactFa: faText(item.assetImpactFa, 1200) || null,
+      iranImpactFa: faText(item.iranImpactFa, 1200) || null,
+      assetsFa: faText(item.assetsFa, 300) || null,
+      impactDirection: ['bullish', 'bearish', 'neutral', 'mixed'].includes(direction)
+        ? direction
+        : null,
+      relevanceScore: score != null ? Math.max(0, Math.min(10, score)) : null,
+      sourceHintFa: faText(item.sourceHintFa, 200) || null,
+      sortOrder: idx,
+      fetchedAt,
+    };
+  }
+
+  /** درس‌های پایدار خبرهای جهانی زیر کاربر ادمین ذخیره می‌شوند تا در پیشنهاد سبد بیایند */
+  private async saveMacroNewsLessons(items: MacroNewsLlmItem[], dateKey: string) {
+    const adminId = await this.users.getAdminUserId();
+    if (!adminId) return;
+
+    const candidates = items
+      .map((item) => ({
+        titleFa: faText(item.lessonTitleFa, 180),
+        bodyFa: faText(item.lessonBodyFa, 4000),
+      }))
+      .filter((l) => l.titleFa.length >= 4 && l.bodyFa.length >= 20);
+    if (!candidates.length) return;
+
+    const existing = await this.prisma.lesson.findMany({
+      where: { userId: adminId },
+      select: { titleFa: true },
+      orderBy: { createdAt: 'desc' },
+      take: 400,
+    });
+    const seen = new Set(existing.map((l) => normalizeLessonTitle(l.titleFa)));
+
+    let created = 0;
+    for (const lesson of candidates) {
+      const key = normalizeLessonTitle(lesson.titleFa);
+      if (!key || seen.has(key)) continue;
+      seen.add(key);
+      await this.prisma.lesson.create({
+        data: {
+          userId: adminId,
+          titleFa: lesson.titleFa,
+          bodyFa: lesson.bodyFa,
+          source: `${MACRO_NEWS_LESSON_SOURCE}:${dateKey}`,
+        },
+      });
+      created += 1;
+    }
+    if (created) {
+      this.logger.log(`درس‌آموخته از اخبار جهانی ${dateKey}: ${created} مورد`);
     }
   }
 

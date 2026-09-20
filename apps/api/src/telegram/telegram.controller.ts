@@ -64,6 +64,6 @@ export class TelegramController {
   @Post('send-today')
   @UseGuards(AdminGuard)
   sendToday(@Body() dto: SendTodayDto) {
-    return this.telegram.deliverToday({ force: Boolean(dto.force) });
+    return this.telegram.startDeliverToday(Boolean(dto.force));
   }
 }

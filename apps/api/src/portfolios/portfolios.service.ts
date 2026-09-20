@@ -10,6 +10,7 @@ import { PrismaService } from '../prisma/prisma.service';
 import { LlmService } from '../llm/llm.service';
 import { NewsService } from '../news/news.service';
 import { UsersService } from '../users/users.service';
+import { WorldMarketsService } from '../world-markets/world-markets.service';
 import { daysAgoDateKey } from '../news/tehran-date';
 import { foldFa, tokenizeMarketQuestion } from '../market/tehran-chat';
 
@@ -63,6 +64,7 @@ export class PortfoliosService {
     private readonly llm: LlmService,
     private readonly news: NewsService,
     private readonly users: UsersService,
+    private readonly worldMarkets: WorldMarketsService,
   ) {}
 
   list(userId: string) {
@@ -226,6 +228,7 @@ export class PortfoliosService {
       take: 30,
     });
     const economicNews = await this.news.getForPortfolioContext(userId, 40, 30);
+    const worldMacroNews = await this.worldMarkets.recentMacroNews();
     const fxHistory = await this.prisma.spotPriceDaily.findMany({
       where: { dateKey: { gte: daysAgoDateKey(30) } },
       orderBy: { dateKey: 'asc' },
@@ -271,6 +274,7 @@ export class PortfoliosService {
         })),
         macro,
         ...splitNewsForPortfolio(economicNews),
+        worldMacroNews,
         fxHistory,
         topFunds: funds.map((f) => ({
           fundName: f.fundName,
@@ -302,11 +306,11 @@ export class PortfoliosService {
           ? `این ایجاد اولیه سبد است. سرمایه کل ${portfolio.capitalRial} ریال و استراتژی ${portfolio.strategy} است.
 فقط weightPct بده (جمع ≈ ۱۰۰). جمع ارزش سبد نباید از ${portfolio.capitalRial} ریال بیشتر شود.
 سهامی پیشنهاد نکن که قیمت یک واحدش از سهم بودجه‌اش بیشتر باشد.
-حتماً lessons، fundHoldings (موجودی/خرید/فروش صندوق‌ها)، economicNews (حداکثر ۷ خبر اثرگذار بر اقتصاد ایران از شبکه اجتماعی)، investmentOpportunities (حداکثر ۳ فرصت) و fxHistory (دلار/طلا ~۳۰ روز) را در تصمیم و در reasonFa/strategySummaryFa منعکس کن.
+حتماً lessons، fundHoldings (موجودی/خرید/فروش صندوق‌ها)، economicNews (حداکثر ۷ خبر اثرگذار بر اقتصاد ایران از شبکه اجتماعی)، investmentOpportunities (حداکثر ۳ فرصت)، worldMacroNews (اخبار کلان جهان و آمریکا با اثر بر نفت/طلا/دلار/فلزات/رمزارز؛ فقط آنجا که روی اقتصاد کلان یا بورس ایران اثر می‌گذارد) و fxHistory (دلار/طلا ~۳۰ روز) را در تصمیم و در reasonFa/strategySummaryFa منعکس کن.
 PHYSICAL_GOLD / PHYSICAL_USD در صورت مناسب بودن مجاز است.`
           : `چند استراتژی متفاوت پیشنهاد بده. سرمایه کل ${portfolio.capitalRial} ریال است.
 weightPct فقط درصد از همین سرمایه است (جمع هر استراتژی ≈ ۱۰۰). ارزش کل هر استراتژی مساوی همین سرمایه است و نباید بیشتر شود.
-حتماً lessons، fundHoldings، economicNews، investmentOpportunities و fxHistory را لحاظ کن و در توضیحات ارجاع بده.`,
+حتماً lessons، fundHoldings، economicNews، investmentOpportunities، worldMacroNews (اثر اقتصاد جهان و آمریکا بر ایران) و fxHistory را لحاظ کن و در توضیحات ارجاع بده.`,
       },
       null,
       2,
@@ -1229,6 +1233,7 @@ ${historyText}`,
     const universe = await this.buildUniverse();
     const macro = await this.prisma.macroSnapshot.findFirst({ orderBy: { asOfDate: 'desc' } });
     const economicNews = await this.news.getForPortfolioContext(userId, 40, 30);
+    const worldMacroNews = await this.worldMarkets.recentMacroNews();
     const fxHistory = await this.prisma.spotPriceDaily.findMany({
       where: { dateKey: { gte: daysAgoDateKey(30) } },
       orderBy: { dateKey: 'asc' },
@@ -1279,6 +1284,7 @@ summaryFa، نقاط قوت و ضعف را با فعل گذشته گزارش ک�
         currentItems: pricedItems,
         macro,
         ...splitNewsForPortfolio(economicNews),
+        worldMacroNews,
         fxHistory,
         lessons: lessons.map((l) => ({ title: l.titleFa, body: l.bodyFa })),
       },

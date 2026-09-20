@@ -164,6 +164,22 @@ function expireAndRedirect() {
   window.location.assign('/');
 }
 
+/** بدنهٔ پاسخ فقط یک بار خوانده می‌شود؛ اگر JSON نبود (مثل خطای nginx) کد وضعیت را نشان می‌دهد */
+async function readErrorMessage(res: Response): Promise<string> {
+  const raw = await res.text().catch(() => '');
+  const body = raw.trim();
+  if (!body) return `پاسخ سرور خطای ${res.status} بود`;
+  try {
+    const j = JSON.parse(body) as { message?: unknown; error?: unknown };
+    if (Array.isArray(j.message)) return j.message.join('، ');
+    if (typeof j.message === 'string' && j.message.trim()) return j.message;
+    if (typeof j.error === 'string' && j.error.trim()) return j.error;
+  } catch {
+    if (!body.startsWith('<')) return body.slice(0, 300);
+  }
+  return `پاسخ سرور خطای ${res.status} بود`;
+}
+
 export async function api<T>(
   path: string,
   options: RequestInit & { auth?: boolean } = {},
@@ -189,16 +205,7 @@ export async function api<T>(
     ) {
       expireAndRedirect();
     }
-    let message = 'خطای سرور';
-    try {
-      const j = await res.json();
-      if (Array.isArray(j.message)) message = j.message.join('، ');
-      else if (typeof j.message === 'string') message = j.message;
-      else if (typeof j.error === 'string') message = j.error;
-    } catch {
-      message = await res.text();
-    }
-    throw new Error(typeof message === 'string' && message ? message : 'خطای سرور');
+    throw new Error(await readErrorMessage(res));
   }
   if (res.status === 204) return undefined as T;
   return res.json() as Promise<T>;

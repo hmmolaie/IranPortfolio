@@ -501,6 +501,14 @@ export default function SettingsPage() {
       if (res.ok) toast.success(text);
       else toast.error(text);
       await loadTelegramConfig();
+      if (res.ok) {
+        // ارسال در پس‌زمینه ادامه دارد؛ نتیجهٔ «آخرین ارسال» چند لحظه بعد می‌رسد
+        for (const delay of [20_000, 60_000, 150_000]) {
+          setTimeout(() => {
+            void loadTelegramConfig();
+          }, delay);
+        }
+      }
     } catch (err) {
       const text = (err as Error).message || 'ارسال ناموفق بود.';
       setTgFeedback({ ok: false, text });

@@ -44,7 +44,7 @@
 | `news` | اخبار و فرصت‌های خرد روزانه، زمینهٔ پیشنهاد سبد |
 | `telegram` | ربات تلگرام [`https://t.me/sabadyaar_bot`](https://t.me/sabadyaar_bot): وصل با موبایل پروفایل، پیام ۸:۳۰ + فایل صوتی اخبار با صدای زن |
 | `telegram-assistant` | دستیار دوطرفه تلگرام: پرسش LLM، ترجمه/خلاصه صفحه، PDF فارسی RTL، صوت یوتیوب |
-| `world-markets` | اقتصاد دنیا: بیت‌پین + اختلاف قیمت رمزارز با یاهو فایننس |
+| `world-markets` | اقتصاد دنیا: بیت‌پین + اختلاف قیمت رمزارز با یاهو فایننس + ۵ خبر کلان جهان/آمریکا |
 | `forex` | آزمایش گراف فارکس (`/forex` فقط admin): نرخ جفت‌ارز + BTC/ETH/طلا/نقره، ذخیرهٔ رأس/یال با زمان |
 | `lessons` | درس‌آموخته‌ها؛ آپلود PDF اقتصاد ایران و استخراج با LLM |
 | `prices` | قیمت دلار و طلا (پیش‌فرض بیت‌پین؛ API سفارشی اختیاری) |
@@ -53,7 +53,7 @@
 
 ### داده (`apps/api/prisma/schema.prisma`)
 
-موجودیت‌های کلیدی: `User`، `UserProfile` (موبایل و اتصال تلگرام)، `WebAuthnCredential`، `Portfolio`، `PortfolioSnapshot` / `SnapshotItem`، `Instrument` / `PriceBar`، `FundReport` / `FundHolding`، `MarketChatMessage`، `Lesson`، `MacroSnapshot`، `EconomicNewsBatch` / `EconomicNewsItem`، `TelegramBotConfig`، `TelegramAssistantConfig`، `WorldMarket` / `WorldMarketRefresh` / `WorldMarketSignal`، `ForexSnapshot` / `ForexGraphNode` / `ForexGraphEdge`، `AiTrace`، `LlmSetting`.
+موجودیت‌های کلیدی: `User`، `UserProfile` (موبایل و اتصال تلگرام)، `WebAuthnCredential`، `Portfolio`، `PortfolioSnapshot` / `SnapshotItem`، `Instrument` / `PriceBar`، `FundReport` / `FundHolding`، `MarketChatMessage`، `Lesson`، `MacroSnapshot`، `EconomicNewsBatch` / `EconomicNewsItem`، `TelegramBotConfig`، `TelegramAssistantConfig`، `WorldMarket` / `WorldMarketRefresh` / `WorldMacroNews`، `ForexSnapshot` / `ForexGraphNode` / `ForexGraphEdge`، `AiTrace`، `LlmSetting`.
 
 اسنپ‌شات‌ها تاریخچهٔ پیشنهاد و بازچینش را نگه می‌دارند؛ رویدادها در `PortfolioEvent`.
 
@@ -72,7 +72,7 @@ Enumها و DTOهای پیشنهاد سبد + لیبل‌های فارسی اس�
 ```
 https://t.me/sabadyaar_bot
 ```
-6. **اقتصاد دنیا:** هر روز ۷:۰۰ تهران همهٔ بازارهای بیت‌پین خوانده و در `WorldMarket` جایگزین می‌شوند. قیمت رمزارز با یاهو فایننس مقایسه و اختلاف در همان کارت نماد نشان داده می‌شود. مدیر می‌تواند از صفحهٔ ادمین فوری همگام کند.
+6. **اقتصاد دنیا:** هر روز ۷:۰۰ تهران همهٔ بازارهای بیت‌پین خوانده و در `WorldMarket` جایگزین می‌شوند. قیمت رمزارز با یاهو فایننس مقایسه و اختلاف در همان کارت نماد نشان داده می‌شود. مدیر می‌تواند از صفحهٔ ادمین فوری همگام کند. در ادامهٔ همان همگام‌سازی (خودکار یا فوری)، پرامپت `world_macro_news` با جستجوی زندهٔ خبر حداکثر ۵ خبر مهم اقتصاد کلان جهان و به‌ویژه آمریکا را که روی نفت، طلا، دلار، فلزات پایه یا رمزارز اثر دارد از رسانه‌های معتبر می‌خواند و در `WorldMacroNews` جایگزین می‌کند (خلاصه و فهرست منابع در `WorldMarketRefresh`). این اخبار در صفحهٔ `/world` مثل اخبار ایران نمایش داده می‌شوند، `worldMacroNews` در زمینهٔ پیشنهاد و آنالیز سبد به مدل داده می‌شود (فقط اثر ایران ملاک تصمیم است)، و درس‌های پایدار هر خبر با منبع `world_macro_news:<dateKey>` به `Lesson` اضافه می‌شوند.
 7. **آزمایش فارکس:** نرخ جفت‌ارزهای معروف به‌علاوه بیت‌کوین، اتریوم، طلا و نقره خوانده می‌شود، گراف رأس/یال با زمان ذخیره می‌گردد، و برای هر مسیر سود خالص پس از اسپرد، کمیسیون، لغزش، سواپ و تأخیر اجرا حساب می‌شود. پیشنهاد معامله فقط اگر خالص مثبت باشد.
 8. **ورود زیست‌سنجی:** روی گوشی و HTTPS دامنه، پس از ورود با رمز می‌توان اثر انگشت یا چهرهٔ همان دستگاه را ثبت کرد؛ ورود بعدی با WebAuthn و بدون رمز است.
 
@@ -82,7 +82,7 @@ https://t.me/sabadyaar_bot
 
 | ساعت تهران | کار |
 |------------|-----|
-| ۰۷:۰۰ | اقتصاد دنیا از بیت‌پین + سیگنال X + ذخیره دلار آزاد و طلای ۱۸ عیار |
+| ۰۷:۰۰ | اقتصاد دنیا از بیت‌پین + اخبار کلان جهان/آمریکا + ذخیره دلار آزاد و طلای ۱۸ عیار |
 | ۰۸:۰۰ | اخبار و فرصت‌های خرد (تلاش مجدد ۹ و ۱۰ اگر خالی ماند) |
 | ۰۸:۳۰ | تلگرام شخصی: نمودار سبد + پیشنهاد AI + اخبار + فایل صوتی اخبار (تلاش مجدد ۸:۴۵) |
 | ۱۲:۰۰ | تکرار قیمت دلار و طلا از بیت‌پین |

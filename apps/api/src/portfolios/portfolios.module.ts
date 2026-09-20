@@ -4,9 +4,10 @@ import { PortfoliosController } from './portfolios.controller';
 import { LlmModule } from '../llm/llm.module';
 import { NewsModule } from '../news/news.module';
 import { UsersModule } from '../users/users.module';
+import { WorldMarketsModule } from '../world-markets/world-markets.module';
 
 @Module({
-  imports: [LlmModule, NewsModule, UsersModule],
+  imports: [LlmModule, NewsModule, UsersModule, WorldMarketsModule],
   providers: [PortfoliosService],
   controllers: [PortfoliosController],
   exports: [PortfoliosService],

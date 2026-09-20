@@ -244,6 +244,37 @@ export class TelegramService implements OnModuleInit {
     }
   }
 
+  /**
+   * ارسال دستی ادمین. کار سنگین است (آنالیز هر کاربر + ساخت صوت)، پس در پس‌زمینه می‌رود
+   * تا درخواست HTTP پشت پروکسی تایم‌اوت نشود؛ نتیجه در TelegramDigestLog می‌نشیند.
+   */
+  async startDeliverToday(force: boolean) {
+    if (this.sendInFlight) {
+      return { ok: false, messageFa: 'ارسال قبلی هنوز تمام نشده است.' };
+    }
+    const token = await this.readToken();
+    const cfg = await this.prisma.telegramBotConfig.findUnique({ where: { id: CONFIG_ID } });
+    if (!cfg?.enabled || !token) {
+      return { ok: false, messageFa: 'ربات تلگرام پیکربندی نشده یا غیرفعال است.' };
+    }
+
+    void this.deliverToday({ force }).catch(async (e) => {
+      const reason = `ارسال ناتمام ماند: ${(e as Error).message.slice(0, 200)}`;
+      this.logger.error(reason);
+      try {
+        await this.upsertLog(tehranDateKey(), 0, 0, reason);
+      } catch {
+        /* لاگ ناموفق را نادیده بگیر */
+      }
+    });
+
+    return {
+      ok: true,
+      messageFa:
+        'ارسال شروع شد. ساخت آنالیز و فایل صوتی چند دقیقه طول می‌کشد؛ نتیجه در «آخرین ارسال» همین صفحه می‌آید.',
+    };
+  }
+
   async deliverToday(opts: { force?: boolean; batch?: NewsBatchRow | null }) {
     if (this.sendInFlight) {
       return { ok: false, messageFa: 'ارسال قبلی هنوز تمام نشده است.' };

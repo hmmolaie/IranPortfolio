@@ -39,13 +39,43 @@ type WorldMarket = {
 
 type QuoteStat = { code: string; count: number; titleFa: string };
 
+type MacroNews = {
+  id: string;
+  dateKey: string;
+  titleFa: string;
+  summaryFa: string;
+  assetImpactFa?: string | null;
+  iranImpactFa?: string | null;
+  assetsFa?: string | null;
+  impactDirection?: string | null;
+  relevanceScore?: number | null;
+  sourceHintFa?: string | null;
+};
+
 type WorldList = {
   fetchedAt: string | null;
   dateLabelFa: string | null;
   symbolCount: number;
   sourceUrl: string;
   quotes: QuoteStat[];
+  macroNews: MacroNews[];
+  macroNewsSummaryFa?: string | null;
+  macroNewsSourceNoteFa?: string | null;
   markets: WorldMarket[];
+};
+
+const DIRECTION_FA: Record<string, string> = {
+  bullish: 'مثبت',
+  bearish: 'منفی',
+  neutral: 'خنثی',
+  mixed: 'مختلط',
+};
+
+const DIRECTION_CLASS: Record<string, string> = {
+  bullish: 'bg-emerald-100 text-emerald-800',
+  bearish: 'bg-red-100 text-red-800',
+  neutral: 'bg-navy-100 text-navy-800',
+  mixed: 'bg-amber-100 text-amber-800',
 };
 
 type QuoteFilter = 'ALL' | string;
@@ -94,6 +124,46 @@ function formatChange(n: number | null | undefined) {
 function coinColor(hex?: string | null) {
   if (!hex) return '#a8893e';
   return hex.startsWith('#') ? hex : `#${hex}`;
+}
+
+function MacroNewsCard({ item }: { item: MacroNews }) {
+  const direction = item.impactDirection ?? '';
+  return (
+    <article className="card">
+      <div className="flex flex-wrap items-start justify-between gap-2">
+        <h3 className="text-base font-semibold">{item.titleFa}</h3>
+        <div className="flex flex-wrap gap-2 text-xs">
+          {DIRECTION_FA[direction] && (
+            <span className={clsx('rounded px-2 py-0.5', DIRECTION_CLASS[direction])}>
+              {DIRECTION_FA[direction]}
+            </span>
+          )}
+          {item.relevanceScore != null && (
+            <span className="rounded bg-navy-100 px-2 py-0.5 text-navy-800">
+              اهمیت {item.relevanceScore.toLocaleString('fa-IR', { maximumFractionDigits: 1 })}
+            </span>
+          )}
+        </div>
+      </div>
+      <p className="mt-2 whitespace-pre-line leading-7 text-navy-800/80">{item.summaryFa}</p>
+      {item.assetImpactFa && (
+        <p className="mt-2 text-sm leading-7 text-navy-800/70">
+          <span className="font-medium">اثر بر بازارها: </span>
+          {item.assetImpactFa}
+        </p>
+      )}
+      {item.iranImpactFa && (
+        <p className="mt-2 rounded-lg bg-gold-400/10 px-3 py-2 text-sm leading-7 text-navy-800/85">
+          <span className="font-medium">اثر بر ایران: </span>
+          {item.iranImpactFa}
+        </p>
+      )}
+      <div className="mt-3 flex flex-wrap gap-x-4 gap-y-1 text-xs text-navy-800/50">
+        {item.assetsFa && <span>دارایی‌ها: {item.assetsFa}</span>}
+        {item.sourceHintFa && <span>منبع: {item.sourceHintFa}</span>}
+      </div>
+    </article>
+  );
 }
 
 function MarketCard({ m, featured }: { m: WorldMarket; featured?: boolean }) {
@@ -293,12 +363,13 @@ export default function WorldEconomyPage() {
       {refreshing && (
         <WaitingOverlay
           title="در حال به‌روزرسانی اقتصاد دنیا"
-          description="نمادها از بیت‌پین گرفته می‌شود و قیمت رمزارز با یاهو فایننس مقایسه می‌گردد."
+          description="نمادها از بیت‌پین گرفته می‌شود، قیمت رمزارز با یاهو فایننس مقایسه و اخبار کلان جهان خوانده می‌گردد."
           steps={[
             'دریافت فهرست بازارها از بیت‌پین',
             'ذخیره آخرین قیمت‌ها',
             'خواندن قیمت جهانی از یاهو فایننس',
             'محاسبه اختلاف با بازار جهانی',
+            'خواندن اخبار کلان جهان و آمریکا',
           ]}
         />
       )}
@@ -344,6 +415,34 @@ export default function WorldEconomyPage() {
             </div>
           </div>
         </div>
+      </section>
+
+      <section className="space-y-4">
+        <div className="flex flex-wrap items-baseline justify-between gap-2">
+          <h2 className="text-lg font-semibold">اخبار کلان اقتصاد جهان</h2>
+          <span className="text-xs text-navy-800/50">
+            اثرگذار بر نفت، طلا، دلار، فلزات و رمزارز
+          </span>
+        </div>
+        {data?.macroNewsSummaryFa && (
+          <p className="whitespace-pre-line text-sm leading-7 text-navy-800/70">
+            {data.macroNewsSummaryFa}
+          </p>
+        )}
+        {(data?.macroNews ?? []).length > 0 ? (
+          <div className="space-y-3">
+            {(data?.macroNews ?? []).map((item) => (
+              <MacroNewsCard key={item.id} item={item} />
+            ))}
+          </div>
+        ) : (
+          <p className="text-sm text-navy-800/50">
+            هنوز خبری ذخیره نشده. راس ۷ صبح تهران خودکار می‌آید؛ یا دکمهٔ «به‌روزرسانی فوری» را بزنید.
+          </p>
+        )}
+        {data?.macroNewsSourceNoteFa && (
+          <p className="text-xs text-navy-800/45">{data.macroNewsSourceNoteFa}</p>
+        )}
       </section>
 
       {gainers.length > 0 && (

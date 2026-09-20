@@ -128,6 +128,7 @@ function sourceLabel(source?: string | null): string {
     const name = source.slice('iran_economy_pdf'.length).replace(/^:/, '').trim();
     return name ? `PDF اقتصاد ایران · ${name}` : 'PDF اقتصاد ایران';
   }
+  if (source.startsWith('world_macro_news')) return 'اخبار کلان اقتصاد جهان';
   if (source === 'fund_report') return 'گزارش صندوق';
   if (source === 'monthly_eval') return 'ارزیابی ماهانه';
   return source;
