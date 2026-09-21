@@ -3,6 +3,7 @@ import { Injectable, Logger, BadRequestException } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import { UserRole } from '@prisma/client';
 import { PrismaService } from '../prisma/prisma.service';
+import { transcribeBytes } from '../telegram-assistant/youtube-subs/gapgpt';
 import { LLM_PROMPT_DEFAULTS, isValidPromptPurpose } from './prompt-defaults';
 import {
   NEWS_LLM_PURPOSES,
@@ -642,28 +643,22 @@ export class LlmService {
     return Buffer.from(await res.arrayBuffer());
   }
 
-  async transcribeAudio(audio: Buffer, filename: string, userId?: string): Promise<string> {
+  /** نشانی و کلید رونویسی. مدل همیشه در کلاینت gapgpt/whisper-1 ثابت است. */
+  async transcriptionAccess(userId?: string): Promise<{ baseUrl: string; apiKey: string }> {
+    const base = this.config.get<string>('GAPGPT_BASE_URL')?.trim();
+    const key = this.config.get<string>('GAPGPT_API_KEY')?.trim();
+    if (base && key) return { baseUrl: base, apiKey: key };
     const creds = await this.resolveTtsCredentials(userId);
-    const form = new FormData();
-    const mime = filename.endsWith('.webm')
-      ? 'audio/webm'
-      : filename.endsWith('.m4a') || filename.endsWith('.mp4')
-        ? 'audio/mp4'
-        : filename.endsWith('.ogg')
-          ? 'audio/ogg'
-          : 'audio/mpeg';
-    form.append('file', new Blob([new Uint8Array(audio)], { type: mime }), filename);
-    form.append('model', 'whisper-1');
-    form.append('response_format', 'text');
-    const res = await fetch(`${creds.baseUrl}/audio/transcriptions`, {
-      method: 'POST',
-      headers: { Authorization: `Bearer ${creds.apiKey}` },
-      body: form,
-      signal: AbortSignal.timeout(180_000),
-    });
-    const text = await res.text();
-    if (!res.ok) throw new Error(`خطای رونویسی: ${res.status} ${text.slice(0, 240)}`);
-    return text.trim();
+    return { baseUrl: creds.baseUrl, apiKey: creds.apiKey };
+  }
+
+  async transcribeAudio(audio: Buffer, filename: string, userId?: string): Promise<string> {
+    const access = await this.transcriptionAccess(userId);
+    const pieces = await transcribeBytes(audio, filename || 'audio.m4a', access.baseUrl, access.apiKey);
+    return pieces
+      .map((p) => p.text)
+      .join(' ')
+      .trim();
   }
 
   private async resolveTtsCredentials(userId?: string): Promise<LlmCreds> {

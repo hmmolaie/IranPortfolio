@@ -14,6 +14,8 @@ import {
 } from './youtube';
 import { extractPdfContent } from './pdf-extract';
 import { buildRtlPdf } from './pdf-rtl-build';
+import { runYoutubeSubtitleJob } from './youtube-subs/pipeline';
+import * as fs from 'fs/promises';
 
 type TgUser = { id: number };
 type TgChat = { id: number; username?: string };
@@ -173,7 +175,7 @@ export class TelegramAssistantService {
           '• سؤال بپرسید تا به فارسی جواب بدهم (مگر زبان دیگری بخواهید)\n' +
           '• لینک صفحه بفرستید تا ترجمه شود؛ اگر «خلاصه کن» بگویید خلاصه می‌شود\n' +
           '• فایل PDF بفرستید تا PDF فارسی راست‌چین برگردد\n' +
-          '• لینک یوتیوب بفرستید تا ترجمه/خلاصه به‌صورت فایل صوتی فارسی بیاید\n\n' +
+          '• لینک یوتیوب بفرستید تا ویدئو با زیرنویس فارسی برگردد؛ اگر «خلاصه کن» بگویید خلاصهٔ صوتی می‌آید\n\n' +
           'کارهای طولانی با پیام «لطفاً صبر کنید» همراه است.',
       );
       return;
@@ -315,6 +317,10 @@ export class TelegramAssistantService {
 
   private async handleYoutube(token: string, chatId: string, videoId: string, userText: string) {
     const summarize = wantsSummary(userText);
+    if (!summarize) {
+      await this.handleYoutubeVideo(token, chatId, videoId);
+      return;
+    }
     await this.progress(
       token,
       chatId,
@@ -396,6 +402,32 @@ export class TelegramAssistantService {
     }
   }
 
+  private async handleYoutubeVideo(token: string, chatId: string, videoId: string) {
+    await this.sendText(token, chatId, '🔗 لینک دریافت شد');
+    const adminId = (await this.users.getAdminUserId()) ?? undefined;
+    const access = await this.llm.transcriptionAccess(adminId);
+    const result = await runYoutubeSubtitleJob({
+      videoId,
+      transcribeBaseUrl: access.baseUrl,
+      transcribeApiKey: access.apiKey,
+      translate: (system, user) =>
+        this.llm.chatText('telegram_assistant_youtube_subs', system, user, adminId),
+      onStep: async (text) => {
+        await this.sendText(token, chatId, text);
+      },
+      log: (line) => this.logger.log(line.replace(/sk-[A-Za-z0-9_-]+/g, 'sk-***')),
+    });
+    try {
+      this.logger.log(`[job=${result.jobId}] Upload started`);
+      await this.sendText(token, chatId, '📤 در حال ارسال...');
+      const buf = await fs.readFile(result.finalPath);
+      await this.sendVideo(token, chatId, buf, 'video-fa.mp4', 'ویدئو با زیرنویس فارسی آماده است.');
+      this.logger.log(`[job=${result.jobId}] Job completed`);
+    } finally {
+      await result.cleanup();
+    }
+  }
+
   private async progress(token: string, chatId: string, action: string, text: string) {
     try {
       await this.tg(token, 'sendChatAction', { chat_id: chatId, action });
@@ -418,6 +450,15 @@ export class TelegramAssistantService {
     form.append('caption', caption.slice(0, 1000));
     form.append('document', new Blob([new Uint8Array(buf)], { type: 'application/pdf' }), filename);
     await this.tgForm(token, 'sendDocument', form);
+  }
+
+  private async sendVideo(token: string, chatId: string, buf: Buffer, filename: string, caption: string) {
+    const form = new FormData();
+    form.append('chat_id', chatId);
+    form.append('caption', caption.slice(0, 1000));
+    form.append('supports_streaming', 'true');
+    form.append('video', new Blob([new Uint8Array(buf)], { type: 'video/mp4' }), filename);
+    await this.tgForm(token, 'sendVideo', form, 180_000);
   }
 
   private async sendAudio(token: string, chatId: string, buf: Buffer, filename: string, caption: string) {
@@ -463,11 +504,11 @@ export class TelegramAssistantService {
     return json.result as T;
   }
 
-  private async tgForm(token: string, method: string, form: FormData) {
+  private async tgForm(token: string, method: string, form: FormData, timeoutMs = 90_000) {
     const res = await fetch(`${TG_API}/bot${token}/${method}`, {
       method: 'POST',
       body: form,
-      signal: AbortSignal.timeout(90_000),
+      signal: AbortSignal.timeout(timeoutMs),
     });
     const json = (await res.json()) as { ok?: boolean; description?: string };
     if (!res.ok || !json.ok) {

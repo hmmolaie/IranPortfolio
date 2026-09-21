@@ -31,7 +31,17 @@ RUN npm run build -w @sabadyar/shared \
   && npm run build -w @sabadyar/api
 
 FROM node:20-alpine AS runner
-RUN apk add --no-cache libc6-compat openssl wget
+RUN apk add --no-cache libc6-compat openssl wget ffmpeg python3 py3-pip \
+  && (pip3 install --break-system-packages --no-cache-dir yt-dlp \
+      || pip3 install --no-cache-dir yt-dlp) \
+  && mkdir -p /usr/share/fonts/vazirmatn
+COPY apps/api/src/telegram-assistant/fonts/Vazirmatn-Regular.ttf /usr/share/fonts/vazirmatn/Vazirmatn-Regular.ttf
+ENV SUBTITLE_FONT=/usr/share/fonts/vazirmatn/Vazirmatn-Regular.ttf \
+    SUBTITLE_FONT_SIZE=22 \
+    SUBTITLE_MARGIN_V=40 \
+    SUBTITLE_OUTLINE=2 \
+    TEMP_DIR=/tmp/jobs \
+    JOB_TIMEOUT_SEC=1500
 WORKDIR /app
 ENV NODE_ENV=production
 ENV API_PORT=3001
