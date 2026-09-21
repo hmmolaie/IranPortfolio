@@ -11,6 +11,7 @@ import { LlmService } from '../llm/llm.service';
 import { NewsService } from '../news/news.service';
 import { UsersService } from '../users/users.service';
 import { WorldMarketsService } from '../world-markets/world-markets.service';
+import { WalletService } from '../wallet/wallet.service';
 import { daysAgoDateKey } from '../news/tehran-date';
 import { foldFa, tokenizeMarketQuestion } from '../market/tehran-chat';
 
@@ -65,6 +66,7 @@ export class PortfoliosService {
     private readonly news: NewsService,
     private readonly users: UsersService,
     private readonly worldMarkets: WorldMarketsService,
+    private readonly wallet: WalletService,
   ) {}
 
   list(userId: string) {
@@ -160,6 +162,7 @@ export class PortfoliosService {
     userId: string,
     data: { name: string; strategy: PortfolioStrategy; capitalRial: number; description?: string },
   ) {
+    await this.wallet.ensure(userId, 'suggest');
     const portfolio = await this.prisma.portfolio.create({
       data: {
         userId,
@@ -173,7 +176,8 @@ export class PortfoliosService {
 
     try {
       await this.suggest(userId, portfolio.id, { initialCreate: true });
-    } catch {
+    } catch (e) {
+      if (e instanceof BadRequestException) throw e;
       /* سبد خالی برمی‌گردد؛ کاربر بعداً می‌تواند پیشنهاد بگیرد */
     }
 
@@ -189,23 +193,46 @@ export class PortfoliosService {
   async suggest(
     userId: string,
     portfolioId: string,
-    options?: { initialCreate?: boolean },
+    options?: { initialCreate?: boolean; skipBilling?: boolean },
   ) {
-    const strategies = await this.suggestStrategies(userId, portfolioId, options);
-    const first = strategies.strategies[0];
-    if (!first) {
-      return this.createSnapshotFromItems(userId, portfolioId, {
-        strategySummaryFa: 'پیشنهاد خالی',
-        items: [],
+    const charged = options?.skipBilling ? 0 : await this.wallet.charge(userId, 'suggest');
+    try {
+      const strategies = await this.suggestStrategies(userId, portfolioId, {
+        ...options,
+        skipBilling: true,
       });
+      const first = strategies.strategies[0];
+      if (!first) {
+        return await this.createSnapshotFromItems(userId, portfolioId, {
+          strategySummaryFa: 'پیشنهاد خالی',
+          items: [],
+        });
+      }
+      return await this.createSnapshotFromItems(userId, portfolioId, first);
+    } catch (e) {
+      await this.wallet.refund(userId, charged, 'suggest');
+      throw e;
     }
-    return this.createSnapshotFromItems(userId, portfolioId, first);
   }
 
   async suggestStrategies(
     userId: string,
     portfolioId: string,
-    options?: { initialCreate?: boolean },
+    options?: { initialCreate?: boolean; skipBilling?: boolean },
+  ) {
+    const charged = options?.skipBilling ? 0 : await this.wallet.charge(userId, 'suggest');
+    try {
+      return await this.buildStrategySuggestions(userId, portfolioId, options);
+    } catch (e) {
+      await this.wallet.refund(userId, charged, 'suggest');
+      throw e;
+    }
+  }
+
+  private async buildStrategySuggestions(
+    userId: string,
+    portfolioId: string,
+    options?: { initialCreate?: boolean; skipBilling?: boolean },
   ) {
     const portfolio = await this.get(userId, portfolioId);
     const profile = await this.prisma.userProfile.findUnique({ where: { userId } });
@@ -707,10 +734,25 @@ ${historyText}`,
     };
   }
 
-  async rebalance(userId: string, portfolioId: string, noteFa?: string) {
+  async rebalance(
+    userId: string,
+    portfolioId: string,
+    noteFa?: string,
+    opts?: { skipBilling?: boolean },
+  ) {
+    const charged = opts?.skipBilling ? 0 : await this.wallet.charge(userId, 'rebalance');
+    try {
+      return await this.rebalanceCharged(userId, portfolioId, noteFa);
+    } catch (e) {
+      await this.wallet.refund(userId, charged, 'rebalance');
+      throw e;
+    }
+  }
+
+  private async rebalanceCharged(userId: string, portfolioId: string, noteFa?: string) {
     const portfolio = await this.get(userId, portfolioId);
     const latest = portfolio.snapshots[0];
-    const snapshot = await this.suggest(userId, portfolioId);
+    const snapshot = await this.suggest(userId, portfolioId, { skipBilling: true });
     await this.prisma.portfolioSnapshot.update({
       where: { id: snapshot.id },
       data: {
@@ -763,7 +805,7 @@ ${historyText}`,
       });
     }
 
-    const rebalanced = await this.rebalance(userId, portfolioId, evalOut.summaryFa);
+    const rebalanced = await this.rebalance(userId, portfolioId, evalOut.summaryFa, { skipBilling: true });
     await this.prisma.portfolioSnapshot.update({
       where: { id: rebalanced!.id },
       data: {
@@ -1231,7 +1273,7 @@ ${historyText}`,
   async analyzeCurrent(
     userId: string,
     portfolioId: string,
-    opts?: { pastTenseFa?: boolean; personalHoldingsOnly?: boolean },
+    opts?: { pastTenseFa?: boolean; personalHoldingsOnly?: boolean; bill?: boolean },
   ) {
     const portfolio = await this.get(userId, portfolioId);
     const latest = portfolio.snapshots[0];
@@ -1342,6 +1384,7 @@ summaryFa و نقاط قوت و ضعف گزارش وضعیت سبد هستند �
     };
 
     let analysis: AnalysisOut;
+    const charged = opts?.bill ? await this.wallet.charge(userId, 'suggest') : 0;
     try {
       analysis = await this.llm.chatJson<AnalysisOut>(
         'portfolio_analyze',
@@ -1350,6 +1393,7 @@ summaryFa و نقاط قوت و ضعف گزارش وضعیت سبد هستند �
         userId,
       );
     } catch (e) {
+      await this.wallet.refund(userId, charged, 'suggest');
       analysis = {
         score: 55,
         summaryFa: `آنالیز خودکار بدون LLM: ترکیب فعلی را با اخبار و قیمت روز بررسی کنید. (${(e as Error).message.slice(0, 80)})`,
@@ -1715,7 +1759,7 @@ summaryFa و نقاط قوت و ضعف گزارش وضعیت سبد هستند �
       },
     });
 
-    return this.rebalance(userId, portfolioId, 'بازچینش پس از تغییر نقد/فروش');
+    return this.rebalance(userId, portfolioId, 'بازچینش پس از تغییر نقد/فروش', { skipBilling: true });
   }
 
   private materializeItems(

@@ -59,6 +59,8 @@ model User {
   name         String?
   role         UserRole @default(USER)
   isActive     Boolean  @default(true)
+  /// موجودی کیف پول به ریال
+  walletBalanceRial Int @default(0)
   createdAt    DateTime @default(now())
   updatedAt    DateTime @updatedAt
 
@@ -75,6 +77,77 @@ model User {
   economicNewsBatches EconomicNewsBatch[]
   marketChats MarketChatMessage[]
   webauthnCredentials WebAuthnCredential[]
+  walletTransactions WalletTransaction[]
+  walletPayments WalletPayment[]
+  walletNotices WalletNotice[]
+}
+
+enum WalletTxKind {
+  GATEWAY
+  ADMIN
+  TELEGRAM
+  SUGGEST
+  REBALANCE
+  REFUND
+}
+
+enum WalletPaymentStatus {
+  PENDING
+  PAID
+  FAILED
+}
+
+/** تنظیم سراسری کسر از کیف پول و درگاه زرین‌پال */
+model WalletConfig {
+  id                  String   @id @default("default")
+  /// اگر خاموش باشد هیچ قابلیتی از کیف پول کسر نمی‌شود
+  enabled             Boolean  @default(false)
+  sandbox             Boolean  @default(false)
+  merchantIdEncrypted String?
+  telegramDailyRial   Int      @default(0)
+  suggestRial         Int      @default(0)
+  rebalanceRial       Int      @default(0)
+  updatedAt           DateTime @updatedAt
+}
+
+model WalletTransaction {
+  id               String       @id @default(cuid())
+  userId           String
+  amountRial       Int
+  kind             WalletTxKind
+  balanceAfterRial Int
+  note             String?
+  createdAt        DateTime     @default(now())
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId, createdAt])
+}
+
+model WalletPayment {
+  id         String              @id @default(cuid())
+  userId     String
+  amountRial Int
+  authority  String              @unique
+  status     WalletPaymentStatus @default(PENDING)
+  refId      String?
+  createdAt  DateTime            @default(now())
+  paidAt     DateTime?
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId, createdAt])
+}
+
+model WalletNotice {
+  id      String @id @default(cuid())
+  userId  String
+  feature String
+  dateKey String
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([userId, feature, dateKey])
 }
 
 /** کلید عبور دستگاه (اثر انگشت / چهره / PIN گوشی) برای ورود WebAuthn */

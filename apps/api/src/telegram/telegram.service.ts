@@ -10,6 +10,7 @@ import { NewsService } from '../news/news.service';
 import { replaceSocialNetworkBrandFa } from '../llm/social-source-wording';
 import { UsersService } from '../users/users.service';
 import { LlmService } from '../llm/llm.service';
+import { WalletService } from '../wallet/wallet.service';
 import { renderPortfolioPiePng } from './pie-chart-png';
 import { fallbackDigestVoiceScript, trimSpokenScript } from './digest-voice';
 import {
@@ -79,6 +80,7 @@ export class TelegramService implements OnModuleInit {
     private readonly news: NewsService,
     private readonly users: UsersService,
     private readonly llm: LlmService,
+    private readonly wallet: WalletService,
   ) {}
 
   onModuleInit() {
@@ -356,10 +358,26 @@ export class TelegramService implements OnModuleInit {
       let failedCount = 0;
       for (const r of recipients) {
         if (!r.telegramChatId) continue;
+        const bill = await this.wallet.tryCharge(r.userId, 'telegram');
+        if (!bill.ok) {
+          const first = await this.wallet.claimDailyNotice(r.userId, 'telegram', dateKey);
+          if (first) {
+            try {
+              await this.tg(token, 'sendMessage', {
+                chat_id: r.telegramChatId,
+                text: 'موجودی کیف پول برای دریافت پیام روزانه کافی نیست. لطفاً از تنظیمات سایت، بخش کیف پول، حساب را شارژ کنید.',
+              });
+            } catch (e) {
+              this.logger.warn(`اخطار موجودی کیف پول ${r.userId}: ${(e as Error).message.slice(0, 120)}`);
+            }
+          }
+          continue;
+        }
         try {
           await this.sendPersonalized(token, r.telegramChatId, r.userId, newsText, newsVoice);
           sentCount += 1;
         } catch (e) {
+          await this.wallet.refund(r.userId, bill.charged, 'telegram');
           failedCount += 1;
           this.logger.warn(
             `ارسال تلگرام به ${r.userId} ناموفق: ${(e as Error).message.slice(0, 160)}`,

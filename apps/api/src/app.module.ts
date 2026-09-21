@@ -17,6 +17,7 @@ import { TelegramModule } from './telegram/telegram.module';
 import { WorldMarketsModule } from './world-markets/world-markets.module';
 import { ForexModule } from './forex/forex.module';
 import { TelegramAssistantModule } from './telegram-assistant/telegram-assistant.module';
+import { WalletModule } from './wallet/wallet.module';
 
 @Module({
   imports: [
@@ -37,6 +38,7 @@ import { TelegramAssistantModule } from './telegram-assistant/telegram-assistant
     TelegramAssistantModule,
     WorldMarketsModule,
     ForexModule,
+    WalletModule,
   ],
   controllers: [HealthController],
 })

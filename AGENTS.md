@@ -49,10 +49,11 @@ Node `>=20`. با Docker دیتابیس PostgreSQL است. کلاینت وب API
 
 ## ماژول‌های API
 
-`auth` · `users` · `market` · `portfolios` · `llm` · `funds` · `macro` · `news` · `prices` · `telegram` · `telegram-assistant` · `world-markets` · `lessons` · `forex`
+`auth` · `users` · `market` · `portfolios` · `llm` · `funds` · `macro` · `news` · `prices` · `telegram` · `telegram-assistant` · `world-markets` · `lessons` · `forex` · `wallet`
 
 اندپوینت‌های مهم سبد: `POST :id/suggest` · `rebalance` · `monthly-evaluate` · `adjust` · `cash` · `POST/PATCH/DELETE :id/items` (افزودن/ویرایش با تعداد یا مبلغ، نه وزن٪) · `POST :id/apply-suggestion` (اعمال یک پیشنهاد آنالیز).
 ورود: `POST /api/auth/login` با رمز؛ روی موبایل `POST /api/auth/webauthn/*` برای اثر انگشت یا چهره (کلید عبور دستگاه).
+کیف پول: موجودی ریالی هر کاربر. شارژ از زرین‌پال در تب «کیف پول» و شارژ دستی ادمین در تب «تنظیمات کیف پول». تا وقتی کسر در تنظیمات ادمین خاموش است همهٔ قابلیت‌ها رایگان‌اند. با روشن بودن، فقط پیام روزانهٔ تلگرام، پیشنهاد سبد با هوش مصنوعی (ساخت سبد و آنالیز) و بازچینش سبد به اندازهٔ مبلغ تنظیم‌شده کسر می‌شود؛ اگر موجودی کم باشد همان کار انجام نمی‌شود و به کاربر گفته می‌شود کیف پول را شارژ کند. توکن پذیرنده رمزنگاری‌شده در `WalletConfig` است و بازگشت درگاه از `PUBLIC_URL` ساخته می‌شود.
 گفتگوی سبد (`GET/POST/DELETE :id/chat`): ترکیب سبد به‌علاوه وضعیت سهام/دلار/طلا از دیتابیس، حتی اگر در سبد نباشد.
 بازار تهران: گفتگوی LLM در `GET/POST/DELETE /api/market/chat`؛ فقط نماد/شاخص بورس تهران و خرید صندوق‌ها از دیتابیس.
 آزمایش فارکس: گراف جفت‌ارز در `GET/POST /api/forex` و صفحهٔ `/forex` فقط برای admin؛ پیشنهاد معامله فقط اگر سود خالص پس از هزینه مثبت باشد.

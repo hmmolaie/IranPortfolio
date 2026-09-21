@@ -282,7 +282,7 @@ export class PortfoliosController {
 
   @Post(':id/analyze')
   analyze(@Req() req: { user: { userId: string } }, @Param('id') id: string) {
-    return this.portfolios.analyzeCurrent(req.user.userId, id);
+    return this.portfolios.analyzeCurrent(req.user.userId, id, { bill: true });
   }
 
   @Post(':id/apply-suggestion')

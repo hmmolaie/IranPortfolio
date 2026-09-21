@@ -1,6 +1,6 @@
 'use client';
 
-import { FormEvent, useEffect, useState } from 'react';
+import { FormEvent, useEffect, useRef, useState } from 'react';
 import { useRouter } from 'next/navigation';
 import clsx from 'clsx';
 import { api, getToken } from '@/lib/api';
@@ -8,6 +8,7 @@ import { TELEGRAM_BOT_USERNAME } from '@/lib/telegram';
 import { TelegramBotLink } from '@/components/TelegramBotLink';
 import { useToast } from '@/components/Toast';
 import { WebAuthnSettings } from '@/components/WebAuthnSettings';
+import { WalletAdminPanel, WalletPanel } from './wallet-panel';
 import { formatShamsiDate } from '@/lib/shamsi-date';
 
 type ProviderId = 'openrouter' | 'openai' | 'custom';
@@ -41,12 +42,15 @@ type SettingsTab =
   | 'worldApis'
   | 'refreshTimes'
   | 'telegram'
-  | 'telegramAssistant';
+  | 'telegramAssistant'
+  | 'wallet'
+  | 'walletAdmin';
 
 const TABS: { id: SettingsTab; label: string; adminOnly?: boolean }[] = [
   { id: 'profile', label: 'پروفایل' },
   { id: 'password', label: 'تغییر رمز عبور' },
   { id: 'webauthn', label: 'اثر انگشت و چهره' },
+  { id: 'wallet', label: 'کیف پول' },
   { id: 'funds', label: 'صندوق‌ها', adminOnly: true },
   { id: 'prompts', label: 'پرامپت‌ها', adminOnly: true },
   { id: 'llm', label: 'API مدل زبانی', adminOnly: true },
@@ -55,6 +59,7 @@ const TABS: { id: SettingsTab; label: string; adminOnly?: boolean }[] = [
   { id: 'refreshTimes', label: 'ساعت به‌روزرسانی', adminOnly: true },
   { id: 'telegram', label: 'ربات تلگرام', adminOnly: true },
   { id: 'telegramAssistant', label: 'دستیار تلگرام', adminOnly: true },
+  { id: 'walletAdmin', label: 'تنظیمات کیف پول', adminOnly: true },
 ];
 
 const SEND_WEEKDAYS = [
@@ -536,8 +541,22 @@ export default function SettingsPage() {
     }
   }
 
+  const walletReturnHandled = useRef(false);
   useEffect(() => {
-    if (!isAdmin && tab !== 'profile' && tab !== 'password' && tab !== 'webauthn') setTab('profile');
+    if (walletReturnHandled.current) return;
+    const flag = new URLSearchParams(window.location.search).get('wallet');
+    if (flag !== 'ok' && flag !== 'fail') return;
+    walletReturnHandled.current = true;
+    setTab('wallet');
+    if (flag === 'ok') toast.success('کیف پول شارژ شد.');
+    else toast.error('پرداخت انجام نشد.');
+    window.history.replaceState({}, '', '/settings');
+  }, [toast]);
+
+  useEffect(() => {
+    if (!isAdmin && tab !== 'profile' && tab !== 'password' && tab !== 'webauthn' && tab !== 'wallet') {
+      setTab('profile');
+    }
   }, [isAdmin, tab]);
 
   function applyProvider(next: ProviderId) {
@@ -942,7 +961,7 @@ export default function SettingsPage() {
     <div className="space-y-6">
       <div>
         <h1 className="text-3xl font-bold">تنظیمات</h1>
-        <p className="mt-2 text-navy-800/70">پروفایل، ورود زیست‌سنجی، پرامپت‌ها، صندوق‌ها، اتصال مدل زبانی، ربات و دستیار تلگرام</p>
+        <p className="mt-2 text-navy-800/70">پروفایل، کیف پول، ورود زیست‌سنجی، پرامپت‌ها، صندوق‌ها، اتصال مدل زبانی، ربات و دستیار تلگرام</p>
       </div>
 
       <div className="flex flex-col gap-6 lg:flex-row lg:items-start">
@@ -1140,6 +1159,10 @@ export default function SettingsPage() {
       )}
 
       {tab === 'webauthn' && <WebAuthnSettings />}
+
+      {tab === 'wallet' && <WalletPanel />}
+
+      {tab === 'walletAdmin' && isAdmin && <WalletAdminPanel />}
 
       {tab === 'funds' && isAdmin && (
         <section className="space-y-4">
