@@ -4,7 +4,8 @@ import { PrismaService } from '../prisma/prisma.service';
 import { LlmService } from '../llm/llm.service';
 import { SOCIAL_NETWORK_LABEL_FA, replaceSocialNetworkBrandFa } from '../llm/social-source-wording';
 import { UsersService } from '../users/users.service';
-import { daysAgoDateKey, tehranDateFa, tehranDateKey, tehranHour } from './tehran-date';
+import { daysAgoDateKey, tehranDateFa, tehranDateKey, tehranHour, tehranTimeParts } from './tehran-date';
+import { isRefreshSlot, readRefreshSchedule, saveRefreshSchedule } from '../content-refresh/refresh-schedule';
 
 const MAX_MACRO_ITEMS = 7;
 const MAX_OPPORTUNITY_ITEMS = 3;
@@ -51,24 +52,41 @@ export class NewsService implements OnModuleInit {
     }, 20_000);
   }
 
-  /** هر روز ۸:۰۰ صبح به وقت ایران */
-  @Cron('0 0 8 * * *', { timeZone: 'Asia/Tehran', name: 'economic-news-0800' })
-  async scheduledRefresh() {
-    this.logger.log('بروزرسانی زمان‌بندی‌شده اخبار اقتصادی (۸ صبح ایران)');
-    await this.runScheduledRefresh({ overwriteExisting: true });
+  getRefreshSchedule() {
+    return readRefreshSchedule(this.prisma);
   }
 
-  /** اگر ۸ صبح از دست رفت یا مدل خالی برگرداند، ۹ و ۱۰ صبح دوباره تلاش می‌کند */
-  @Cron('0 0 9,10 * * *', { timeZone: 'Asia/Tehran', name: 'economic-news-retry' })
-  async scheduledRetry() {
-    await this.runScheduledRefresh({ overwriteExisting: false });
+  saveRefreshSchedule(data: {
+    iranNewsHour: number;
+    iranNewsMinute: number;
+    worldHour: number;
+    worldMinute: number;
+  }) {
+    return saveRefreshSchedule(this.prisma, data);
+  }
+
+  /** هر دقیقه با ساعت ذخیره‌شدهٔ اخبار ایران مقایسه می‌شود؛ یک و دو ساعت بعد اگر خالی ماند تلاش مجدد */
+  @Cron('* * * * *', { timeZone: 'Asia/Tehran', name: 'economic-news-tick' })
+  async scheduledRefresh() {
+    const schedule = await readRefreshSchedule(this.prisma);
+    const now = tehranTimeParts();
+    const slot = isRefreshSlot(
+      now.hour * 60 + now.minute,
+      schedule.iranNewsHour * 60 + schedule.iranNewsMinute,
+      true,
+    );
+    if (!slot) return;
+    const label = `${String(schedule.iranNewsHour).padStart(2, '0')}:${String(schedule.iranNewsMinute).padStart(2, '0')}`;
+    this.logger.log(`بروزرسانی زمان‌بندی‌شده اخبار ایران (${label} تهران)`);
+    await this.runScheduledRefresh({ overwriteExisting: slot === 'exact' });
   }
 
   private async catchUpAfterRestart() {
-    if (tehranHour() >= 8) {
-      this.logger.log('پس از راه‌اندازی: اگر اخبار امروز خالی باشد جمع می‌شود');
-      await this.runScheduledRefresh({ overwriteExisting: false });
-    }
+    const schedule = await readRefreshSchedule(this.prisma);
+    const now = tehranTimeParts();
+    if (now.hour * 60 + now.minute < schedule.iranNewsHour * 60 + schedule.iranNewsMinute) return;
+    this.logger.log('پس از راه‌اندازی: اگر اخبار امروز خالی باشد جمع می‌شود');
+    await this.runScheduledRefresh({ overwriteExisting: false });
   }
 
   private async runScheduledRefresh(opts: { overwriteExisting: boolean }) {

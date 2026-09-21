@@ -1,4 +1,4 @@
-import { Body, Controller, Get, Post, Put, UseGuards } from '@nestjs/common';
+import { Body, Controller, Get, Param, Post, Put, UseGuards } from '@nestjs/common';
 import { IsString, MaxLength } from 'class-validator';
 import { WorldMarketsService } from './world-markets.service';
 import { JwtAuthGuard } from '../auth/jwt-auth.guard';
@@ -37,5 +37,10 @@ export class WorldMarketsController {
   @Post('refresh')
   refresh() {
     return this.worldMarkets.refreshFromBitpin();
+  }
+
+  @Get(':code/history')
+  history(@Param('code') code: string) {
+    return this.worldMarkets.getChart(decodeURIComponent(code));
   }
 }

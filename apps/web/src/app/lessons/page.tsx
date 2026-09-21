@@ -27,6 +27,8 @@ export default function LessonsPage() {
   const [file, setFile] = useState<File | null>(null);
   const [loading, setLoading] = useState(false);
   const [msg, setMsg] = useState('');
+  const [draft, setDraft] = useState({ titleFa: '', bodyFa: '' });
+  const [saving, setSaving] = useState(false);
 
   async function load() {
     const list = await api<Lesson[]>('/lessons');
@@ -96,14 +98,83 @@ export default function LessonsPage() {
         {msg && <p className="text-sm sm:col-span-2">{msg}</p>}
       </form>
 
+      <form
+        onSubmit={async (e) => {
+          e.preventDefault();
+          setSaving(true);
+          setMsg('');
+          try {
+            await api('/lessons', {
+              method: 'POST',
+              body: JSON.stringify({
+                titleFa: draft.titleFa.trim(),
+                bodyFa: draft.bodyFa.trim(),
+              }),
+            });
+            setDraft({ titleFa: '', bodyFa: '' });
+            setMsg('درس‌آموخته اضافه شد.');
+            await load();
+          } catch (err) {
+            setMsg((err as Error).message);
+          } finally {
+            setSaving(false);
+          }
+        }}
+        className="card grid gap-4"
+      >
+        <h2 className="text-lg font-semibold">افزودن دستی</h2>
+        <div>
+          <label className="label">عنوان</label>
+          <input
+            className="input"
+            value={draft.titleFa}
+            onChange={(e) => setDraft({ ...draft, titleFa: e.target.value })}
+            required
+            disabled={saving}
+          />
+        </div>
+        <div>
+          <label className="label">متن درس</label>
+          <textarea
+            className="input min-h-[6rem]"
+            value={draft.bodyFa}
+            onChange={(e) => setDraft({ ...draft, bodyFa: e.target.value })}
+            required
+            disabled={saving}
+          />
+        </div>
+        <button className="btn-primary w-fit" disabled={saving}>
+          {saving ? 'در حال ذخیره...' : 'افزودن درس‌آموخته'}
+        </button>
+      </form>
+
       <div className="space-y-4">
         {lessons.map((l) => (
           <article key={l.id} className="card">
             <h2 className="text-lg font-semibold">{l.titleFa}</h2>
             <p className="mt-2 whitespace-pre-line leading-7 text-navy-800/80">{l.bodyFa}</p>
-            <p className="mt-3 text-xs text-navy-800/40">
-              {sourceLabel(l.source)} · {formatShamsiDate(l.createdAt)}
-            </p>
+            <div className="mt-3 flex flex-wrap items-center justify-between gap-2">
+              <p className="text-xs text-navy-800/40">
+                {sourceLabel(l.source)} · {formatShamsiDate(l.createdAt)}
+              </p>
+              <button
+                type="button"
+                className="text-xs text-red-700 hover:underline"
+                onClick={async () => {
+                  if (!confirm(`درس «${l.titleFa}» حذف شود؟`)) return;
+                  setMsg('');
+                  try {
+                    await api(`/lessons/${l.id}`, { method: 'DELETE' });
+                    setMsg('درس‌آموخته حذف شد.');
+                    await load();
+                  } catch (err) {
+                    setMsg((err as Error).message);
+                  }
+                }}
+              >
+                حذف
+              </button>
+            </div>
           </article>
         ))}
         {lessons.length === 0 && (
@@ -129,6 +200,7 @@ function sourceLabel(source?: string | null): string {
     return name ? `PDF اقتصاد ایران · ${name}` : 'PDF اقتصاد ایران';
   }
   if (source.startsWith('world_macro_news')) return 'اخبار کلان اقتصاد جهان';
+  if (source === 'manual') return 'دستی';
   if (source === 'fund_report') return 'گزارش صندوق';
   if (source === 'monthly_eval') return 'ارزیابی ماهانه';
   return source;

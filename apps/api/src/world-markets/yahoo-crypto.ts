@@ -163,6 +163,62 @@ async function mapPool<T>(items: T[], size: number, fn: (item: T) => Promise<voi
   }
 }
 
+function tehranDay(sec: number): string {
+  return new Intl.DateTimeFormat('en-CA', { timeZone: 'Asia/Tehran' }).format(new Date(sec * 1000));
+}
+
+async function fetchChartSeries(
+  chartBase: string,
+  symbol: string,
+  auth: YahooAuth | null,
+  range: string,
+): Promise<Array<{ tradeDate: string; close: number }>> {
+  const u = new URL(`${chartBase.replace(/\/$/, '')}/${encodeURIComponent(symbol)}`);
+  u.searchParams.set('interval', '1d');
+  u.searchParams.set('range', range);
+  if (auth?.crumb) u.searchParams.set('crumb', auth.crumb);
+  const res = await fetch(u, {
+    headers: headers(auth),
+    signal: AbortSignal.timeout(25_000),
+  });
+  if (!res.ok) throw new Error(`HTTP ${res.status}`);
+  const chart = asRecord(asRecord(await res.json())?.chart);
+  const result = Array.isArray(chart?.result) ? asRecord(chart.result[0]) : null;
+  const timestamps = Array.isArray(result?.timestamp) ? result.timestamp : [];
+  const quote = asRecord(result?.indicators);
+  const series = Array.isArray(quote?.quote) ? asRecord(quote.quote[0]) : null;
+  const closes = Array.isArray(series?.close) ? series.close : [];
+  const byDay = new Map<string, number>();
+  for (let i = 0; i < timestamps.length; i += 1) {
+    const sec = Number(timestamps[i]);
+    const close = asFinite(closes[i]);
+    if (!Number.isFinite(sec) || close == null) continue;
+    byDay.set(tehranDay(sec), close);
+  }
+  return [...byDay.entries()]
+    .sort((a, b) => a[0].localeCompare(b[0]))
+    .map(([tradeDate, close]) => ({ tradeDate, close }));
+}
+
+/** کندل روزانهٔ یاهو برای نمودار؛ اول بیشترین بازه، بعد پنج‌سال */
+export async function fetchYahooDailyHistory(
+  symbol: string,
+  quoteUrl: string,
+): Promise<Array<{ tradeDate: string; close: number }>> {
+  const quote = new URL(quoteUrl);
+  const auth = isYahooHost(quote.hostname) ? await yahooAuth(quote.origin) : null;
+  const chartBase = `${quote.origin}/v8/finance/chart`;
+  for (const range of ['max', '5y']) {
+    try {
+      const bars = await fetchChartSeries(chartBase, symbol, auth, range);
+      if (bars.length >= 2) return bars;
+    } catch {
+      /* بازهٔ بعدی */
+    }
+  }
+  return [];
+}
+
 export async function fetchYahooCryptoPrices(
   symbols: string[],
   quoteUrl: string,

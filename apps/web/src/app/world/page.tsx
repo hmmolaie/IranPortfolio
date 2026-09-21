@@ -1,6 +1,7 @@
 'use client';
 
 import { useEffect, useMemo, useState } from 'react';
+import Link from 'next/link';
 import { useRouter } from 'next/navigation';
 import clsx from 'clsx';
 import { api, formatNum, getToken } from '@/lib/api';
@@ -174,9 +175,10 @@ function MarketCard({ m, featured }: { m: WorldMarket; featured?: boolean }) {
   const [imgOk, setImgOk] = useState(Boolean(m.baseImageUrl));
 
   return (
-    <article
+    <Link
+      href={`/world/${encodeURIComponent(m.code)}`}
       className={clsx(
-        'relative overflow-hidden rounded-2xl border border-navy-900/10 bg-white/95 shadow-soft',
+        'relative block overflow-hidden rounded-2xl border border-navy-900/10 bg-white/95 shadow-soft transition hover:border-navy-900/25',
         featured ? 'p-5' : 'p-4',
       )}
     >
@@ -260,7 +262,7 @@ function MarketCard({ m, featured }: { m: WorldMarket; featured?: boolean }) {
           )}
         </div>
       </div>
-    </article>
+    </Link>
   );
 }
 
@@ -389,7 +391,7 @@ export default function WorldEconomyPage() {
               <p className="text-xs font-medium tracking-wide text-gold-400">بازار جهانی رمزارز</p>
               <h1 className="mt-1 text-3xl font-bold">اقتصاد دنیا</h1>
               <p className="mt-2 max-w-xl text-sm leading-7 text-white/70">
-                هر روز راس ۷ صبح تهران همهٔ نمادهای بیت‌پین ذخیره می‌شوند و مبلغ هر رمزارز با یاهو فایننس
+                در ساعتی که مدیر برای اقتصاد دنیا گذاشته، نمادهای بیت‌پین ذخیره می‌شوند و مبلغ هر رمزارز با یاهو فایننس
                 مقایسه می‌گردد.
               </p>
               {data && data.markets.length > 0 && (data.yahooComparedCount ?? 0) === 0 && (
@@ -453,7 +455,7 @@ export default function WorldEconomyPage() {
           </div>
         ) : (
           <p className="text-sm text-navy-800/50">
-            هنوز خبری ذخیره نشده. راس ۷ صبح تهران خودکار می‌آید؛ یا دکمهٔ «به‌روزرسانی فوری» را بزنید.
+            هنوز خبری ذخیره نشده. در ساعت تنظیم‌شده خودکار می‌آید؛ یا دکمهٔ «به‌روزرسانی فوری» را بزنید.
           </p>
         )}
         {data?.macroNewsSourceNoteFa && (

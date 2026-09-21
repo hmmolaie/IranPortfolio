@@ -552,6 +552,17 @@ model SpotPriceDaily {
   @@index([asOfDate])
 }
 
+/** ساعت به‌روزرسانی اخبار ایران و اقتصاد دنیا به وقت تهران */
+model ContentRefreshSchedule {
+  id              String   @id @default("default")
+  iranNewsHour    Int      @default(8)
+  iranNewsMinute  Int      @default(0)
+  worldHour       Int      @default(7)
+  worldMinute     Int      @default(0)
+  createdAt       DateTime @default(now())
+  updatedAt       DateTime @updatedAt
+}
+
 /** نشانی API بیت‌پین و یاهو فایننس برای اقتصاد دنیا */
 model WorldSourceApiConfig {
   id               String   @id @default("default")

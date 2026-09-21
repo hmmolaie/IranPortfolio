@@ -1,13 +1,14 @@
-import { BadRequestException, Injectable, Logger, OnModuleInit } from '@nestjs/common';
+import { BadRequestException, Injectable, Logger, NotFoundException, OnModuleInit } from '@nestjs/common';
 import { Cron } from '@nestjs/schedule';
 import { Prisma } from '@prisma/client';
 import { PrismaService } from '../prisma/prisma.service';
-import { daysAgoDateKey, tehranDateFa, tehranDateKey } from '../news/tehran-date';
+import { daysAgoDateKey, tehranDateFa, tehranDateKey, tehranTimeParts } from '../news/tehran-date';
+import { isRefreshSlot, readRefreshSchedule } from '../content-refresh/refresh-schedule';
 import { PricesService } from '../prices/prices.service';
 import { LlmService } from '../llm/llm.service';
 import { UsersService } from '../users/users.service';
 import { readMarketSourceApi, saveMarketSourceApi } from '../market-source/market-source-api';
-import { fetchYahooCryptoPrices, yahooSymbolFor } from './yahoo-crypto';
+import { fetchYahooCryptoPrices, fetchYahooDailyHistory, yahooSymbolFor } from './yahoo-crypto';
 
 const REFRESH_ID = 'latest';
 const CREATE_CHUNK = 250;
@@ -125,21 +126,45 @@ export class WorldMarketsService implements OnModuleInit {
     }, 20_000);
   }
 
-  @Cron('0 0 7 * * *', { timeZone: 'Asia/Tehran', name: 'world-markets-0700' })
+  /** هر دقیقه با ساعت ذخیره‌شده مقایسه می‌شود؛ یک و دو ساعت بعد فقط اگر امروز انجام نشده باشد */
+  @Cron('* * * * *', { timeZone: 'Asia/Tehran', name: 'world-markets-tick' })
   async scheduledRefresh() {
-    this.logger.log('همگام‌سازی بازارهای جهانی راس ۷ صبح تهران');
+    const schedule = await readRefreshSchedule(this.prisma);
+    const now = tehranTimeParts();
+    const slot = isRefreshSlot(
+      now.hour * 60 + now.minute,
+      schedule.worldHour * 60 + schedule.worldMinute,
+      true,
+    );
+    if (!slot) return;
+    if (slot === 'retry') {
+      const refresh = await this.prisma.worldMarketRefresh.findUnique({ where: { id: REFRESH_ID } });
+      if (refresh?.dateKey === tehranDateKey()) return;
+    }
+    const label = `${String(schedule.worldHour).padStart(2, '0')}:${String(schedule.worldMinute).padStart(2, '0')}`;
+    this.logger.log(`همگام‌سازی اقتصاد دنیا (${label} تهران)`);
     try {
       await this.refreshFromBitpin();
     } catch (e) {
-      this.logger.error(`خطا در همگام‌سازی ۷ صبح: ${(e as Error).message}`);
+      this.logger.error(`خطا در همگام‌سازی اقتصاد دنیا: ${(e as Error).message}`);
     }
   }
 
   private async catchUpIfEmpty() {
     try {
       const count = await this.prisma.worldMarket.count();
-      if (count > 0) return;
-      this.logger.log('جدول اقتصاد دنیا خالی است؛ همگام‌سازی اولیه');
+      if (count === 0) {
+        this.logger.log('جدول اقتصاد دنیا خالی است؛ همگام‌سازی اولیه');
+        await this.refreshFromBitpin();
+        return;
+      }
+      if (process.env.NODE_ENV !== 'production') return;
+      const schedule = await readRefreshSchedule(this.prisma);
+      const now = tehranTimeParts();
+      if (now.hour * 60 + now.minute < schedule.worldHour * 60 + schedule.worldMinute) return;
+      const refresh = await this.prisma.worldMarketRefresh.findUnique({ where: { id: REFRESH_ID } });
+      if (refresh?.dateKey === tehranDateKey()) return;
+      this.logger.log('پس از راه‌اندازی: اقتصاد دنیا برای امروز هنوز به‌روز نشده');
       await this.refreshFromBitpin();
     } catch (e) {
       this.logger.warn(`همگام‌سازی اولیه اقتصاد دنیا: ${(e as Error).message.slice(0, 180)}`);
@@ -213,6 +238,63 @@ export class WorldMarketsService implements OnModuleInit {
         sourceHintFa: true,
       },
     });
+  }
+
+  async getChart(code: string) {
+    const market = await this.prisma.worldMarket.findUnique({ where: { code } });
+    if (!market) throw new NotFoundException('این رمزارز در اقتصاد دنیا پیدا نشد');
+
+    const yahooSymbol = yahooSymbolFor(market.baseCode, market.quoteCode);
+    let unitFa = market.quoteCode === 'IRT' ? 'تومان' : market.quoteCode === 'USDT' ? 'دلار' : market.quoteCode;
+    let noteFa: string | null = null;
+    let bars: Array<{ tradeDate: string; close: number }> = [];
+
+    if (!yahooSymbol) {
+      noteFa = 'برای این نماد نمودار جهانی در یاهو فایننس نیست.';
+    } else {
+      const sourceApi = await readMarketSourceApi(this.prisma);
+      try {
+        bars = await fetchYahooDailyHistory(yahooSymbol, sourceApi.yahooQuoteUrl);
+      } catch (e) {
+        this.logger.warn(`نمودار یاهو ${yahooSymbol}: ${(e as Error).message.slice(0, 160)}`);
+      }
+      if (bars.length < 2) {
+        noteFa = 'دادهٔ تاریخی یاهو فایننس برای این نماد کافی نبود.';
+      } else if (market.quoteCode === 'IRT') {
+        const tether = await this.prisma.worldMarket.findFirst({
+          where: { quoteCode: 'IRT', baseCode: 'USDT' },
+          select: { priceNum: true },
+        });
+        const rate = tether?.priceNum ?? null;
+        if (rate != null && rate > 0) {
+          bars = bars.map((b) => ({ tradeDate: b.tradeDate, close: b.close * rate }));
+          noteFa = 'نمودار از یاهو فایننس است و با نرخ امروز تتر در بیت‌پین به تومان تبدیل شده است.';
+        } else {
+          unitFa = 'دلار';
+          noteFa = 'نرخ تتر برای تبدیل به تومان نبود؛ نمودار به دلار جهانی است.';
+        }
+      } else if (market.quoteCode === 'USDT' || market.quoteCode === 'USD' || market.quoteCode === 'USDC') {
+        unitFa = 'دلار';
+        noteFa = 'نمودار قیمت جهانی یاهو فایننس به دلار است.';
+      } else {
+        noteFa = 'نمودار قیمت جهانی یاهو فایننس است.';
+      }
+    }
+
+    return {
+      code: market.code,
+      titleFa: market.titleFa,
+      baseTitleFa: market.baseTitleFa,
+      baseCode: market.baseCode,
+      quoteCode: market.quoteCode,
+      price: market.price,
+      priceNum: market.priceNum,
+      changePct: market.changePct,
+      yahooSymbol,
+      unitFa,
+      noteFa,
+      bars,
+    };
   }
 
   async refreshFromBitpin() {

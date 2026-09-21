@@ -38,6 +38,8 @@ type SettingsTab =
   | 'prompts'
   | 'llm'
   | 'spotPrices'
+  | 'worldApis'
+  | 'refreshTimes'
   | 'telegram'
   | 'telegramAssistant';
 
@@ -49,6 +51,8 @@ const TABS: { id: SettingsTab; label: string; adminOnly?: boolean }[] = [
   { id: 'prompts', label: 'پرامپت‌ها', adminOnly: true },
   { id: 'llm', label: 'API مدل زبانی', adminOnly: true },
   { id: 'spotPrices', label: 'API قیمت لحظه‌ای دلار و طلا', adminOnly: true },
+  { id: 'worldApis', label: 'API اقتصاد دنیا', adminOnly: true },
+  { id: 'refreshTimes', label: 'ساعت به‌روزرسانی', adminOnly: true },
   { id: 'telegram', label: 'ربات تلگرام', adminOnly: true },
   { id: 'telegramAssistant', label: 'دستیار تلگرام', adminOnly: true },
 ];
@@ -157,6 +161,17 @@ export default function SettingsPage() {
     usdIrr?: number | null;
     goldGramRial?: number | null;
   } | null>(null);
+  const [worldApis, setWorldApis] = useState({ bitpinMarketsUrl: '', yahooQuoteUrl: '' });
+  const [worldApiBusy, setWorldApiBusy] = useState(false);
+  const [worldApiFeedback, setWorldApiFeedback] = useState<{ ok: boolean; text: string } | null>(null);
+  const [refreshTimes, setRefreshTimes] = useState({
+    iranNewsHour: 8,
+    iranNewsMinute: 0,
+    worldHour: 7,
+    worldMinute: 0,
+  });
+  const [refreshTimeBusy, setRefreshTimeBusy] = useState(false);
+  const [refreshTimeFeedback, setRefreshTimeFeedback] = useState<{ ok: boolean; text: string } | null>(null);
   const [tgForm, setTgForm] = useState({
     botNameFa: 'سبدیار',
     botUsername: TELEGRAM_BOT_USERNAME,
@@ -206,6 +221,29 @@ export default function SettingsPage() {
   async function loadFundDefs() {
     const defs = await api<FundDefinition[]>('/funds/definitions?includeInactive=true');
     setFundDefs(defs);
+  }
+
+  async function loadRefreshTimes() {
+    const cfg = await api<{
+      iranNewsHour: number;
+      iranNewsMinute: number;
+      worldHour: number;
+      worldMinute: number;
+    }>('/news/schedule');
+    setRefreshTimes({
+      iranNewsHour: cfg.iranNewsHour ?? 8,
+      iranNewsMinute: cfg.iranNewsMinute ?? 0,
+      worldHour: cfg.worldHour ?? 7,
+      worldMinute: cfg.worldMinute ?? 0,
+    });
+  }
+
+  async function loadWorldApis() {
+    const cfg = await api<{ bitpinMarketsUrl: string; yahooQuoteUrl: string }>('/world-markets/source-api');
+    setWorldApis({
+      bitpinMarketsUrl: cfg.bitpinMarketsUrl ?? '',
+      yahooQuoteUrl: cfg.yahooQuoteUrl ?? '',
+    });
   }
 
   async function loadSpotConfig() {
@@ -342,6 +380,8 @@ export default function SettingsPage() {
       if (admin) {
         loadSpotConfig().catch(() => undefined);
         loadSpotLatest().catch(() => undefined);
+        loadWorldApis().catch(() => undefined);
+        loadRefreshTimes().catch(() => undefined);
         loadTelegramConfig().catch(() => undefined);
         loadAssistantConfig().catch(() => undefined);
       }
@@ -373,6 +413,12 @@ export default function SettingsPage() {
       loadSpotConfig().catch(() => undefined);
       loadSpotLatest().catch(() => undefined);
     }
+    if (tab === 'worldApis' && isAdmin) {
+      loadWorldApis().catch(() => undefined);
+    }
+    if (tab === 'refreshTimes' && isAdmin) {
+      loadRefreshTimes().catch(() => undefined);
+    }
     if (tab === 'telegram' && isAdmin) {
       loadTelegramConfig().catch(() => undefined);
     }
@@ -380,6 +426,64 @@ export default function SettingsPage() {
       loadAssistantConfig().catch(() => undefined);
     }
   }, [tab, isAdmin]);
+
+  async function saveRefreshTimes(e: FormEvent) {
+    e.preventDefault();
+    setRefreshTimeBusy(true);
+    setRefreshTimeFeedback(null);
+    try {
+      const saved = await api<{
+        iranNewsHour: number;
+        iranNewsMinute: number;
+        worldHour: number;
+        worldMinute: number;
+      }>('/news/schedule', {
+        method: 'PUT',
+        body: JSON.stringify(refreshTimes),
+      });
+      setRefreshTimes(saved);
+      const text = 'ساعت به‌روزرسانی اخبار ذخیره شد.';
+      setRefreshTimeFeedback({ ok: true, text });
+      toast.success(text);
+    } catch (err) {
+      const text = (err as Error).message || 'ذخیره ساعت ناموفق بود.';
+      setRefreshTimeFeedback({ ok: false, text });
+      toast.error(text);
+    } finally {
+      setRefreshTimeBusy(false);
+    }
+  }
+
+  async function saveWorldApis(e: FormEvent) {
+    e.preventDefault();
+    setWorldApiBusy(true);
+    setWorldApiFeedback(null);
+    try {
+      const saved = await api<{ bitpinMarketsUrl: string; yahooQuoteUrl: string }>(
+        '/world-markets/source-api',
+        {
+          method: 'PUT',
+          body: JSON.stringify({
+            bitpinMarketsUrl: worldApis.bitpinMarketsUrl.trim(),
+            yahooQuoteUrl: worldApis.yahooQuoteUrl.trim(),
+          }),
+        },
+      );
+      setWorldApis({
+        bitpinMarketsUrl: saved.bitpinMarketsUrl,
+        yahooQuoteUrl: saved.yahooQuoteUrl,
+      });
+      const text = 'آدرس API بیت‌پین و یاهو فایننس ذخیره شد.';
+      setWorldApiFeedback({ ok: true, text });
+      toast.success(text);
+    } catch (err) {
+      const text = (err as Error).message || 'ذخیره آدرس‌ها ناموفق بود.';
+      setWorldApiFeedback({ ok: false, text });
+      toast.error(text);
+    } finally {
+      setWorldApiBusy(false);
+    }
+  }
 
   async function saveSpotConfig(e: FormEvent) {
     e.preventDefault();
@@ -1477,6 +1581,104 @@ export default function SettingsPage() {
             >
               {spotFeedback.ok ? '✓ ' : '! '}
               {spotFeedback.text}
+            </div>
+          )}
+        </form>
+      )}
+
+      {tab === 'worldApis' && isAdmin && (
+        <form onSubmit={saveWorldApis} className="card grid max-w-2xl gap-4">
+          <p className="text-sm leading-7 text-navy-800/75">
+            این دو نشانی برای فهرست بازار بیت‌پین و قیمت جهانی یاهو فایننس استفاده می‌شوند. اگر عوض
+            شوند، همگام‌سازی بعدی اقتصاد دنیا و قیمت دلار و طلا از بیت‌پین همان آدرس تازه را می‌خواند.
+          </p>
+          <div>
+            <label className="label">آدرس API بیت‌پین</label>
+            <input
+              className="input"
+              value={worldApis.bitpinMarketsUrl}
+              onChange={(e) => setWorldApis({ ...worldApis, bitpinMarketsUrl: e.target.value })}
+              placeholder="https://api.bitpin.ir/v1/mkt/markets/"
+              dir="ltr"
+              required
+            />
+          </div>
+          <div>
+            <label className="label">آدرس API یاهو فایننس</label>
+            <input
+              className="input"
+              value={worldApis.yahooQuoteUrl}
+              onChange={(e) => setWorldApis({ ...worldApis, yahooQuoteUrl: e.target.value })}
+              placeholder="https://query1.finance.yahoo.com/v7/finance/quote"
+              dir="ltr"
+              required
+            />
+          </div>
+          <button type="submit" className="btn-primary w-fit" disabled={worldApiBusy}>
+            {worldApiBusy ? 'در حال ذخیره...' : 'ذخیره آدرس‌ها'}
+          </button>
+          {worldApiFeedback && (
+            <div
+              className={clsx(
+                'rounded-lg px-3 py-3 text-sm leading-7',
+                worldApiFeedback.ok ? 'bg-emerald-50 text-emerald-900' : 'bg-red-50 text-red-800',
+              )}
+              role={worldApiFeedback.ok ? 'status' : 'alert'}
+            >
+              {worldApiFeedback.ok ? '✓ ' : '! '}
+              {worldApiFeedback.text}
+            </div>
+          )}
+        </form>
+      )}
+
+      {tab === 'refreshTimes' && isAdmin && (
+        <form onSubmit={saveRefreshTimes} className="card grid max-w-2xl gap-4">
+          <p className="text-sm leading-7 text-navy-800/75">
+            ساعت‌ها به وقت تهران است. اگر در همان روز خبر یا اقتصاد دنیا خالی بماند، یک ساعت و دو ساعت
+            بعد دوباره تلاش می‌شود.
+          </p>
+          <div>
+            <label className="label">ساعت اخبار ایران</label>
+            <input
+              className="input max-w-[10rem]"
+              type="time"
+              dir="ltr"
+              value={clockValue(refreshTimes.iranNewsHour, refreshTimes.iranNewsMinute)}
+              onChange={(e) => {
+                const [h, m] = e.target.value.split(':').map(Number);
+                if (!Number.isInteger(h) || !Number.isInteger(m)) return;
+                setRefreshTimes({ ...refreshTimes, iranNewsHour: h, iranNewsMinute: m });
+              }}
+            />
+          </div>
+          <div>
+            <label className="label">ساعت اقتصاد دنیا</label>
+            <input
+              className="input max-w-[10rem]"
+              type="time"
+              dir="ltr"
+              value={clockValue(refreshTimes.worldHour, refreshTimes.worldMinute)}
+              onChange={(e) => {
+                const [h, m] = e.target.value.split(':').map(Number);
+                if (!Number.isInteger(h) || !Number.isInteger(m)) return;
+                setRefreshTimes({ ...refreshTimes, worldHour: h, worldMinute: m });
+              }}
+            />
+          </div>
+          <button type="submit" className="btn-primary w-fit" disabled={refreshTimeBusy}>
+            {refreshTimeBusy ? 'در حال ذخیره...' : 'ذخیره ساعت‌ها'}
+          </button>
+          {refreshTimeFeedback && (
+            <div
+              className={clsx(
+                'rounded-lg px-3 py-3 text-sm leading-7',
+                refreshTimeFeedback.ok ? 'bg-emerald-50 text-emerald-900' : 'bg-red-50 text-red-800',
+              )}
+              role={refreshTimeFeedback.ok ? 'status' : 'alert'}
+            >
+              {refreshTimeFeedback.ok ? '✓ ' : '! '}
+              {refreshTimeFeedback.text}
             </div>
           )}
         </form>

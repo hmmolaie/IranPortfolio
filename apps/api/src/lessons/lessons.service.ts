@@ -1,4 +1,4 @@
-import { BadRequestException, Injectable, Logger } from '@nestjs/common';
+import { BadRequestException, Injectable, Logger, NotFoundException } from '@nestjs/common';
 import * as fs from 'fs/promises';
 import * as path from 'path';
 import { PrismaService } from '../prisma/prisma.service';
@@ -39,6 +39,27 @@ export class LessonsService {
       where: { userId },
       orderBy: { createdAt: 'desc' },
     });
+  }
+
+  async createManual(userId: string, data: { titleFa: string; bodyFa: string }) {
+    const titleFa = data.titleFa.replace(/\s+/g, ' ').trim().slice(0, 180);
+    const bodyFa = data.bodyFa.trim().slice(0, 4000);
+    if (titleFa.length < 2) throw new BadRequestException('عنوان درس را بنویسید');
+    if (bodyFa.length < 4) throw new BadRequestException('متن درس را بنویسید');
+    const dup = await this.dropDuplicates(userId, [{ titleFa, bodyFa }]);
+    if (!dup.length) {
+      throw new BadRequestException('درسی با همین عنوان قبلاً ثبت شده است');
+    }
+    return this.prisma.lesson.create({
+      data: { userId, titleFa, bodyFa, source: 'manual' },
+    });
+  }
+
+  async remove(userId: string, id: string) {
+    const row = await this.prisma.lesson.findFirst({ where: { id, userId } });
+    if (!row) throw new NotFoundException('درس‌آموخته پیدا نشد');
+    await this.prisma.lesson.delete({ where: { id } });
+    return { ok: true };
   }
 
   async ingestIranEconomyPdf(userId: string, file: Express.Multer.File) {
