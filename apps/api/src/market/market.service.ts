@@ -31,14 +31,38 @@ const MARKET_INDICES = [
     insCode: '32097828799138957',
     symbol: 'TEDPIX',
     nameFa: 'شاخص کل',
+    unit: 'point' as const,
   },
   {
     key: 'equalWeight' as const,
     insCode: '67130298613737946',
     symbol: 'TESWEQ',
     nameFa: 'شاخص هم‌وزن',
+    unit: 'point' as const,
   },
 ];
+
+/** معادل دلاری: شاخص تقسیم بر دلار آزاد به تومان. insCode ساختگی است تا با کد TSETMC قاطی نشود. */
+const USD_MARKET_INDICES = [
+  {
+    key: 'totalUsd' as const,
+    baseKey: 'total' as const,
+    insCode: 'USD-TEDPIX',
+    symbol: 'TEDPIXUSD',
+    nameFa: 'شاخص کل دلاری',
+    unit: 'usd' as const,
+  },
+  {
+    key: 'equalWeightUsd' as const,
+    baseKey: 'equalWeight' as const,
+    insCode: 'USD-TESWEQ',
+    symbol: 'TESWEQUSD',
+    nameFa: 'شاخص هم‌وزن دلاری',
+    unit: 'usd' as const,
+  },
+];
+
+const INDEX_DISPLAY_ORDER = ['total', 'totalUsd', 'equalWeight', 'equalWeightUsd'] as const;
 
 type MarketIndexKey = (typeof MARKET_INDICES)[number]['key'];
 type IndexLiveSnap = { lastValue: number; changePct: number | null };
@@ -86,6 +110,29 @@ function dEvenToDate(dEven: string): Date {
   const m = Number(dEven.slice(4, 6)) - 1;
   const day = Number(dEven.slice(6, 8));
   return new Date(Date.UTC(y, m, day));
+}
+
+function tradeDateKey(d: Date): string {
+  return d.toISOString().slice(0, 10);
+}
+
+/** شاخص دلاری = امتیاز شاخص ÷ (دلار آزاد به تومان). usdIrr به ریال است. */
+function indexPointsToUsd(points: number, usdIrr: number): number | null {
+  const toman = usdIrr / 10;
+  if (!(points > 0) || !(toman > 0)) return null;
+  return Math.round((points / toman) * 100) / 100;
+}
+
+function usdIrrOnOrBefore(
+  rates: Array<{ dateKey: string; usdIrr: number }>,
+  dateKey: string,
+): number | null {
+  let found: number | null = null;
+  for (const row of rates) {
+    if (row.dateKey > dateKey) break;
+    found = row.usdIrr;
+  }
+  return found;
 }
 
 /** پنجشنبه و جمعه بورس تهران تعطیل است */
@@ -700,7 +747,8 @@ export class MarketService {
   async getMarketIndices(historyDays = 60) {
     const take = Math.min(Math.max(historyDays, 5), 365);
     let out = await this.readMarketIndices(take);
-    if (out.some((i) => i.lastValue == null)) {
+    const pointMissing = out.some((i) => i.unit === 'point' && i.lastValue == null);
+    if (pointMissing) {
       try {
         await this.ensureLatestIndexValues();
         out = await this.readMarketIndices(take);
@@ -708,12 +756,33 @@ export class MarketService {
         this.logger.warn(`تکمیل شاخص برای نمایش: ${(e as Error).message}`);
       }
     }
+    const usdMissingHistory = out.some((i) => i.unit === 'usd' && i.history.length === 0);
+    try {
+      await this.syncUsdIndexBars(usdMissingHistory ? 'all' : 'latest');
+      out = await this.readMarketIndices(take);
+    } catch (e) {
+      this.logger.warn(`شاخص دلاری: ${(e as Error).message}`);
+    }
     return out;
   }
 
   private async readMarketIndices(take: number) {
+    const catalog = [
+      ...MARKET_INDICES.map((d) => ({ ...d })),
+      ...USD_MARKET_INDICES.map((d) => ({
+        key: d.key,
+        insCode: d.insCode,
+        symbol: d.symbol,
+        nameFa: d.nameFa,
+        unit: d.unit,
+      })),
+    ].sort(
+      (a, b) =>
+        INDEX_DISPLAY_ORDER.indexOf(a.key as (typeof INDEX_DISPLAY_ORDER)[number]) -
+        INDEX_DISPLAY_ORDER.indexOf(b.key as (typeof INDEX_DISPLAY_ORDER)[number]),
+    );
     const out = [];
-    for (const def of MARKET_INDICES) {
+    for (const def of catalog) {
       const instrument = await this.prisma.instrument.findFirst({
         where: {
           OR: [{ insCode: def.insCode }, { symbol: def.symbol, assetType: AssetType.INDEX }],
@@ -721,9 +790,11 @@ export class MarketService {
       });
       if (!instrument) {
         out.push({
+          id: null as string | null,
           key: def.key,
           symbol: def.symbol,
           nameFa: def.nameFa,
+          unit: def.unit,
           lastValue: null as number | null,
           changePct: null as number | null,
           history: [] as Array<{ tradeDate: string; value: number }>,
@@ -748,9 +819,11 @@ export class MarketService {
       const changePct =
         last != null && prev != null && prev > 0 ? ((last - prev) / prev) * 100 : null;
       out.push({
+        id: instrument.id,
         key: def.key,
         symbol: def.symbol,
         nameFa: def.nameFa,
+        unit: def.unit,
         lastValue: last,
         changePct,
         history,
@@ -808,6 +881,11 @@ export class MarketService {
       upserted += await this.persistLiveIndexSnapshot();
     } catch (e) {
       this.logger.warn(`شاخص لحظه‌ای: ${(e as Error).message}`);
+    }
+    try {
+      upserted += await this.syncUsdIndexBars('all');
+    } catch (e) {
+      this.logger.warn(`شاخص دلاری: ${(e as Error).message}`);
     }
 
     this.logger.log(`شاخص‌ها: ${upserted} ردیف ذخیره شد`);
@@ -867,6 +945,83 @@ export class MarketService {
         },
       });
       upserted += 1;
+    }
+    try {
+      upserted += await this.syncUsdIndexBars('latest');
+    } catch (e) {
+      this.logger.warn(`شاخص دلاری لحظه‌ای: ${(e as Error).message}`);
+    }
+    return upserted;
+  }
+
+  /** شاخص کل و هم‌وزن را بر دلار آزاد همان روز تقسیم و مثل خود شاخص ذخیره می‌کند. */
+  private async syncUsdIndexBars(mode: 'all' | 'latest'): Promise<number> {
+    const spots = await this.prisma.spotPriceDaily.findMany({
+      where: { usdIrr: { gt: 0 } },
+      orderBy: { dateKey: 'asc' },
+      select: { dateKey: true, usdIrr: true },
+    });
+    const rates = spots.filter((s): s is { dateKey: string; usdIrr: number } => s.usdIrr != null && s.usdIrr > 0);
+    if (!rates.length) return 0;
+
+    let upserted = 0;
+    for (const def of USD_MARKET_INDICES) {
+      const base = MARKET_INDICES.find((d) => d.key === def.baseKey);
+      if (!base) continue;
+      const baseInst = await this.prisma.instrument.findFirst({
+        where: {
+          OR: [{ insCode: base.insCode }, { symbol: base.symbol, assetType: AssetType.INDEX }],
+        },
+      });
+      if (!baseInst) continue;
+      const bars = await this.prisma.priceBar.findMany({
+        where: { instrumentId: baseInst.id },
+        orderBy: { tradeDate: mode === 'latest' ? 'desc' : 'asc' },
+        take: mode === 'latest' ? 1 : undefined,
+      });
+      if (!bars.length) continue;
+
+      const usdInst = await this.prisma.instrument.upsert({
+        where: { insCode: def.insCode },
+        create: {
+          insCode: def.insCode,
+          symbol: def.symbol,
+          nameFa: def.nameFa,
+          assetType: AssetType.INDEX,
+          meta: { unit: 'usd', baseSymbol: base.symbol },
+        },
+        update: {
+          symbol: def.symbol,
+          nameFa: def.nameFa,
+          assetType: AssetType.INDEX,
+          isActive: true,
+          meta: { unit: 'usd', baseSymbol: base.symbol },
+        },
+      });
+
+      for (const bar of bars) {
+        const points = bar.closePrice ?? bar.lastPrice;
+        if (points == null || !(points > 0)) continue;
+        const usdIrr = usdIrrOnOrBefore(rates, tradeDateKey(bar.tradeDate));
+        const usdValue = usdIrr == null ? null : indexPointsToUsd(points, usdIrr);
+        if (usdValue == null) continue;
+        await this.prisma.priceBar.upsert({
+          where: {
+            instrumentId_tradeDate: { instrumentId: usdInst.id, tradeDate: bar.tradeDate },
+          },
+          create: {
+            instrumentId: usdInst.id,
+            tradeDate: bar.tradeDate,
+            lastPrice: usdValue,
+            closePrice: usdValue,
+          },
+          update: {
+            lastPrice: usdValue,
+            closePrice: usdValue,
+          },
+        });
+        upserted += 1;
+      }
     }
     return upserted;
   }

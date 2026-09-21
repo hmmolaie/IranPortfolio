@@ -267,6 +267,8 @@ model FundDefinition {
   nameFa      String
   symbolCode  String?
   description String?
+  /// آدرس سایت صندوق؛ اختیاری
+  websiteUrl  String?
   isActive    Boolean  @default(true)
   createdAt   DateTime @default(now())
   updatedAt   DateTime @updatedAt
@@ -483,6 +485,13 @@ model TelegramBotConfig {
   botNameFa         String?
   botUsername       String?
   botTokenEncrypted String?
+  /// مدل متن‌به‌صدا برای فایل صوتی اخبار روزانه
+  ttsModel          String   @default("gemini-2.5-pro-preview-tts")
+  /// ساعت ارسال به وقت تهران
+  sendHour          Int      @default(8)
+  sendMinute        Int      @default(30)
+  /// روزهای هفته؛ ۰ یکشنبه تا ۶ شنبه
+  sendWeekdays      Int[]    @default([0, 1, 2, 3, 4, 5, 6])
   enabled           Boolean  @default(true)
   lastUpdateId      String?
   createdAt         DateTime @default(now())
@@ -510,6 +519,15 @@ model TelegramDigestLog {
   createdAt       DateTime @default(now())
 }
 
+/** متن گفتاری و فایل صوتی مشترک اخبار تلگرام؛ هر روز فقط یک‌بار ساخته می‌شود */
+model TelegramSharedDigest {
+  dateKey     String   @id
+  voiceScript String   @db.Text
+  voiceAudio  Bytes?
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+}
+
 /** تنظیمات تک‌ردیفی آدرس API قیمت لحظه‌ای دلار و طلا */
 model SpotPriceApiConfig {
   id        String   @id @default("default")
@@ -532,6 +550,15 @@ model SpotPriceDaily {
   updatedAt      DateTime @updatedAt
 
   @@index([asOfDate])
+}
+
+/** نشانی API بیت‌پین و یاهو فایننس برای اقتصاد دنیا */
+model WorldSourceApiConfig {
+  id               String   @id @default("default")
+  bitpinMarketsUrl String   @default("https://api.bitpin.ir/v1/mkt/markets/")
+  yahooQuoteUrl    String   @default("https://query1.finance.yahoo.com/v7/finance/quote")
+  createdAt        DateTime @default(now())
+  updatedAt        DateTime @updatedAt
 }
 
 /** آخرین همگام‌سازی بازارهای جهانی (بیت‌پین) */

@@ -1196,7 +1196,10 @@ ${historyText}`,
     let analysis: Awaited<ReturnType<PortfoliosService['analyzeCurrent']>> | null = null;
     if (latest) {
       try {
-        analysis = await this.analyzeCurrent(userId, main.id, { pastTenseFa: true });
+        analysis = await this.analyzeCurrent(userId, main.id, {
+          pastTenseFa: true,
+          personalHoldingsOnly: true,
+        });
       } catch (e) {
         analysis = {
           score: 50,
@@ -1225,27 +1228,38 @@ ${historyText}`,
     };
   }
 
-  async analyzeCurrent(userId: string, portfolioId: string, opts?: { pastTenseFa?: boolean }) {
+  async analyzeCurrent(
+    userId: string,
+    portfolioId: string,
+    opts?: { pastTenseFa?: boolean; personalHoldingsOnly?: boolean },
+  ) {
     const portfolio = await this.get(userId, portfolioId);
     const latest = portfolio.snapshots[0];
     if (!latest) throw new NotFoundException('سبدی برای آنالیز وجود ندارد');
 
+    const personal = opts?.personalHoldingsOnly === true;
     const universe = await this.buildUniverse();
-    const macro = await this.prisma.macroSnapshot.findFirst({ orderBy: { asOfDate: 'desc' } });
-    const economicNews = await this.news.getForPortfolioContext(userId, 40, 30);
-    const worldMacroNews = await this.worldMarkets.recentMacroNews();
-    const fxHistory = await this.prisma.spotPriceDaily.findMany({
-      where: { dateKey: { gte: daysAgoDateKey(30) } },
-      orderBy: { dateKey: 'asc' },
-      select: { dateKey: true, usdIrr: true, goldGramRial: true },
-      take: 35,
-    });
+    const macro = personal
+      ? null
+      : await this.prisma.macroSnapshot.findFirst({ orderBy: { asOfDate: 'desc' } });
+    const economicNews = personal ? [] : await this.news.getForPortfolioContext(userId, 40, 30);
+    const worldMacroNews = personal ? [] : await this.worldMarkets.recentMacroNews();
+    const fxHistory = personal
+      ? []
+      : await this.prisma.spotPriceDaily.findMany({
+          where: { dateKey: { gte: daysAgoDateKey(30) } },
+          orderBy: { dateKey: 'asc' },
+          select: { dateKey: true, usdIrr: true, goldGramRial: true },
+          take: 35,
+        });
     const platformUserId = (await this.users.getAdminUserId()) ?? userId;
-    const lessons = await this.prisma.lesson.findMany({
-      where: { userId: platformUserId },
-      orderBy: { createdAt: 'desc' },
-      take: 30,
-    });
+    const lessons = personal
+      ? []
+      : await this.prisma.lesson.findMany({
+          where: { userId: platformUserId },
+          orderBy: { createdAt: 'desc' },
+          take: 30,
+        });
     const profile = await this.prisma.userProfile.findUnique({ where: { userId } });
 
     const pricedItems = latest.items.map((i) => {
@@ -1264,30 +1278,47 @@ ${historyText}`,
     });
 
     let system = await this.llm.getSystemPrompt(userId, 'portfolio_analyze');
+    if (personal) {
+      system += `
+
+این فراخوانی فقط برای سبد همین کاربر در پیام تلگرام است.
+اخبار روز و متن مشترک پیام جدا ساخته شده‌اند و برای همه یکسان فرستاده می‌شوند؛ آن‌ها را خلاصه، تکرار یا از نو ننویس.
+فقط ترکیب فعلی سبد (نماد، وزن، مبلغ، قیمت) را ارزیابی کن و پیشنهاد بهبود همان سبد را بده.
+summaryFa فقط دربارهٔ همین سبد باشد.`;
+    }
     if (opts?.pastTenseFa) {
       system += `
 
 این خروجی برای پیام تلگرام است.
-summaryFa، نقاط قوت و ضعف را با فعل گذشته گزارش کن؛ مثل «بازار این‌گونه شد» نه «بازار این‌گونه است».
-عنوان و متن پیشنهاد را هم گذشته بنویس؛ مثل «پیشنهاد این بود که…». فیلدهای action/symbol/amountRial را عوض نکن.`;
+summaryFa و نقاط قوت و ضعف گزارش وضعیت سبد هستند و باید با فعل گذشته باشند.
+عنوان و متن هر پیشنهاد بهبود (titleFa و bodyFa) باید با فعل آینده باشند، نه گذشته و نه حال.
+مثال درست: «وزن این نماد کاهش پیدا خواهد کرد.» مثال غلط: «وزن این نماد کم شد» یا «پیشنهاد این بود که…».
+فیلدهای action/symbol/amountRial را عوض نکن.`;
     }
+    const portfolioPayload = {
+      name: portfolio.name,
+      strategy: portfolio.strategy,
+      capitalRial: portfolio.capitalRial,
+      cashRial: portfolio.cashRial,
+      preferencesNoteFa: portfolio.preferencesNoteFa,
+    };
     const userPrompt = JSON.stringify(
-      {
-        portfolio: {
-          name: portfolio.name,
-          strategy: portfolio.strategy,
-          capitalRial: portfolio.capitalRial,
-          cashRial: portfolio.cashRial,
-          preferencesNoteFa: portfolio.preferencesNoteFa,
-        },
-        userProfile: profile,
-        currentItems: pricedItems,
-        macro,
-        ...splitNewsForPortfolio(economicNews),
-        worldMacroNews,
-        fxHistory,
-        lessons: lessons.map((l) => ({ title: l.titleFa, body: l.bodyFa })),
-      },
+      personal
+        ? {
+            portfolio: portfolioPayload,
+            userProfile: profile,
+            currentItems: pricedItems,
+          }
+        : {
+            portfolio: portfolioPayload,
+            userProfile: profile,
+            currentItems: pricedItems,
+            macro,
+            ...splitNewsForPortfolio(economicNews),
+            worldMacroNews,
+            fxHistory,
+            lessons: lessons.map((l) => ({ title: l.titleFa, body: l.bodyFa })),
+          },
       null,
       2,
     );

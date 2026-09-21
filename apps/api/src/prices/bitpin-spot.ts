@@ -1,5 +1,5 @@
 /** بیت‌پین قیمت‌های IRT را به تومان می‌دهد؛ سبدیار ریال ذخیره می‌کند */
-export const BITPIN_MARKETS_URL = 'https://api.bitpin.ir/v1/mkt/markets/';
+export { DEFAULT_BITPIN_MARKETS_URL as BITPIN_MARKETS_URL } from '../market-source/market-source-api';
 export const BITPIN_TOMAN_TO_RIAL = 10;
 export const TROY_OUNCE_GRAMS = 31.1034768;
 export const KARAT_18_OF_24 = 18 / 24;

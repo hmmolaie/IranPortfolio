@@ -6,6 +6,7 @@ import { getToken, clearSession, api, getUserRole, setUserRole, UserRole, touchS
 import { useEffect, useState } from 'react';
 import clsx from 'clsx';
 import { ToastProvider } from '@/components/Toast';
+import { InstallAppPrompt } from '@/components/InstallAppPrompt';
 
 const allLinks = [
   { href: '/dashboard', label: 'داشبورد', adminOnly: false },
@@ -206,6 +207,7 @@ export function AppShell({ children }: { children: React.ReactNode }) {
             </div>
           </header>
           <main className="px-4 py-8 sm:px-8">{children}</main>
+          <InstallAppPrompt />
         </div>
       </div>
     </ToastProvider>

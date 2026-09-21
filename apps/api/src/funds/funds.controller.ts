@@ -13,7 +13,7 @@ import {
   UseInterceptors,
 } from '@nestjs/common';
 import { FileInterceptor } from '@nestjs/platform-express';
-import { IsBoolean, IsInt, IsOptional, IsString, Max, Min } from 'class-validator';
+import { IsBoolean, IsInt, IsOptional, IsString, Max, MaxLength, Min } from 'class-validator';
 import { Type } from 'class-transformer';
 import { FundsService } from './funds.service';
 import { JwtAuthGuard } from '../auth/jwt-auth.guard';
@@ -30,6 +30,11 @@ class CreateFundDefinitionDto {
   @IsOptional()
   @IsString()
   description?: string;
+
+  @IsOptional()
+  @IsString()
+  @MaxLength(500)
+  websiteUrl?: string;
 }
 
 class UpdateFundDefinitionDto {
@@ -44,6 +49,11 @@ class UpdateFundDefinitionDto {
   @IsOptional()
   @IsString()
   description?: string;
+
+  @IsOptional()
+  @IsString()
+  @MaxLength(500)
+  websiteUrl?: string;
 }
 
 class SetFundDefinitionActiveDto {

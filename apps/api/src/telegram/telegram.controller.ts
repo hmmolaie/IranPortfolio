@@ -1,5 +1,5 @@
 import { Body, Controller, Get, Post, Put, Req, UseGuards } from '@nestjs/common';
-import { IsBoolean, IsOptional, IsString } from 'class-validator';
+import { IsArray, IsBoolean, IsInt, IsOptional, IsString, Max, Min } from 'class-validator';
 import { TelegramService } from './telegram.service';
 import { JwtAuthGuard } from '../auth/jwt-auth.guard';
 import { AdminGuard } from '../auth/admin.guard';
@@ -20,6 +20,27 @@ class SaveTelegramConfigDto {
   @IsOptional()
   @IsBoolean()
   enabled?: boolean;
+
+  @IsOptional()
+  @IsString()
+  ttsModel?: string;
+
+  @IsOptional()
+  @IsInt()
+  @Min(0)
+  @Max(23)
+  sendHour?: number;
+
+  @IsOptional()
+  @IsInt()
+  @Min(0)
+  @Max(59)
+  sendMinute?: number;
+
+  @IsOptional()
+  @IsArray()
+  @IsInt({ each: true })
+  sendWeekdays?: number[];
 }
 
 class SendTodayDto {

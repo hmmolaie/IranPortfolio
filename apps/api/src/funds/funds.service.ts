@@ -64,6 +64,24 @@ function normalizeSymbol(symbol?: string, nameFa?: string): string {
   return raw.replace(/\s+/g, ' ').slice(0, 64) || 'UNKNOWN';
 }
 
+function normalizeFundWebsite(raw?: string): string | null {
+  const t = (raw ?? '').trim();
+  if (!t) return null;
+  const withProto = /^https?:\/\//i.test(t) ? t : `https://${t}`;
+  let url: URL;
+  try {
+    url = new URL(withProto);
+  } catch {
+    throw new BadRequestException('آدرس سایت صندوق نامعتبر است');
+  }
+  if ((url.protocol !== 'http:' && url.protocol !== 'https:') || !url.hostname.includes('.')) {
+    throw new BadRequestException('آدرس سایت صندوق نامعتبر است');
+  }
+  const out = url.toString();
+  if (out.length > 500) throw new BadRequestException('آدرس سایت صندوق بیش از حد طولانی است');
+  return out;
+}
+
 function clampScore(n: unknown): number | null {
   const v = Number(n);
   if (Number.isNaN(v)) return null;
@@ -84,13 +102,17 @@ export class FundsService {
     });
   }
 
-  createDefinition(userId: string, data: { nameFa: string; symbolCode?: string; description?: string }) {
+  createDefinition(
+    userId: string,
+    data: { nameFa: string; symbolCode?: string; description?: string; websiteUrl?: string },
+  ) {
     return this.prisma.fundDefinition.create({
       data: {
         userId,
         nameFa: data.nameFa.trim(),
         symbolCode: data.symbolCode?.trim(),
         description: data.description?.trim(),
+        websiteUrl: normalizeFundWebsite(data.websiteUrl),
       },
     });
   }
@@ -108,7 +130,7 @@ export class FundsService {
   async updateDefinition(
     userId: string,
     id: string,
-    data: { nameFa?: string; symbolCode?: string; description?: string },
+    data: { nameFa?: string; symbolCode?: string; description?: string; websiteUrl?: string },
   ) {
     const def = await this.prisma.fundDefinition.findFirst({ where: { id, userId } });
     if (!def) throw new NotFoundException('صندوق تعریف‌شده یافت نشد');
@@ -118,6 +140,7 @@ export class FundsService {
         ...(data.nameFa !== undefined ? { nameFa: data.nameFa.trim() } : {}),
         ...(data.symbolCode !== undefined ? { symbolCode: data.symbolCode.trim() || null } : {}),
         ...(data.description !== undefined ? { description: data.description.trim() || null } : {}),
+        ...(data.websiteUrl !== undefined ? { websiteUrl: normalizeFundWebsite(data.websiteUrl) } : {}),
       },
     });
   }

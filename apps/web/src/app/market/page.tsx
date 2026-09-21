@@ -40,8 +40,10 @@ type IngestResult = {
 };
 
 type MarketIndex = {
-  key: 'total' | 'equalWeight' | string;
+  id: string | null;
+  key: 'total' | 'equalWeight' | 'totalUsd' | 'equalWeightUsd' | string;
   nameFa: string;
+  unit?: 'point' | 'usd';
   lastValue: number | null;
   changePct: number | null;
   history: Array<{ tradeDate: string; value: number }>;
@@ -59,9 +61,13 @@ const ASSET_FA: Record<string, string> = {
   INDEX: 'شاخص',
 };
 
-function formatIndexValue(n: number | null | undefined) {
+function formatIndexValue(n: number | null | undefined, unit?: 'point' | 'usd') {
   if (n == null || Number.isNaN(n)) return '—';
-  return new Intl.NumberFormat('fa-IR', { maximumFractionDigits: 0 }).format(Math.round(n));
+  const digits = unit === 'usd' ? 2 : 0;
+  return new Intl.NumberFormat('fa-IR', {
+    maximumFractionDigits: digits,
+    minimumFractionDigits: digits,
+  }).format(digits === 0 ? Math.round(n) : n);
 }
 
 function formatIndexPct(n: number | null | undefined) {
@@ -70,7 +76,7 @@ function formatIndexPct(n: number | null | undefined) {
   return `${sign}${n.toLocaleString('fa-IR', { maximumFractionDigits: 2 })}٪`;
 }
 
-function IndexSparkline({ index }: { index: MarketIndex }) {
+function IndexSparkline({ index, onOpen }: { index: MarketIndex; onOpen?: () => void }) {
   const values = index.history.map((h) => h.value).filter((v) => v > 0);
   const up = (index.changePct ?? 0) >= 0;
   const stroke = up ? '#15803d' : '#b91c1c';
@@ -95,11 +101,16 @@ function IndexSparkline({ index }: { index: MarketIndex }) {
   }
 
   return (
-    <div className="flex shrink-0 items-center gap-3 rounded-xl border border-navy-900/10 bg-white px-3 py-2 shadow-sm">
+    <button
+      type="button"
+      disabled={!onOpen}
+      onClick={onOpen}
+      className="flex shrink-0 items-center gap-3 rounded-xl border border-navy-900/10 bg-white px-3 py-2 text-start shadow-sm transition hover:border-navy-900/25 disabled:cursor-default disabled:hover:border-navy-900/10"
+    >
       <div className="shrink-0">
         <div className="text-[11px] text-navy-800/55">{index.nameFa}</div>
         <div className="mt-0.5 text-base font-semibold tabular-nums leading-6 text-navy-900">
-          {formatIndexValue(index.lastValue)}
+          {formatIndexValue(index.lastValue, index.unit)}
         </div>
         {pct && (
           <div className={clsx('text-[11px] font-medium', up ? 'text-emerald-700' : 'text-red-700')}>
@@ -117,7 +128,7 @@ function IndexSparkline({ index }: { index: MarketIndex }) {
           <div className="flex h-9 items-center justify-center text-[10px] text-navy-800/35">بدون روند</div>
         )}
       </div>
-    </div>
+    </button>
   );
 }
 
@@ -206,8 +217,6 @@ export default function MarketPage() {
     }
   }
 
-  const totalIndex = indices.find((i) => i.key === 'total');
-  const equalIndex = indices.find((i) => i.key === 'equalWeight');
   const updatedLabel = updatedAt ? formatShamsiDateTime(updatedAt) : null;
 
   return (
@@ -242,10 +251,15 @@ export default function MarketPage() {
           </p>
         </div>
       </div>
-      {(totalIndex || equalIndex) && (
+      {indices.length > 0 && (
         <div className="flex flex-wrap items-center gap-2">
-          {totalIndex && <IndexSparkline index={totalIndex} />}
-          {equalIndex && <IndexSparkline index={equalIndex} />}
+          {indices.map((index) => (
+            <IndexSparkline
+              key={index.key}
+              index={index}
+              onOpen={index.id ? () => router.push(`/market/${index.id}`) : undefined}
+            />
+          ))}
         </div>
       )}
 

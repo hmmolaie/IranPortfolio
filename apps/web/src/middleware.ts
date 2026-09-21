@@ -16,6 +16,9 @@ export function middleware(request: NextRequest) {
     pathname.startsWith('/_next') ||
     pathname.startsWith('/api') ||
     pathname.startsWith('/favicon') ||
+    pathname.startsWith('/pwa-icon') ||
+    pathname.startsWith('/icon') ||
+    pathname.startsWith('/apple-icon') ||
     pathname.includes('.')
   ) {
     return NextResponse.next();

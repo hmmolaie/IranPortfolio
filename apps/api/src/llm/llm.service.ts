@@ -611,7 +611,7 @@ export class LlmService {
   async speakTts(
     text: string,
     userId?: string,
-    opts?: { voice?: string; instructions?: string },
+    opts?: { model?: string; voice?: string; instructions?: string },
   ): Promise<Buffer> {
     const creds = await this.resolveTtsCredentials(userId);
     const input = text.replace(/\s+/g, ' ').trim().slice(0, 4096);
@@ -623,7 +623,10 @@ export class LlmService {
         'Content-Type': 'application/json',
       },
       body: JSON.stringify({
-        model: this.config.get<string>('TTS_MODEL') ?? 'gpt-4o-mini-tts',
+        model:
+          opts?.model?.trim() ||
+          this.config.get<string>('TTS_MODEL') ||
+          'gpt-4o-mini-tts',
         voice: opts?.voice ?? this.config.get<string>('TTS_VOICE') ?? 'nova',
         input,
         response_format: 'mp3',

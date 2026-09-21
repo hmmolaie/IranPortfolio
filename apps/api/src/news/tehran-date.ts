@@ -23,6 +23,25 @@ export function tehranHour(d = new Date()): number {
   return tehranTimeParts(d).hour;
 }
 
+const TEHRAN_WEEKDAY: Record<string, number> = {
+  Sun: 0,
+  Mon: 1,
+  Tue: 2,
+  Wed: 3,
+  Thu: 4,
+  Fri: 5,
+  Sat: 6,
+};
+
+/** روز هفته به وقت تهران؛ ۰ یکشنبه تا ۶ شنبه، هم‌سبک getDay */
+export function tehranWeekday(d = new Date()): number {
+  const short = new Intl.DateTimeFormat('en-US', {
+    timeZone: 'Asia/Tehran',
+    weekday: 'short',
+  }).format(d);
+  return TEHRAN_WEEKDAY[short] ?? 0;
+}
+
 /** تاریخ شمسی برای نمایش */
 export function tehranDateFa(d = new Date()): string {
   return new Intl.DateTimeFormat('fa-IR-u-ca-persian', {

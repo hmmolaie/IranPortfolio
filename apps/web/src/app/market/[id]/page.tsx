@@ -23,8 +23,32 @@ type Instrument = {
   nameFa: string;
   assetType: string;
   insCode?: string | null;
+  meta?: { unit?: string } | null;
   last: Bar | null;
 };
+
+type QuoteKind = 'rial' | 'point' | 'usd';
+
+const UNIT_FA: Record<QuoteKind, string> = {
+  rial: 'ریال',
+  point: 'واحد',
+  usd: 'دلار',
+};
+
+function quoteKind(inst: Instrument): QuoteKind {
+  if (inst.assetType !== 'INDEX') return 'rial';
+  if (inst.meta?.unit === 'usd' || inst.symbol.endsWith('USD')) return 'usd';
+  return 'point';
+}
+
+function formatQuote(n: number | null | undefined, kind: QuoteKind) {
+  if (n == null || Number.isNaN(n)) return '—';
+  const digits = kind === 'usd' ? 2 : 0;
+  return new Intl.NumberFormat('fa-IR', {
+    maximumFractionDigits: digits,
+    minimumFractionDigits: digits,
+  }).format(digits === 0 ? Math.round(n) : n);
+}
 
 type RangeKey = '5D' | '1M' | '6M' | 'YTD' | '1Y' | '5Y' | 'Max';
 
@@ -40,11 +64,6 @@ const RANGES: { key: RangeKey; label: string; days?: number }[] = [
 
 function priceOf(b: Bar) {
   return b.closePrice ?? b.lastPrice ?? 0;
-}
-
-function formatRialPrice(n: number | null | undefined) {
-  if (n == null || Number.isNaN(n)) return '—';
-  return new Intl.NumberFormat('fa-IR', { maximumFractionDigits: 0 }).format(Math.round(n));
 }
 
 function formatPct(n: number) {
@@ -69,9 +88,11 @@ function filterBars(bars: Bar[], range: RangeKey): Bar[] {
 function InteractiveChart({
   bars,
   prevClose,
+  formatValue,
 }: {
   bars: Bar[];
   prevClose: number | null;
+  formatValue: (n: number) => string;
 }) {
   const [hover, setHover] = useState<number | null>(null);
   const svgRef = useRef<SVGSVGElement>(null);
@@ -171,7 +192,7 @@ function InteractiveChart({
                 strokeWidth={1}
               />
               <text x={padL - 8} y={y + 3.5} textAnchor="end" fill="rgba(11,31,58,0.4)" fontSize={10}>
-                {formatRialPrice(t)}
+                {formatValue(t)}
               </text>
             </g>
           );
@@ -235,7 +256,7 @@ function InteractiveChart({
               height={36}
             >
               <div className="rounded-lg border border-navy-900/10 bg-white/90 px-2 py-1 text-center text-[11px] text-navy-900 shadow-sm backdrop-blur-sm">
-                <span className="font-medium">{formatRialPrice(hi.p)}</span>
+                <span className="font-medium">{formatValue(hi.p)}</span>
                 <span className={clsx('ms-1.5', hiPct >= 0 ? 'text-emerald-700' : 'text-red-700')}>
                   {formatPct(hiPct)}
                 </span>
@@ -316,6 +337,9 @@ export default function MarketInstrumentPage() {
     return <p className="text-navy-800/60">در حال بارگذاری...</p>;
   }
 
+  const kind = quoteKind(inst);
+  const unitLabel = UNIT_FA[kind];
+  const formatValue = (n: number | null | undefined) => formatQuote(n, kind);
   const up = (stats.changePct ?? 0) >= 0;
   const rangeLabel =
     visible.length >= 2
@@ -344,8 +368,8 @@ export default function MarketInstrumentPage() {
 
         <div className="mt-3 flex flex-wrap items-center gap-3">
           <div className="text-3xl font-semibold tracking-tight text-navy-900 sm:text-4xl">
-            {formatRialPrice(stats.current)}
-            <span className="ms-2 text-base font-normal text-navy-800/40">ریال</span>
+            {formatValue(stats.current)}
+            <span className="ms-2 text-base font-normal text-navy-800/40">{unitLabel}</span>
           </div>
           {stats.changePct != null && (
             <span
@@ -367,7 +391,11 @@ export default function MarketInstrumentPage() {
       </div>
 
       <div className="bg-transparent">
-        <InteractiveChart bars={visible} prevClose={stats.prev} />
+        <InteractiveChart
+          bars={visible}
+          prevClose={stats.prev}
+          formatValue={(n) => formatQuote(n, kind)}
+        />
       </div>
 
       <div className="flex flex-wrap items-center gap-2 border-b border-navy-900/10 pb-3">
@@ -389,21 +417,23 @@ export default function MarketInstrumentPage() {
         ))}
       </div>
 
-      <div className="grid gap-x-10 gap-y-1 sm:grid-cols-3">
+      <div className={clsx('grid gap-x-10 gap-y-1', kind === 'rial' ? 'sm:grid-cols-3' : 'sm:grid-cols-2')}>
         <div>
-          <StatRow label="باز" value={formatRialPrice(stats.open)} />
-          <StatRow label="بیشینه" value={formatRialPrice(stats.high)} />
-          <StatRow label="کمینه" value={formatRialPrice(stats.low)} />
+          <StatRow label="باز" value={formatValue(stats.open)} />
+          <StatRow label="بیشینه" value={formatValue(stats.high)} />
+          <StatRow label="کمینه" value={formatValue(stats.low)} />
         </div>
+        {kind === 'rial' && (
+          <div>
+            <StatRow label="حجم" value={formatNum(stats.volume)} />
+            <StatRow label="P/E" value={formatNum(stats.pe)} />
+            <StatRow label="EPS" value={formatNum(stats.eps)} />
+          </div>
+        )}
         <div>
-          <StatRow label="حجم" value={formatNum(stats.volume)} />
-          <StatRow label="P/E" value={formatNum(stats.pe)} />
-          <StatRow label="EPS" value={formatNum(stats.eps)} />
-        </div>
-        <div>
-          <StatRow label="بیشینه ۵۲ هفته" value={formatRialPrice(stats.high52)} />
-          <StatRow label="کمینه ۵۲ هفته" value={formatRialPrice(stats.low52)} />
-          <StatRow label="پایانی قبل" value={formatRialPrice(stats.prev)} />
+          <StatRow label="بیشینه ۵۲ هفته" value={formatValue(stats.high52)} />
+          <StatRow label="کمینه ۵۲ هفته" value={formatValue(stats.low52)} />
+          <StatRow label="پایانی قبل" value={formatValue(stats.prev)} />
         </div>
       </div>
 
@@ -411,7 +441,7 @@ export default function MarketInstrumentPage() {
         <h2 className="text-base font-semibold text-navy-900">خلاصه معاملات بازه</h2>
         <ul className="mt-3 list-disc space-y-2 pe-5 text-sm text-navy-800/70">
           <li>
-            دامنه قیمت: {formatRialPrice(stats.low)} – {formatRialPrice(stats.high)} ریال
+            دامنه: {formatValue(stats.low)} – {formatValue(stats.high)} {unitLabel}
           </li>
           {stats.changePct != null && (
             <li>تغییر نسبت به روز قبل: {formatPct(stats.changePct)}</li>

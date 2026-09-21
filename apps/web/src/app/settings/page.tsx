@@ -17,6 +17,7 @@ type FundDefinition = {
   nameFa: string;
   symbolCode?: string | null;
   description?: string | null;
+  websiteUrl?: string | null;
   isActive: boolean;
 };
 
@@ -51,6 +52,20 @@ const TABS: { id: SettingsTab; label: string; adminOnly?: boolean }[] = [
   { id: 'telegram', label: 'ربات تلگرام', adminOnly: true },
   { id: 'telegramAssistant', label: 'دستیار تلگرام', adminOnly: true },
 ];
+
+const SEND_WEEKDAYS = [
+  { id: 6, label: 'شنبه' },
+  { id: 0, label: 'یکشنبه' },
+  { id: 1, label: 'دوشنبه' },
+  { id: 2, label: 'سه‌شنبه' },
+  { id: 3, label: 'چهارشنبه' },
+  { id: 4, label: 'پنجشنبه' },
+  { id: 5, label: 'جمعه' },
+];
+
+function clockValue(hour: number, minute: number) {
+  return `${String(hour).padStart(2, '0')}:${String(minute).padStart(2, '0')}`;
+}
 
 const PROVIDERS: Record<
   ProviderId,
@@ -106,9 +121,14 @@ export default function SettingsPage() {
     hasToken: false,
   });
   const [fundDefs, setFundDefs] = useState<FundDefinition[]>([]);
-  const [newFund, setNewFund] = useState({ nameFa: '', symbolCode: '', description: '' });
+  const [newFund, setNewFund] = useState({ nameFa: '', symbolCode: '', description: '', websiteUrl: '' });
   const [editingFund, setEditingFund] = useState<FundDefinition | null>(null);
-  const [editFundForm, setEditFundForm] = useState({ nameFa: '', symbolCode: '', description: '' });
+  const [editFundForm, setEditFundForm] = useState({
+    nameFa: '',
+    symbolCode: '',
+    description: '',
+    websiteUrl: '',
+  });
   const [fundBusy, setFundBusy] = useState(false);
   const [prompts, setPrompts] = useState<LlmPrompt[]>([]);
   const [openPrompt, setOpenPrompt] = useState<string | null>(null);
@@ -141,6 +161,10 @@ export default function SettingsPage() {
     botNameFa: 'سبدیار',
     botUsername: TELEGRAM_BOT_USERNAME,
     botToken: '',
+    ttsModel: 'gemini-2.5-pro-preview-tts',
+    sendHour: 8,
+    sendMinute: 30,
+    sendWeekdays: [0, 1, 2, 3, 4, 5, 6],
     enabled: true,
   });
   const [tgMeta, setTgMeta] = useState({
@@ -227,6 +251,10 @@ export default function SettingsPage() {
         botNameFa?: string;
         botUsername?: string;
         enabled?: boolean;
+        ttsModel?: string;
+        sendHour?: number;
+        sendMinute?: number;
+        sendWeekdays?: number[];
         hasToken?: boolean;
         linkedCount?: number;
         lastDigest?: {
@@ -240,6 +268,10 @@ export default function SettingsPage() {
         botNameFa: c.botNameFa?.trim() || 'سبدیار',
         botUsername: c.botUsername?.trim() || TELEGRAM_BOT_USERNAME,
         botToken: '',
+        ttsModel: c.ttsModel?.trim() || 'gemini-2.5-pro-preview-tts',
+        sendHour: c.sendHour ?? 8,
+        sendMinute: c.sendMinute ?? 30,
+        sendWeekdays: c.sendWeekdays?.length ? c.sendWeekdays : [0, 1, 2, 3, 4, 5, 6],
         enabled: c.enabled ?? true,
       });
       setTgMeta({
@@ -441,6 +473,12 @@ export default function SettingsPage() {
 
   async function saveTelegram(e: FormEvent) {
     e.preventDefault();
+    if (!tgForm.sendWeekdays.length) {
+      const text = 'حداقل یک روز هفته را برای ارسال انتخاب کنید.';
+      setTgFeedback({ ok: false, text });
+      toast.error(text);
+      return;
+    }
     setTgBusy(true);
     setTgFeedback(null);
     try {
@@ -449,6 +487,10 @@ export default function SettingsPage() {
         body: JSON.stringify({
           botNameFa: tgForm.botNameFa.trim(),
           botUsername: tgForm.botUsername.trim().replace(/^@/, ''),
+          ttsModel: tgForm.ttsModel.trim(),
+          sendHour: tgForm.sendHour,
+          sendMinute: tgForm.sendMinute,
+          sendWeekdays: tgForm.sendWeekdays,
           enabled: tgForm.enabled,
           ...(tgForm.botToken.trim() ? { botToken: tgForm.botToken.trim() } : {}),
         }),
@@ -673,9 +715,10 @@ export default function SettingsPage() {
           nameFa: newFund.nameFa.trim(),
           symbolCode: newFund.symbolCode.trim() || undefined,
           description: newFund.description.trim() || undefined,
+          websiteUrl: newFund.websiteUrl.trim() || undefined,
         }),
       });
-      setNewFund({ nameFa: '', symbolCode: '', description: '' });
+      setNewFund({ nameFa: '', symbolCode: '', description: '', websiteUrl: '' });
       await loadFundDefs();
       toast.success('صندوق اضافه شد.');
     } catch (err) {
@@ -726,6 +769,7 @@ export default function SettingsPage() {
       nameFa: fund.nameFa,
       symbolCode: fund.symbolCode ?? '',
       description: fund.description ?? '',
+      websiteUrl: fund.websiteUrl ?? '',
     });
   }
 
@@ -740,6 +784,7 @@ export default function SettingsPage() {
           nameFa: editFundForm.nameFa.trim(),
           symbolCode: editFundForm.symbolCode.trim() || undefined,
           description: editFundForm.description.trim() || undefined,
+          websiteUrl: editFundForm.websiteUrl.trim(),
         }),
       });
       await loadFundDefs();
@@ -850,7 +895,7 @@ export default function SettingsPage() {
                 inputMode="tel"
               />
               <p className="mt-1 text-xs text-navy-800/55">
-                با ثبت موبایل، خلاصهٔ ۸:۳۰ صبح فقط وقتی می‌رسد که ربات تلگرام را با همین شماره
+                با ثبت موبایل، خلاصه فقط در روز و ساعتی که مدیر برای ربات گذاشته می‌رسد، و فقط وقتی که ربات تلگرام را با همین شماره
                 وصل کرده باشید. لینک ربات:
               </p>
               <p className="mt-1 text-xs">
@@ -902,13 +947,13 @@ export default function SettingsPage() {
           </form>
 
           <section className="card max-w-2xl space-y-3">
-            <h2 className="text-lg font-semibold">پیام تلگرام ساعت ۸:۳۰</h2>
+            <h2 className="text-lg font-semibold">پیام تلگرام</h2>
             <p className="text-sm leading-7 text-navy-800/75">
               ۱. موبایل را در همین صفحه ذخیره کنید.
               <br />
               ۲. ربات را در تلگرام باز کنید، /start بزنید و همان شماره را بفرستید.
               <br />
-              هر روز ۸:۳۰ نمودار سبد، پیشنهاد بهبود، اخبار و فرصت‌های سرمایه‌گذاری به‌صورت متن و فایل صوتی فارسی با صدای زن (حداکثر حدود دو دقیقه) برایتان می‌آید.
+              در روزها و ساعتی که مدیر برای ربات مشخص کرده، نمودار سبد، پیشنهاد بهبود، اخبار و فرصت‌های سرمایه‌گذاری به‌صورت متن و فایل صوتی فارسی با صدای زن (حداکثر حدود دو دقیقه) می‌آید.
             </p>
             <p className="text-sm">
               لینک ربات:
@@ -917,7 +962,7 @@ export default function SettingsPage() {
             </p>
             {isAdmin && tgMe && !tgMe.configured && (
               <p className="text-sm text-navy-800/70">
-                ارسال خودکار ۸:۳۰ بعد از ذخیرهٔ توکن در تب ربات تلگرام فعال می‌شود.
+                ارسال خودکار بعد از ذخیرهٔ توکن و انتخاب روز و ساعت، در تب ربات تلگرام فعال می‌شود.
               </p>
             )}
             {tgMe && (
@@ -1005,6 +1050,7 @@ export default function SettingsPage() {
                 <tr>
                   <th className="px-4 py-3 text-start font-medium">نام صندوق</th>
                   <th className="px-4 py-3 text-start font-medium">کد / نماد</th>
+                  <th className="px-4 py-3 text-start font-medium">سایت</th>
                   <th className="px-4 py-3 text-start font-medium">وضعیت</th>
                   <th className="px-4 py-3 text-start font-medium">عملیات</th>
                 </tr>
@@ -1020,6 +1066,21 @@ export default function SettingsPage() {
                   >
                     <td className="px-4 py-3 font-medium">{f.nameFa}</td>
                     <td className="px-4 py-3 text-navy-800/70">{f.symbolCode || '—'}</td>
+                    <td className="px-4 py-3 text-navy-800/70">
+                      {f.websiteUrl ? (
+                        <a
+                          href={f.websiteUrl}
+                          target="_blank"
+                          rel="noreferrer"
+                          className="text-navy-800 underline"
+                          dir="ltr"
+                        >
+                          {f.websiteUrl.replace(/^https?:\/\//, '')}
+                        </a>
+                      ) : (
+                        '—'
+                      )}
+                    </td>
                     <td className="px-4 py-3">
                       <span
                         className={clsx(
@@ -1091,6 +1152,18 @@ export default function SettingsPage() {
                 />
               </div>
               <div>
+                <label className="label">سایت (اختیاری)</label>
+                <input
+                  className="input"
+                  type="text"
+                  inputMode="url"
+                  dir="ltr"
+                  placeholder="https://"
+                  value={editFundForm.websiteUrl}
+                  onChange={(e) => setEditFundForm({ ...editFundForm, websiteUrl: e.target.value })}
+                />
+              </div>
+              <div>
                 <label className="label">توضیحات (اختیاری)</label>
                 <textarea
                   className="input min-h-[4rem]"
@@ -1130,6 +1203,18 @@ export default function SettingsPage() {
                 className="input"
                 value={newFund.symbolCode}
                 onChange={(e) => setNewFund({ ...newFund, symbolCode: e.target.value })}
+              />
+            </div>
+            <div>
+              <label className="label">سایت (اختیاری)</label>
+              <input
+                className="input"
+                type="text"
+                inputMode="url"
+                dir="ltr"
+                placeholder="https://"
+                value={newFund.websiteUrl}
+                onChange={(e) => setNewFund({ ...newFund, websiteUrl: e.target.value })}
               />
             </div>
             <div>
@@ -1405,7 +1490,7 @@ export default function SettingsPage() {
             <TelegramBotLink />
             <br />
             نام کاربری پیش‌فرض را عوض نکنید مگر ربات دیگری می‌سازید. توکن را از BotFather بگیرید و
-            ذخیره کنید. سرویس API باید روشن بماند تا ساعت ۸:۳۰ پیام برود. اخبار و فرصت‌ها هم به‌صورت فایل صوتی فارسی با صدای زن (حداکثر حدود دو دقیقه) فرستاده می‌شود. کاربر باید موبایل را در
+            ذخیره کنید. سرویس API باید روشن بماند تا در روز و ساعت انتخاب‌شده پیام برود. اخبار و فرصت‌ها هم به‌صورت فایل صوتی فارسی با صدای زن (حداکثر حدود دو دقیقه) فرستاده می‌شود. کاربر باید موبایل را در
             پروفایل ثبت کند و ربات را استارت کند؛ تلگرام با شماره به‌تنهایی پیام نمی‌فرستد.
           </p>
           <div>
@@ -1438,13 +1523,73 @@ export default function SettingsPage() {
               dir="ltr"
             />
           </div>
+          <div>
+            <label className="label">مدل متن به صدا</label>
+            <input
+              className="input"
+              value={tgForm.ttsModel}
+              onChange={(e) => setTgForm({ ...tgForm, ttsModel: e.target.value })}
+              placeholder="gemini-2.5-pro-preview-tts"
+              dir="ltr"
+              spellCheck={false}
+            />
+            <p className="mt-1 text-xs leading-6 text-navy-800/55">
+              همین نام برای ساخت فایل صوتی اخبار روزانه استفاده می‌شود.
+            </p>
+          </div>
+          <div>
+            <label className="label">ساعت ارسال (تهران)</label>
+            <input
+              className="input max-w-[10rem]"
+              type="time"
+              value={clockValue(tgForm.sendHour, tgForm.sendMinute)}
+              onChange={(e) => {
+                const [h, m] = e.target.value.split(':').map(Number);
+                if (!Number.isInteger(h) || !Number.isInteger(m)) return;
+                setTgForm({ ...tgForm, sendHour: h, sendMinute: m });
+              }}
+              dir="ltr"
+            />
+          </div>
+          <fieldset>
+            <legend className="label">روزهای ارسال</legend>
+            <div className="flex flex-wrap gap-2">
+              {SEND_WEEKDAYS.map((day) => {
+                const on = tgForm.sendWeekdays.includes(day.id);
+                return (
+                  <label
+                    key={day.id}
+                    className={clsx(
+                      'cursor-pointer rounded-full border px-3 py-1.5 text-sm',
+                      on
+                        ? 'border-navy-900 bg-navy-900 text-white'
+                        : 'border-navy-900/15 bg-white text-navy-800',
+                    )}
+                  >
+                    <input
+                      type="checkbox"
+                      className="sr-only"
+                      checked={on}
+                      onChange={() => {
+                        const sendWeekdays = on
+                          ? tgForm.sendWeekdays.filter((id) => id !== day.id)
+                          : [...tgForm.sendWeekdays, day.id];
+                        setTgForm({ ...tgForm, sendWeekdays });
+                      }}
+                    />
+                    {day.label}
+                  </label>
+                );
+              })}
+            </div>
+          </fieldset>
           <label className="flex items-center gap-2 text-sm">
             <input
               type="checkbox"
               checked={tgForm.enabled}
               onChange={(e) => setTgForm({ ...tgForm, enabled: e.target.checked })}
             />
-            ارسال خودکار ۸:۳۰ فعال باشد
+            ارسال خودکار در روزها و ساعت انتخاب‌شده فعال باشد
           </label>
           <div className="rounded-lg border border-navy-100 bg-white px-3 py-3 text-sm text-navy-800/80">
             <div>توکن ذخیره شده: {tgMeta.hasToken ? 'بله' : 'خیر'}</div>

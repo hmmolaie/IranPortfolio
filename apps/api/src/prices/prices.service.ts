@@ -3,7 +3,8 @@ import { Cron } from '@nestjs/schedule';
 import { Prisma } from '@prisma/client';
 import { PrismaService } from '../prisma/prisma.service';
 import { tehranDateKey } from '../news/tehran-date';
-import { BITPIN_MARKETS_URL, extractBitpinSpot } from './bitpin-spot';
+import { extractBitpinSpot } from './bitpin-spot';
+import { readMarketSourceApi } from '../market-source/market-source-api';
 
 type ParsedSpot = {
   usdIrr: number | null;
@@ -288,9 +289,10 @@ export class PricesService {
   }
 
   private async fetchBitpinMarketList() {
+    const { bitpinMarketsUrl } = await readMarketSourceApi(this.prisma);
     let res: Response;
     try {
-      res = await fetch(BITPIN_MARKETS_URL, {
+      res = await fetch(bitpinMarketsUrl, {
         headers: { Accept: 'application/json' },
         signal: AbortSignal.timeout(60_000),
       });

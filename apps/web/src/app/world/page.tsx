@@ -57,6 +57,7 @@ type WorldList = {
   dateLabelFa: string | null;
   symbolCount: number;
   sourceUrl: string;
+  yahooComparedCount?: number;
   quotes: QuoteStat[];
   macroNews: MacroNews[];
   macroNewsSummaryFa?: string | null;
@@ -237,20 +238,23 @@ function MarketCard({ m, featured }: { m: WorldMarket; featured?: boolean }) {
             <p className="mt-2 truncate text-[11px] text-navy-800/45">{m.tagsFa}</p>
           )}
           {m.yahooPriceNum != null && m.diffPct != null && (
-            <div className="mt-3 rounded-xl bg-navy-50/80 px-2.5 py-2">
-              <p className="text-[11px] font-semibold text-navy-800/70">اختلاف با بازار جهانی</p>
-              <p className="mt-0.5 text-[11px] text-navy-800/50">
+            <div className="mt-3 rounded-xl border border-navy-900/10 bg-white px-2.5 py-2">
+              <p className="text-[11px] font-semibold text-navy-800">مقایسه با یاهو فایننس</p>
+              <p className="mt-1 text-[11px] text-navy-800/70">
+                بیت‌پین: {formatPrice(m.price, m.quoteCode)}
+              </p>
+              <p className="mt-0.5 text-[11px] text-navy-800/70">
                 یاهو فایننس: {formatPrice(String(m.yahooPriceNum), m.quoteCode)}
               </p>
               <p
                 className={clsx(
-                  'mt-0.5 text-xs font-medium tabular-nums',
+                  'mt-1 text-xs font-semibold tabular-nums',
                   (m.diffPct ?? 0) >= 0 ? 'text-amber-800' : 'text-emerald-800',
                 )}
               >
-                {(m.diffPct ?? 0) >= 0 ? '+' : ''}
+                تفاوت: {(m.diffPct ?? 0) >= 0 ? '+' : ''}
                 {(m.diffPct ?? 0).toLocaleString('fa-IR', { maximumFractionDigits: 2 })}٪
-                {m.diffAbs != null ? ` · ${formatPrice(String(m.diffAbs), m.quoteCode)}` : ''}
+                {m.diffAbs != null ? ` · ${formatPrice(String(Math.abs(m.diffAbs)), m.quoteCode)}` : ''}
               </p>
             </div>
           )}
@@ -385,9 +389,21 @@ export default function WorldEconomyPage() {
               <p className="text-xs font-medium tracking-wide text-gold-400">بازار جهانی رمزارز</p>
               <h1 className="mt-1 text-3xl font-bold">اقتصاد دنیا</h1>
               <p className="mt-2 max-w-xl text-sm leading-7 text-white/70">
-                هر روز راس ۷ صبح تهران همهٔ نمادهای بیت‌پین ذخیره می‌شوند و مبلغ رمزارز با یاهو فایننس
+                هر روز راس ۷ صبح تهران همهٔ نمادهای بیت‌پین ذخیره می‌شوند و مبلغ هر رمزارز با یاهو فایننس
                 مقایسه می‌گردد.
               </p>
+              {data && data.markets.length > 0 && (data.yahooComparedCount ?? 0) === 0 && (
+                <p className="mt-3 max-w-xl text-sm leading-7 text-amber-100">
+                  اختلاف قیمت با یاهو فایننس در این داده نیست. به‌روزرسانی فوری را بزنید یا آدرس API را در
+                  تنظیمات بررسی کنید.
+                </p>
+              )}
+              {(data?.yahooComparedCount ?? 0) > 0 && (
+                <p className="mt-3 text-sm text-white/80">
+                  مقایسه با یاهو فایننس:{' '}
+                  {(data?.yahooComparedCount ?? 0).toLocaleString('fa-IR')} نماد
+                </p>
+              )}
             </div>
             <div className="flex flex-col items-start gap-1 sm:items-end">
               <button className="btn-primary bg-gold-400 text-navy-900 hover:bg-gold-500" onClick={refresh} disabled={refreshing}>

@@ -4,7 +4,7 @@ import { ConfigService } from '@nestjs/config';
 import { PrismaService } from '../prisma/prisma.service';
 import { decryptSecret, encryptSecret } from '../common/secret-box';
 import { normalizeIranMobile } from '../common/iran-mobile';
-import { tehranDateKey, tehranDateWithWeekdayFa, tehranTimeParts } from '../news/tehran-date';
+import { tehranDateKey, tehranDateWithWeekdayFa, tehranTimeParts, tehranWeekday } from '../news/tehran-date';
 import { PortfoliosService } from '../portfolios/portfolios.service';
 import { NewsService } from '../news/news.service';
 import { replaceSocialNetworkBrandFa } from '../llm/social-source-wording';
@@ -49,6 +49,7 @@ type TelegramUpdate = {
 };
 
 const CONFIG_ID = 'default';
+const DEFAULT_DIGEST_TTS_MODEL = 'gemini-2.5-pro-preview-tts';
 const TG_API = 'https://api.telegram.org';
 /** فقط صداهای زنانه؛ اگر TTS_VOICE چیز دیگری بود nova استفاده می‌شود */
 const FEMALE_TTS_VOICES = new Set(['nova', 'shimmer', 'coral', 'sage']);
@@ -134,6 +135,8 @@ export class TelegramService implements OnModuleInit {
       botUsername,
       deepLink: this.botDeepLink(),
       enabled: row?.enabled ?? true,
+      ttsModel: this.resolveDigestTtsModel(row?.ttsModel),
+      ...this.scheduleFrom(row),
       hasToken: Boolean(row?.botTokenEncrypted),
       linkedCount,
       lastDigest,
@@ -154,6 +157,7 @@ export class TelegramService implements OnModuleInit {
       mobilePhone: profile?.mobilePhone ?? null,
       linked: Boolean(profile?.telegramChatId),
       telegramUsername: profile?.telegramUsername ?? null,
+      ...this.scheduleFrom(row),
     };
   }
 
@@ -162,6 +166,10 @@ export class TelegramService implements OnModuleInit {
     botUsername?: string;
     botToken?: string;
     enabled?: boolean;
+    ttsModel?: string;
+    sendHour?: number;
+    sendMinute?: number;
+    sendWeekdays?: number[];
   }) {
     const current = await this.prisma.telegramBotConfig.findUnique({ where: { id: CONFIG_ID } });
     let botUsername = this.resolveBotUsername(
@@ -182,6 +190,8 @@ export class TelegramService implements OnModuleInit {
       botTokenEncrypted = encryptSecret(this.encKey(), token);
     }
     const enabled = data.enabled ?? current?.enabled ?? true;
+    const ttsModel = this.resolveDigestTtsModel(data.ttsModel ?? current?.ttsModel);
+    const schedule = this.resolveSchedule(data, current);
 
     return this.prisma.telegramBotConfig.upsert({
       where: { id: CONFIG_ID },
@@ -191,12 +201,20 @@ export class TelegramService implements OnModuleInit {
         botUsername,
         botTokenEncrypted,
         enabled,
+        ttsModel,
+        sendHour: schedule.hour,
+        sendMinute: schedule.minute,
+        sendWeekdays: schedule.weekdays,
       },
       update: {
         botNameFa,
         botUsername,
         botTokenEncrypted,
         enabled,
+        ttsModel,
+        sendHour: schedule.hour,
+        sendMinute: schedule.minute,
+        sendWeekdays: schedule.weekdays,
         ...(data.botToken?.trim() ? { lastUpdateId: null } : {}),
       },
     }).then(async () => {
@@ -225,23 +243,28 @@ export class TelegramService implements OnModuleInit {
     return { ok: true };
   }
 
-  /** هر روز ۸:۳۰ صبح ایران — از NewsService صدا زده می‌شود؛ این کرون پشتیبان است اگر batch آماده باشد */
-  @Cron('0 30 8 * * *', { timeZone: 'Asia/Tehran', name: 'telegram-news-0830' })
-  async scheduledDigest() {
-    this.logger.log('ارسال زمان‌بندی‌شده تلگرام (۸:۳۰ ایران)');
-    await this.deliverToday({ force: false });
-  }
-
-  @Cron('0 45 8 * * *', { timeZone: 'Asia/Tehran', name: 'telegram-news-0845' })
-  async scheduledDigestRetry() {
+  /** هر دقیقه ساعت تهران را با روزها و ساعت ذخیره‌شده مقایسه می‌کند */
+  @Cron('* * * * *', { timeZone: 'Asia/Tehran', name: 'telegram-digest-tick' })
+  async scheduledDigestTick() {
+    const row = await this.prisma.telegramBotConfig.findUnique({ where: { id: CONFIG_ID } });
+    if (!row?.enabled) return;
+    const schedule = this.scheduleFrom(row);
+    const now = tehranTimeParts();
+    const weekday = tehranWeekday();
+    if (!this.isSendSlot(now, weekday, schedule)) return;
+    this.logger.log(
+      `ارسال زمان‌بندی‌شده تلگرام (${String(schedule.sendHour).padStart(2, '0')}:${String(schedule.sendMinute).padStart(2, '0')} تهران)`,
+    );
     await this.deliverToday({ force: false });
   }
 
   async catchUpIfNeeded() {
-    const { hour, minute } = tehranTimeParts();
-    if (hour > 8 || (hour === 8 && minute >= 30)) {
-      await this.deliverToday({ force: false });
-    }
+    const row = await this.prisma.telegramBotConfig.findUnique({ where: { id: CONFIG_ID } });
+    if (!row?.enabled) return;
+    const schedule = this.scheduleFrom(row);
+    const now = tehranTimeParts();
+    if (!this.isSendSlot(now, tehranWeekday(), schedule, 'passed')) return;
+    await this.deliverToday({ force: false });
   }
 
   /**
@@ -328,7 +351,7 @@ export class TelegramService implements OnModuleInit {
       }
 
       const newsText = this.formatNewsSection(cfg.botNameFa, batch);
-      const newsVoice = await this.renderNewsVoiceMp3(cfg.botNameFa, batch);
+      const newsVoice = await this.sharedNewsVoice(dateKey, cfg.botNameFa, batch);
       let sentCount = 0;
       let failedCount = 0;
       for (const r of recipients) {
@@ -444,7 +467,7 @@ export class TelegramService implements OnModuleInit {
       const name = this.resolveBotNameFa(botNameFa);
       await this.tg(token, 'sendMessage', {
         chat_id: chatId,
-        text: `اتصال برقرار شد. هر روز ساعت ۸:۳۰ صبح، نمودار سبد، پیشنهاد بهبود، خلاصهٔ اخبار ${name} و فایل صوتی فارسی همان اخبار برایتان می‌آید.`,
+        text: `اتصال برقرار شد. در روزها و ساعتی که در تنظیمات مشخص شده، نمودار سبد، پیشنهاد بهبود، خلاصهٔ اخبار ${name} و فایل صوتی فارسی همان اخبار برایتان می‌آید.`,
         reply_markup: { remove_keyboard: true },
       });
       return;
@@ -579,7 +602,7 @@ export class TelegramService implements OnModuleInit {
     const lines: string[] = [
       '<b>پیشنهاد بهبود سبد</b>',
       this.digestDateLabel(),
-      'بر اساس قیمت بورس، نرخ ارز/طلا و اخباری که ثبت شده بود',
+      'بر اساس ترکیب فعلی همین سبد',
       `امتیاز سبد: ${toFaDigit(a.score)} از ۱۰۰`,
       '',
     ];
@@ -649,15 +672,129 @@ export class TelegramService implements OnModuleInit {
     return text;
   }
 
+  private scheduleFrom(row: {
+    sendHour?: number | null;
+    sendMinute?: number | null;
+    sendWeekdays?: number[] | null;
+  } | null) {
+    const weekdays = (row?.sendWeekdays ?? []).filter((d) => Number.isInteger(d) && d >= 0 && d <= 6);
+    return {
+      sendHour: row?.sendHour ?? 8,
+      sendMinute: row?.sendMinute ?? 30,
+      sendWeekdays: weekdays.length ? weekdays : [0, 1, 2, 3, 4, 5, 6],
+    };
+  }
+
+  private resolveSchedule(
+    data: { sendHour?: number; sendMinute?: number; sendWeekdays?: number[] },
+    current: { sendHour?: number | null; sendMinute?: number | null; sendWeekdays?: number[] | null } | null,
+  ) {
+    const base = this.scheduleFrom(current);
+    const hour = data.sendHour ?? base.sendHour;
+    const minute = data.sendMinute ?? base.sendMinute;
+    if (!Number.isInteger(hour) || hour < 0 || hour > 23 || !Number.isInteger(minute) || minute < 0 || minute > 59) {
+      throw new BadRequestException('ساعت ارسال نامعتبر است');
+    }
+    const rawDays = data.sendWeekdays ?? base.sendWeekdays;
+    const weekdays = [...new Set(rawDays.filter((d) => Number.isInteger(d) && d >= 0 && d <= 6))].sort(
+      (a, b) => a - b,
+    );
+    if (!weekdays.length) {
+      throw new BadRequestException('حداقل یک روز هفته را برای ارسال انتخاب کنید');
+    }
+    return { hour, minute, weekdays };
+  }
+
+  /** exact: همان دقیقه یا ۱۵ دقیقه بعد؛ passed: از ساعت تنظیم‌شده به بعد در همان روز */
+  private isSendSlot(
+    now: { hour: number; minute: number },
+    weekday: number,
+    schedule: { sendHour: number; sendMinute: number; sendWeekdays: number[] },
+    mode: 'exact' | 'passed' = 'exact',
+  ): boolean {
+    if (!schedule.sendWeekdays.includes(weekday)) return false;
+    const nowMin = now.hour * 60 + now.minute;
+    const at = schedule.sendHour * 60 + schedule.sendMinute;
+    if (mode === 'passed') return nowMin >= at;
+    const retry = at + 15 < 24 * 60 ? at + 15 : null;
+    return nowMin === at || nowMin === retry;
+  }
+
+  private resolveDigestTtsModel(raw?: string | null): string {
+    const model = (raw ?? '').trim();
+    if (!model) return DEFAULT_DIGEST_TTS_MODEL;
+    if (model.length > 120 || !/^[A-Za-z0-9._:/-]+$/.test(model)) {
+      throw new BadRequestException('نام مدل متن به صدا نامعتبر است');
+    }
+    return model;
+  }
+
+  private async digestTtsModel(): Promise<string> {
+    const row = await this.prisma.telegramBotConfig.findUnique({ where: { id: CONFIG_ID } });
+    return this.resolveDigestTtsModel(row?.ttsModel);
+  }
+
   private femaleTtsVoice(): string {
     const configured = (this.config.get<string>('TTS_VOICE') ?? '').trim().toLowerCase();
     return FEMALE_TTS_VOICES.has(configured) ? configured : 'nova';
   }
 
-  private async renderNewsVoiceMp3(
+  /**
+   * متن اخبار و فایل صوتی برای همه یکسان است.
+   * هر dateKey فقط یک‌بار از مدل ساخته می‌شود و ارسال‌های بعدی همان روز از ذخیره خوانده می‌شود.
+   */
+  private async sharedNewsVoice(
+    dateKey: string,
     botNameFa: string | null,
     batch: NewsBatchRow | null | undefined,
   ): Promise<Buffer | null> {
+    const cached = await this.prisma.telegramSharedDigest.findUnique({ where: { dateKey } });
+    if (cached?.voiceAudio?.length) {
+      return Buffer.from(cached.voiceAudio);
+    }
+
+    let script = cached?.voiceScript?.trim() ?? '';
+    let persisted = Boolean(script);
+    if (!script) {
+      const built = await this.buildSharedVoiceScript(botNameFa, batch);
+      script = built.script;
+      if (!script) return null;
+      if (built.fromModel) {
+        await this.prisma.telegramSharedDigest.upsert({
+          where: { dateKey },
+          create: { dateKey, voiceScript: script },
+          update: { voiceScript: script },
+        });
+        persisted = true;
+      }
+    }
+
+    const adminId = await this.users.getAdminUserId();
+    try {
+      const audio = await this.llm.speakTts(script, adminId ?? undefined, {
+        model: await this.digestTtsModel(),
+        voice: this.femaleTtsVoice(),
+        instructions: DIGEST_TTS_INSTRUCTIONS,
+      });
+      if (audio?.length) {
+        if (persisted) {
+          await this.prisma.telegramSharedDigest.update({
+            where: { dateKey },
+            data: { voiceAudio: new Uint8Array(audio) },
+          });
+        }
+        return audio;
+      }
+    } catch (e) {
+      this.logger.warn(`ساخت صوت اخبار ناموفق: ${(e as Error).message.slice(0, 160)}`);
+    }
+    return null;
+  }
+
+  private async buildSharedVoiceScript(
+    botNameFa: string | null,
+    batch: NewsBatchRow | null | undefined,
+  ): Promise<{ script: string; fromModel: boolean }> {
     const items = batch?.items ?? [];
     const opportunities = items.filter((i) => i.category === 'opportunity' || i.isRetailActionable);
     const macros = items.filter((i) => !opportunities.includes(i));
@@ -671,7 +808,9 @@ export class TelegramService implements OnModuleInit {
 
     const adminId = await this.users.getAdminUserId();
     try {
-      const system = await this.llm.getSystemPrompt(adminId ?? undefined, 'telegram_digest_voice');
+      const system = `${await this.llm.getSystemPrompt(adminId ?? undefined, 'telegram_digest_voice')}
+
+افعال این متن خبری فقط گذشته باشند. پیشنهاد بهبود سبد در این متن نیست.`;
       const spoken = await this.llm.chatText(
         'telegram_digest_voice',
         system,
@@ -698,23 +837,15 @@ export class TelegramService implements OnModuleInit {
         adminId ?? undefined,
       );
       const cleaned = replaceSocialNetworkBrandFa((spoken || '').replace(/\s+/g, ' ').trim());
-      if (cleaned) script = trimSpokenScript(cleaned);
+      if (cleaned) {
+        return { script: trimSpokenScript(cleaned), fromModel: true };
+      }
     } catch (e) {
       this.logger.warn(
         `متن گفتار اخبار ناموفق؛ متن آماده استفاده شد: ${(e as Error).message.slice(0, 160)}`,
       );
     }
-
-    if (!script) return null;
-    try {
-      return await this.llm.speakTts(script, adminId ?? undefined, {
-        voice: this.femaleTtsVoice(),
-        instructions: DIGEST_TTS_INSTRUCTIONS,
-      });
-    } catch (e) {
-      this.logger.warn(`ساخت صوت اخبار ناموفق: ${(e as Error).message.slice(0, 160)}`);
-      return null;
-    }
+    return { script, fromModel: false };
   }
 
   private async sendAudio(

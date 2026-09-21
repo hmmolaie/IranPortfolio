@@ -6,6 +6,11 @@ export const metadata: Metadata = {
   metadataBase: new URL('https://sabad-yar.ir'),
   title: 'سبدیار | کشف سبد بهینه بازار ایران',
   description: 'پلتفرم فارسی مدیریت و پیشنهاد سبد سرمایه‌گذاری برای بازار ایران',
+  appleWebApp: {
+    capable: true,
+    title: 'سبدیار',
+    statusBarStyle: 'default',
+  },
 };
 
 export default function RootLayout({ children }: { children: React.ReactNode }) {

@@ -6,7 +6,7 @@ import { daysAgoDateKey, tehranDateFa, tehranDateKey } from '../news/tehran-date
 import { PricesService } from '../prices/prices.service';
 import { LlmService } from '../llm/llm.service';
 import { UsersService } from '../users/users.service';
-import { BITPIN_MARKETS_URL } from '../prices/bitpin-spot';
+import { readMarketSourceApi, saveMarketSourceApi } from '../market-source/market-source-api';
 import { fetchYahooCryptoPrices, yahooSymbolFor } from './yahoo-crypto';
 
 const REFRESH_ID = 'latest';
@@ -108,6 +108,8 @@ function faText(v: unknown, maxChars: number): string {
 @Injectable()
 export class WorldMarketsService implements OnModuleInit {
   private readonly logger = new Logger(WorldMarketsService.name);
+  private yahooBackfill: Promise<void> | null = null;
+  private yahooMissAt = 0;
   private refreshInFlight = false;
 
   constructor(
@@ -144,8 +146,16 @@ export class WorldMarketsService implements OnModuleInit {
     }
   }
 
+  getSourceApi() {
+    return readMarketSourceApi(this.prisma);
+  }
+
+  saveSourceApi(data: { bitpinMarketsUrl: string; yahooQuoteUrl: string }) {
+    return saveMarketSourceApi(this.prisma, data);
+  }
+
   async list() {
-    const [refresh, markets, macroNews] = await Promise.all([
+    const [refresh, stored, macroNews, sourceApi] = await Promise.all([
       this.prisma.worldMarketRefresh.findUnique({ where: { id: REFRESH_ID } }),
       this.prisma.worldMarket.findMany({
         orderBy: [{ volumeNum: 'desc' }, { titleFa: 'asc' }],
@@ -154,7 +164,9 @@ export class WorldMarketsService implements OnModuleInit {
         orderBy: [{ sortOrder: 'asc' }, { createdAt: 'desc' }],
         take: MAX_MACRO_NEWS,
       }),
+      readMarketSourceApi(this.prisma),
     ]);
+    const markets = await this.ensureYahooDiffs(stored);
 
     const quoteCounts: Record<string, number> = {};
     for (const m of markets) {
@@ -166,7 +178,9 @@ export class WorldMarketsService implements OnModuleInit {
       dateKey: refresh?.dateKey ?? null,
       dateLabelFa: refresh?.fetchedAt ? tehranDateFa(refresh.fetchedAt) : null,
       symbolCount: refresh?.symbolCount ?? markets.length,
-      sourceUrl: refresh?.sourceUrl ?? BITPIN_MARKETS_URL,
+      sourceUrl: sourceApi.bitpinMarketsUrl,
+      yahooQuoteUrl: sourceApi.yahooQuoteUrl,
+      yahooComparedCount: markets.filter((m) => m.diffPct != null && m.yahooPriceNum != null).length,
       quotes: Object.entries(quoteCounts)
         .map(([code, count]) => ({
           code,
@@ -215,7 +229,8 @@ export class WorldMarketsService implements OnModuleInit {
         const row = this.mapMarket(item, fetchedAt);
         if (row) byCode.set(row.code, row);
       }
-      const rows = await this.attachYahooDiffs([...byCode.values()]);
+      const sourceApi = await readMarketSourceApi(this.prisma);
+      const rows = await this.attachYahooDiffs([...byCode.values()], sourceApi.yahooQuoteUrl);
       if (!rows.length) {
         throw new BadRequestException('پاسخ بیت‌پین هیچ نمادی نداشت');
       }
@@ -233,13 +248,13 @@ export class WorldMarketsService implements OnModuleInit {
               fetchedAt,
               dateKey,
               symbolCount: rows.length,
-              sourceUrl: BITPIN_MARKETS_URL,
+              sourceUrl: sourceApi.bitpinMarketsUrl,
             },
             update: {
               fetchedAt,
               dateKey,
               symbolCount: rows.length,
-              sourceUrl: BITPIN_MARKETS_URL,
+              sourceUrl: sourceApi.bitpinMarketsUrl,
             },
           });
         },
@@ -393,7 +408,61 @@ export class WorldMarketsService implements OnModuleInit {
     }
   }
 
-  private async attachYahooDiffs(rows: Prisma.WorldMarketCreateManyInput[]) {
+  /** اگر اختلاف یاهو هنوز ذخیره نشده، یک‌بار قیمت جهانی را می‌خواند و روی همان ردیف‌ها می‌نویسد */
+  private async ensureYahooDiffs<T extends Prisma.WorldMarketCreateManyInput & { code: string }>(
+    markets: T[],
+  ): Promise<T[]> {
+    const comparable = markets.some((m) => yahooSymbolFor(String(m.baseCode), String(m.quoteCode)));
+    const has = markets.some((m) => m.yahooPriceNum != null && m.diffPct != null);
+    if (!comparable || has) return markets;
+    if (Date.now() - this.yahooMissAt < 10 * 60_000) return markets;
+
+    try {
+      if (!this.yahooBackfill) {
+        this.yahooBackfill = this.persistMissingYahooDiffs(markets).finally(() => {
+          this.yahooBackfill = null;
+        });
+      }
+      await this.yahooBackfill;
+    } catch (e) {
+      this.yahooMissAt = Date.now();
+      this.logger.warn(`تکمیل اختلاف یاهو: ${(e as Error).message.slice(0, 180)}`);
+      return markets;
+    }
+    return this.prisma.worldMarket.findMany({
+      orderBy: [{ volumeNum: 'desc' }, { titleFa: 'asc' }],
+    }) as Promise<T[]>;
+  }
+
+  private async persistMissingYahooDiffs(
+    markets: Array<Prisma.WorldMarketCreateManyInput & { code: string }>,
+  ) {
+    const sourceApi = await readMarketSourceApi(this.prisma);
+    const rows = await this.attachYahooDiffs(markets, sourceApi.yahooQuoteUrl);
+    const priced = rows.filter((r) => r.yahooPriceNum != null && r.diffPct != null);
+    if (!priced.length) {
+      this.yahooMissAt = Date.now();
+      return;
+    }
+    for (let i = 0; i < priced.length; i += 40) {
+      const chunk = priced.slice(i, i + 40);
+      await this.prisma.$transaction(
+        chunk.map((r) =>
+          this.prisma.worldMarket.update({
+            where: { code: r.code },
+            data: {
+              yahooSymbol: r.yahooSymbol ?? null,
+              yahooPriceNum: r.yahooPriceNum ?? null,
+              diffAbs: r.diffAbs ?? null,
+              diffPct: r.diffPct ?? null,
+            },
+          }),
+        ),
+      );
+    }
+  }
+
+  private async attachYahooDiffs(rows: Prisma.WorldMarketCreateManyInput[], yahooQuoteUrl: string) {
     const symbols = [
       ...new Set(
         rows
@@ -403,7 +472,7 @@ export class WorldMarketsService implements OnModuleInit {
     ];
     let yahooPrices = new Map<string, number>();
     try {
-      yahooPrices = await fetchYahooCryptoPrices(symbols);
+      yahooPrices = await fetchYahooCryptoPrices(symbols, yahooQuoteUrl);
     } catch (e) {
       this.logger.warn(`یاهو فایننس: ${(e as Error).message.slice(0, 180)}`);
     }
@@ -445,8 +514,9 @@ export class WorldMarketsService implements OnModuleInit {
   }
 
   private async fetchAllPages(): Promise<BitpinMarket[]> {
+    const sourceApi = await readMarketSourceApi(this.prisma);
     const out: BitpinMarket[] = [];
-    let url: string | null = BITPIN_MARKETS_URL;
+    let url: string | null = sourceApi.bitpinMarketsUrl;
     let guard = 0;
 
     while (url && guard < 40) {
