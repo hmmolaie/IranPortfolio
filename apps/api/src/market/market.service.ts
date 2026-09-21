@@ -492,7 +492,7 @@ export class MarketService {
       const bars = inst.id
         ? await this.prisma.priceBar.findMany({
             where: { instrumentId: inst.id },
-            orderBy: { tradeDate: 'desc' },
+      orderBy: { tradeDate: 'desc' },
             take: 16,
           })
         : [];
@@ -909,13 +909,13 @@ export class MarketService {
       if (!snaps.total && tse.total) snaps.total = tse.total;
       if (!snaps.equalWeight && tse.equalWeight) snaps.equalWeight = tse.equalWeight;
     }
-    const tradeDate = todayDateOnly();
+      const tradeDate = todayDateOnly();
     let upserted = 0;
-    for (const def of MARKET_INDICES) {
+      for (const def of MARKET_INDICES) {
       const snap = snaps[def.key];
       if (!snap?.lastValue) continue;
       const instrument = await this.prisma.instrument.upsert({
-        where: { insCode: def.insCode },
+          where: { insCode: def.insCode },
         create: {
           insCode: def.insCode,
           symbol: def.symbol,
@@ -929,23 +929,23 @@ export class MarketService {
           isActive: true,
         },
       });
-      await this.prisma.priceBar.upsert({
-        where: {
-          instrumentId_tradeDate: { instrumentId: instrument.id, tradeDate },
-        },
-        create: {
-          instrumentId: instrument.id,
-          tradeDate,
+        await this.prisma.priceBar.upsert({
+          where: {
+            instrumentId_tradeDate: { instrumentId: instrument.id, tradeDate },
+          },
+          create: {
+            instrumentId: instrument.id,
+            tradeDate,
           lastPrice: snap.lastValue,
           closePrice: snap.lastValue,
-        },
-        update: {
+          },
+          update: {
           lastPrice: snap.lastValue,
           closePrice: snap.lastValue,
-        },
-      });
-      upserted += 1;
-    }
+          },
+        });
+        upserted += 1;
+      }
     try {
       upserted += await this.syncUsdIndexBars('latest');
     } catch (e) {

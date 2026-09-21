@@ -80,6 +80,7 @@ model User {
   walletTransactions WalletTransaction[]
   walletPayments WalletPayment[]
   walletNotices WalletNotice[]
+  intelligenceLogs IntelligenceLog[]
 }
 
 enum WalletTxKind {
@@ -189,6 +190,15 @@ model UserProfile {
   notes                   String?
   investmentPreferencesFa String?
   constraintsFa           String?
+  /// LOW | MEDIUM | HIGH — نیاز نقدشوندگی اعلام‌شده
+  liquidityNeed           String?
+  /// حداکثر افت قابل قبول به درصد
+  maxDrawdownPct          Int?
+  /// LOW | MEDIUM | HIGH
+  inflationSensitivity    String?
+  /// LOW | MEDIUM | HIGH
+  fxSensitivity           String?
+  objectiveFa             String?
   /// موبایل ایران نرمال‌شده مثل 09121234567
   mobilePhone             String?
   telegramChatId          String?
@@ -276,6 +286,7 @@ model Portfolio {
   snapshots    PortfolioSnapshot[]
   events       PortfolioEvent[]
   chatMessages PortfolioChatMessage[]
+  intelligenceLogs IntelligenceLog[]
 
   @@index([userId])
 }
@@ -782,6 +793,35 @@ model ForexGraphNode {
 
   @@unique([snapshotId, code])
   @@index([snapshotId])
+}
+
+/** رژیم بازار محاسبه‌شده از دادهٔ موجود؛ هر روز تهران یک ردیف */
+model MarketRegimeLog {
+  dateKey    String   @id
+  regime     String
+  /// null یعنی نشانهٔ کافی نبوده و عدد اطمینان ساخته نشده
+  confidence Float?
+  summaryFa  String
+  drivers    Json
+  createdAt  DateTime @default(now())
+  updatedAt  DateTime @updatedAt
+}
+
+/** تاریخچهٔ برنامهٔ تخصیص قطعی؛ حذف نمی‌شود */
+model IntelligenceLog {
+  id          String   @id @default(cuid())
+  userId      String
+  portfolioId String
+  dateKey     String
+  regime      String
+  payload     Json
+  createdAt   DateTime @default(now())
+
+  user      User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+  portfolio Portfolio @relation(fields: [portfolioId], references: [id], onDelete: Cascade)
+
+  @@unique([portfolioId, dateKey])
+  @@index([userId, createdAt])
 }
 
 model ForexGraphEdge {

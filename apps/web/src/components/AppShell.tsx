@@ -19,6 +19,7 @@ const allLinks = [
   { href: '/news', label: 'اخبار اقتصادی ایران', adminOnly: false },
   { href: '/forex', label: 'آزمایش فارکس', adminOnly: true },
   { href: '/admin/users', label: 'مدیریت کاربران', adminOnly: true },
+  { href: '/admin/data-health', label: 'سلامت داده', adminOnly: true },
 ];
 
 export function AppShell({ children }: { children: React.ReactNode }) {

@@ -11,6 +11,7 @@ import { replaceSocialNetworkBrandFa } from '../llm/social-source-wording';
 import { UsersService } from '../users/users.service';
 import { LlmService } from '../llm/llm.service';
 import { WalletService } from '../wallet/wallet.service';
+import { IntelligenceService } from '../intelligence/intelligence.service';
 import { renderPortfolioPiePng } from './pie-chart-png';
 import { fallbackDigestVoiceScript, trimSpokenScript } from './digest-voice';
 import {
@@ -81,6 +82,7 @@ export class TelegramService implements OnModuleInit {
     private readonly users: UsersService,
     private readonly llm: LlmService,
     private readonly wallet: WalletService,
+    private readonly intelligence: IntelligenceService,
   ) {}
 
   onModuleInit() {
@@ -352,7 +354,8 @@ export class TelegramService implements OnModuleInit {
         return { ok: false, messageFa: 'کاربر متصل به ربات یافت نشد.' };
       }
 
-      const newsText = this.formatNewsSection(cfg.botNameFa, batch);
+      const regimeBrief = await this.intelligence.regimeBriefFa().catch(() => '');
+      const newsText = [this.formatNewsSection(cfg.botNameFa, batch), regimeBrief].filter(Boolean).join('\n\n');
       const newsVoice = await this.sharedNewsVoice(dateKey, cfg.botNameFa, batch);
       let sentCount = 0;
       let failedCount = 0;
@@ -549,6 +552,19 @@ export class TelegramService implements OnModuleInit {
         parse_mode: 'HTML',
         disable_web_page_preview: true,
       });
+    }
+
+    try {
+      const planText = await this.intelligence.rebalanceBriefFa(userId);
+      if (planText) {
+        await this.tg(token, 'sendMessage', {
+          chat_id: chatId,
+          text: planText,
+          disable_web_page_preview: true,
+        });
+      }
+    } catch (e) {
+      this.logger.warn(`خلاصه بازچینش ${userId}: ${(e as Error).message.slice(0, 140)}`);
     }
 
     if (newsText) {

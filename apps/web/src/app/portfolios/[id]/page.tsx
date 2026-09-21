@@ -8,6 +8,7 @@ import { PortfolioPieChart } from '@/components/PortfolioPieChart';
 import { ConfirmDeletePortfolioModal } from '@/components/ConfirmDeletePortfolioModal';
 import { useToast } from '@/components/Toast';
 import { formatShamsiDate, formatShamsiDateTime } from '@/lib/shamsi-date';
+import { IntelligencePanel } from '@/components/IntelligencePanel';
 
 type Item = {
   id: string;
@@ -494,6 +495,8 @@ export default function PortfolioDetailPage() {
           </button>
         </div>
       </div>
+
+      <IntelligencePanel portfolioId={id} />
 
       {analysis && (
         <section className="card space-y-4">

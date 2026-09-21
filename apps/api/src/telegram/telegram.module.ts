@@ -6,9 +6,10 @@ import { NewsModule } from '../news/news.module';
 import { UsersModule } from '../users/users.module';
 import { LlmModule } from '../llm/llm.module';
 import { WalletModule } from '../wallet/wallet.module';
+import { IntelligenceModule } from '../intelligence/intelligence.module';
 
 @Module({
-  imports: [PortfoliosModule, NewsModule, UsersModule, LlmModule, WalletModule],
+  imports: [PortfoliosModule, NewsModule, UsersModule, LlmModule, WalletModule, IntelligenceModule],
   controllers: [TelegramController],
   providers: [TelegramService],
   exports: [TelegramService],

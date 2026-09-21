@@ -3,7 +3,7 @@
 import { useEffect, useState } from 'react';
 import Link from 'next/link';
 import { useRouter } from 'next/navigation';
-import { api, formatRial, getToken, getUserRole, setUserRole, UserRole } from '@/lib/api';
+import { api, formatNum, formatRial, getToken, getUserRole, setUserRole, UserRole } from '@/lib/api';
 
 type Portfolio = {
   id: string;
@@ -26,6 +26,17 @@ export default function DashboardPage() {
   const [role, setRole] = useState<UserRole | null>(null);
   const [users, setUsers] = useState<AppUser[]>([]);
   const [selectedUserId, setSelectedUserId] = useState('');
+  const [home, setHome] = useState<{
+    regime: { labelFa: string; summaryFa: string };
+    portfolio: {
+      id: string;
+      name: string;
+      health: { score: number | null };
+      risk: { score: number | null };
+      alerts: Array<{ titleFa: string; bodyFa: string }>;
+      plan: Array<{ labelFa: string; action: string; currentPct: number; targetPct: number }>;
+    } | null;
+  } | null>(null);
 
   async function loadPortfolios(userId?: string) {
     const q = userId ? `?userId=${encodeURIComponent(userId)}` : '';
@@ -63,6 +74,13 @@ export default function DashboardPage() {
 
   const selectedUser = users.find((u) => u.id === selectedUserId);
 
+  useEffect(() => {
+    if (role !== 'USER') return;
+    api<NonNullable<typeof home>>('/intelligence/home')
+      .then(setHome)
+      .catch(() => undefined);
+  }, [role]);
+
   return (
     <div className="space-y-8">
       <div>
@@ -95,6 +113,39 @@ export default function DashboardPage() {
             <p className="mt-2 text-xs text-navy-800/50">نام کاربری: {selectedUser.email}</p>
           )}
         </div>
+      )}
+
+      {role === 'USER' && home && (
+        <section className="grid gap-4 sm:grid-cols-3">
+          <div className="card">
+            <div className="text-sm text-navy-800/60">رژیم بازار</div>
+            <div className="mt-2 text-xl font-semibold">{home.regime.labelFa}</div>
+            <p className="mt-2 text-sm leading-6 text-navy-800/70">{home.regime.summaryFa}</p>
+          </div>
+          <div className="card">
+            <div className="text-sm text-navy-800/60">سلامت و ریسک</div>
+            <div className="mt-2 text-sm leading-7">
+              {home.portfolio
+                ? `${home.portfolio.name}: سلامت ${home.portfolio.health.score == null ? 'نامشخص' : home.portfolio.health.score.toLocaleString('fa-IR')}، ریسک ${home.portfolio.risk.score == null ? 'نامشخص' : formatNum(home.portfolio.risk.score)}`
+                : 'هنوز سبدی برای سنجش نیست.'}
+            </div>
+          </div>
+          <div className="card">
+            <div className="text-sm text-navy-800/60">چه چیزی باید عوض شود</div>
+            <p className="mt-2 text-sm leading-7 text-navy-800/75">
+              {home.portfolio?.plan[0]
+                ? `${home.portfolio.plan[0].labelFa}: ${formatNum(home.portfolio.plan[0].currentPct)}٪ به ${formatNum(home.portfolio.plan[0].targetPct)}٪`
+                : home.portfolio?.alerts[0]
+                  ? `${home.portfolio.alerts[0].titleFa}. ${home.portfolio.alerts[0].bodyFa}`
+                  : 'فاصلهٔ مهمی از وزن هدف، با دادهٔ موجود، دیده نشد.'}
+            </p>
+            {home.portfolio && (
+              <Link href={`/portfolios/${home.portfolio.id}`} className="btn-secondary mt-4 w-fit">
+                جزئیات سبد
+              </Link>
+            )}
+          </div>
+        </section>
       )}
 
       <div className="grid gap-4 sm:grid-cols-3">

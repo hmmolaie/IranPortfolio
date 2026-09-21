@@ -1,5 +1,5 @@
 import { Body, Controller, Get, Param, Patch, Post, Req, UseGuards } from '@nestjs/common';
-import { IsBoolean, IsInt, IsOptional, IsString, Max, Min, MinLength } from 'class-validator';
+import { IsBoolean, IsIn, IsInt, IsOptional, IsString, Max, MaxLength, Min, MinLength } from 'class-validator';
 import { UserRole } from '@prisma/client';
 import { UsersService } from './users.service';
 import { JwtAuthGuard } from '../auth/jwt-auth.guard';
@@ -36,6 +36,29 @@ class UpdateProfileDto {
   @IsOptional()
   @IsString()
   mobilePhone?: string;
+
+  @IsOptional()
+  @IsIn(['LOW', 'MEDIUM', 'HIGH'])
+  liquidityNeed?: 'LOW' | 'MEDIUM' | 'HIGH' | null;
+
+  @IsOptional()
+  @IsInt()
+  @Min(1)
+  @Max(80)
+  maxDrawdownPct?: number | null;
+
+  @IsOptional()
+  @IsIn(['LOW', 'MEDIUM', 'HIGH'])
+  inflationSensitivity?: 'LOW' | 'MEDIUM' | 'HIGH' | null;
+
+  @IsOptional()
+  @IsIn(['LOW', 'MEDIUM', 'HIGH'])
+  fxSensitivity?: 'LOW' | 'MEDIUM' | 'HIGH' | null;
+
+  @IsOptional()
+  @IsString()
+  @MaxLength(300)
+  objectiveFa?: string | null;
 }
 
 class CreateUserDto {

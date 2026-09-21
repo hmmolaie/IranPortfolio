@@ -8,6 +8,7 @@ import { LlmService } from '../llm/llm.service';
 import * as fs from 'fs/promises';
 import * as path from 'path';
 import { extractFundReportText, safeUploadFileName } from './extract-report-text';
+import { bucketAsset, fundShift, ClassKey } from '../intelligence/engine';
 
 type FundHoldingInput = {
   symbol?: string;
@@ -416,6 +417,39 @@ export class FundsService {
     return { symbol: key, trend, points };
   }
 
+  /** تغییر وزن کلاس‌ها بین گزارش‌ها؛ مشاهده است نه پیش‌بینی مدیر */
+  async fundBehavior(userId: string, fundDefinitionId: string) {
+    await this.requireDefinition(userId, fundDefinitionId);
+    const rows = await this.prisma.fundHolding.findMany({
+      where: { userId, fundDefinitionId, action: 'HELD' },
+      orderBy: [{ reportYear: 'asc' }, { reportMonthNum: 'asc' }],
+    });
+    const groups = new Map<string, { label: string; sums: Partial<Record<ClassKey, number>> }>();
+    for (const row of rows) {
+      const key = `${row.reportYear ?? 0}-${String(row.reportMonthNum ?? 0).padStart(2, '0')}`;
+      const label = row.reportMonthNum ? `${row.reportYear ?? ''} / ${row.reportMonthNum}` : key;
+      const group = groups.get(key) ?? { label, sums: {} };
+      const asset = kindToClass(row.assetKind);
+      if (asset && row.weightPct != null && row.weightPct > 0) {
+        group.sums[asset] = (group.sums[asset] ?? 0) + row.weightPct;
+      }
+      groups.set(key, group);
+    }
+    const periods = [...groups.values()].map((g) => {
+      const total = Object.values(g.sums).reduce((s, n) => s + (n ?? 0), 0) || 1;
+      const weights: Partial<Record<ClassKey, number>> = {};
+      for (const [k, v] of Object.entries(g.sums)) {
+        weights[k as ClassKey] = Math.round((((v ?? 0) / total) * 100) * 10) / 10;
+      }
+      return { label: g.label, weights };
+    });
+    const observed = fundShift(periods);
+    if (observed.enough) {
+      observed.noteFa += ' وزن‌ها فقط بین دارایی‌های طبقه‌بندی‌شدهٔ همان گزارش نرمال شده‌اند.';
+    }
+    return observed;
+  }
+
   async listTrackedSymbols(userId: string, fundDefinitionId: string) {
     await this.requireDefinition(userId, fundDefinitionId);
     const rows = await this.prisma.fundHolding.findMany({
@@ -605,4 +639,12 @@ ${extractedText || 'متن استخراج نشد'}`,
       };
     }
   }
+}
+
+function kindToClass(kind: string): ClassKey | null {
+  if (kind === 'GOLD') return bucketAsset('PHYSICAL_GOLD');
+  if (kind === 'CASH') return 'cash';
+  if (kind === 'BOND' || kind === 'DEPOSIT' || kind === 'FUND') return 'fixed';
+  if (kind === 'STOCK') return 'equity';
+  return null;
 }

@@ -129,6 +129,11 @@ export class UsersService {
       investmentPreferencesFa?: string;
       constraintsFa?: string;
       mobilePhone?: string;
+      liquidityNeed?: string | null;
+      maxDrawdownPct?: number | null;
+      inflationSensitivity?: string | null;
+      fxSensitivity?: string | null;
+      objectiveFa?: string | null;
     },
   ) {
     const { name, mobilePhone, ...profile } = data;

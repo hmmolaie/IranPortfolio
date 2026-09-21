@@ -138,6 +138,12 @@ export class FundsController {
     return this.funds.analyzeTimeline(req.user.userId, fundDefinitionId);
   }
 
+  /** تغییر وزن کلاس‌ها بین گزارش‌های موجود؛ مشاهده است نه پیش‌بینی */
+  @Get('definitions/:id/behavior')
+  behavior(@Req() req: { user: { userId: string } }, @Param('id') id: string) {
+    return this.funds.fundBehavior(req.user.userId, id);
+  }
+
   /** دارایی‌های آخرین گزارش (یا گزارش مشخص با reportId) */
   @Get('definitions/:id/holdings')
   listHoldings(

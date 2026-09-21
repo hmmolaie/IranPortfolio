@@ -120,6 +120,11 @@ export default function SettingsPage() {
     investmentPreferencesFa: '',
     constraintsFa: '',
     mobilePhone: '',
+    liquidityNeed: '',
+    maxDrawdownPct: '',
+    inflationSensitivity: '',
+    fxSensitivity: '',
+    objectiveFa: '',
   });
   const [provider, setProvider] = useState<ProviderId>('openrouter');
   const [llm, setLlm] = useState({
@@ -367,6 +372,11 @@ export default function SettingsPage() {
         investmentPreferencesFa?: string | null;
         constraintsFa?: string | null;
         mobilePhone?: string | null;
+        liquidityNeed?: string | null;
+        maxDrawdownPct?: number | null;
+        inflationSensitivity?: string | null;
+        fxSensitivity?: string | null;
+        objectiveFa?: string | null;
       };
     }>('/users/me').then((u) => {
       const admin = u.role === 'ADMIN';
@@ -380,6 +390,11 @@ export default function SettingsPage() {
         investmentPreferencesFa: u.profile?.investmentPreferencesFa ?? '',
         constraintsFa: u.profile?.constraintsFa ?? '',
         mobilePhone: u.profile?.mobilePhone ?? '',
+        liquidityNeed: u.profile?.liquidityNeed ?? '',
+        maxDrawdownPct: u.profile?.maxDrawdownPct != null ? String(u.profile.maxDrawdownPct) : '',
+        inflationSensitivity: u.profile?.inflationSensitivity ?? '',
+        fxSensitivity: u.profile?.fxSensitivity ?? '',
+        objectiveFa: u.profile?.objectiveFa ?? '',
       });
       loadTelegramMe().catch(() => undefined);
       if (admin) {
@@ -583,6 +598,11 @@ export default function SettingsPage() {
           investmentPreferencesFa: profile.investmentPreferencesFa,
           constraintsFa: profile.constraintsFa,
           mobilePhone: profile.mobilePhone,
+          liquidityNeed: profile.liquidityNeed || null,
+          maxDrawdownPct: Number(profile.maxDrawdownPct) >= 1 ? Number(profile.maxDrawdownPct) : null,
+          inflationSensitivity: profile.inflationSensitivity || null,
+          fxSensitivity: profile.fxSensitivity || null,
+          objectiveFa: profile.objectiveFa || null,
         }),
       });
       toast.success('پروفایل ذخیره شد.');
@@ -1044,6 +1064,64 @@ export default function SettingsPage() {
                 min={1}
                 value={profile.horizonMonths}
                 onChange={(e) => setProfile({ ...profile, horizonMonths: Number(e.target.value) })}
+              />
+            </div>
+            <div>
+              <label className="label">نیاز به نقدشوندگی</label>
+              <select
+                className="input"
+                value={profile.liquidityNeed}
+                onChange={(e) => setProfile({ ...profile, liquidityNeed: e.target.value })}
+              >
+                <option value="">اعلام نشده</option>
+                <option value="LOW">کم</option>
+                <option value="MEDIUM">متوسط</option>
+                <option value="HIGH">زیاد</option>
+              </select>
+            </div>
+            <div>
+              <label className="label">حداکثر افت قابل قبول (درصد)</label>
+              <input
+                className="input"
+                dir="ltr"
+                inputMode="numeric"
+                value={profile.maxDrawdownPct}
+                onChange={(e) => setProfile({ ...profile, maxDrawdownPct: e.target.value.replace(/[^\d]/g, '') })}
+              />
+            </div>
+            <div>
+              <label className="label">حساسیت به تورم</label>
+              <select
+                className="input"
+                value={profile.inflationSensitivity}
+                onChange={(e) => setProfile({ ...profile, inflationSensitivity: e.target.value })}
+              >
+                <option value="">اعلام نشده</option>
+                <option value="LOW">کم</option>
+                <option value="MEDIUM">متوسط</option>
+                <option value="HIGH">زیاد</option>
+              </select>
+            </div>
+            <div>
+              <label className="label">حساسیت به ارز</label>
+              <select
+                className="input"
+                value={profile.fxSensitivity}
+                onChange={(e) => setProfile({ ...profile, fxSensitivity: e.target.value })}
+              >
+                <option value="">اعلام نشده</option>
+                <option value="LOW">کم</option>
+                <option value="MEDIUM">متوسط</option>
+                <option value="HIGH">زیاد</option>
+              </select>
+            </div>
+            <div>
+              <label className="label">هدف سرمایه‌گذاری</label>
+              <input
+                className="input"
+                value={profile.objectiveFa}
+                maxLength={300}
+                onChange={(e) => setProfile({ ...profile, objectiveFa: e.target.value })}
               />
             </div>
             <div>
