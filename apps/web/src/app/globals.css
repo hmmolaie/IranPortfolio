@@ -5,9 +5,9 @@
 @tailwind utilities;
 
 :root {
-  --navy: #0b1f3a;
-  --cream: #f7f5f1;
-  --gold: #a8893e;
+  --navy: #08131f;
+  --cream: #f3eee6;
+  --gold: #c48a3c;
 }
 
 html {
@@ -17,8 +17,8 @@ html {
 body {
   @apply bg-cream text-navy-900 font-sans antialiased;
   background-image:
-    radial-gradient(ellipse at 100% 0%, rgba(11, 31, 58, 0.06), transparent 50%),
-    radial-gradient(ellipse at 0% 100%, rgba(168, 137, 62, 0.08), transparent 45%);
+    radial-gradient(ellipse at 100% 0%, rgba(226, 181, 106, 0.18), transparent 46%),
+    radial-gradient(ellipse at 0% 100%, rgba(8, 19, 31, 0.07), transparent 50%);
   min-height: 100vh;
 }
 

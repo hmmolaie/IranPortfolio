@@ -112,9 +112,9 @@ export function InstallAppPrompt() {
             <span className="block h-5 w-5 rounded-full border-[3px] border-gold-400" />
           </div>
           <div className="min-w-0 flex-1">
-            <h2 className="text-sm font-semibold text-navy-900">نصب سبدیار روی گوشی</h2>
+            <h2 className="text-sm font-semibold text-navy-900">نصب پیپ روی گوشی</h2>
             <p className="mt-1 text-xs leading-6 text-navy-800/70">
-              سبدیار را مثل یک اپ روی صفحهٔ اصلی بگذارید تا دفعهٔ بعد مستقیم باز شود.
+              پیپ را مثل یک اپ روی صفحهٔ اصلی بگذارید تا دفعهٔ بعد مستقیم باز شود.
             </p>
           </div>
           <button

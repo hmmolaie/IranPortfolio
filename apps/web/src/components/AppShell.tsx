@@ -152,11 +152,13 @@ export function AppShell({ children }: { children: React.ReactNode }) {
   return (
     <ToastProvider>
       <div className="min-h-screen lg:grid lg:grid-cols-[260px_1fr]">
-        <aside className="border-b border-navy-900/10 bg-navy-900 text-white lg:border-b-0 lg:border-e lg:border-navy-800">
-          <div className="px-6 py-7">
+        <aside className="border-b border-gold-400/25 bg-navy-900 text-white lg:border-b-0 lg:border-e lg:border-gold-400/20">
+          <div className="border-b border-white/10 px-6 py-7">
             <Link href="/dashboard" className="block">
-              <div className="text-2xl font-bold tracking-tight">سبدیار</div>
-              <div className="mt-1 text-xs text-white/60">مدیریت سبد سرمایه‌گذاری شما</div>
+              <div className="text-2xl font-bold tracking-tight">پیپ</div>
+              <div className="mt-1 text-[11px] leading-5 text-gold-400/90">
+                بینش هوشمند سرمایه‌گذاری شخصی
+              </div>
             </Link>
           </div>
           <nav className="flex gap-1 overflow-x-auto px-3 pb-4 lg:flex-col lg:overflow-visible">

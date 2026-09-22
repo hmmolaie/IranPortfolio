@@ -16,6 +16,7 @@ import {
 } from '@simplewebauthn/server';
 import { PrismaService } from '../prisma/prisma.service';
 import { AuthService } from './auth.service';
+import { publicSiteOrigins } from '../common/public-sites';
 
 const CHALLENGE_TTL_MS = 5 * 60 * 1000;
 const MAX_CREDENTIALS = 8;
@@ -30,8 +31,8 @@ export class WebAuthnService {
     private readonly auth: AuthService,
   ) {}
 
-  async registrationOptions(userId: string) {
-    const { rpID, rpName } = this.relyingParty();
+  async registrationOptions(userId: string, requestOrigin?: string) {
+    const { rpID, rpName } = this.relyingParty(requestOrigin);
     const user = await this.prisma.user.findUnique({
       where: { id: userId },
       include: { webauthnCredentials: true },
@@ -77,8 +78,9 @@ export class WebAuthnService {
     userId: string,
     response: RegistrationResponseJSON,
     friendlyName?: string,
+    requestOrigin?: string,
   ) {
-    const { rpID, origins } = this.relyingParty();
+    const { rpID, origins } = this.relyingParty(requestOrigin);
     const user = await this.prisma.user.findUnique({ where: { id: userId } });
     if (!user) throw new UnauthorizedException('جلسه نامعتبر است');
 
@@ -130,8 +132,8 @@ export class WebAuthnService {
     };
   }
 
-  async authenticationOptions(email?: string) {
-    const { rpID } = this.relyingParty();
+  async authenticationOptions(email?: string, requestOrigin?: string) {
+    const { rpID } = this.relyingParty(requestOrigin);
     await this.purgeExpired();
 
     let allowCredentials: Array<{ id: string; transports?: AuthenticatorTransportFuture[] }> | undefined;
@@ -166,8 +168,8 @@ export class WebAuthnService {
     return options;
   }
 
-  async verifyAuthentication(response: AuthenticationResponseJSON) {
-    const { rpID, origins } = this.relyingParty();
+  async verifyAuthentication(response: AuthenticationResponseJSON, requestOrigin?: string) {
+    const { rpID, origins } = this.relyingParty(requestOrigin);
     const credentialId = response?.id;
     if (!credentialId) throw new UnauthorizedException('پاسخ زیست‌سنجی ناقص است');
 
@@ -250,18 +252,28 @@ export class WebAuthnService {
     await this.prisma.webAuthnChallenge.deleteMany({ where: { expiresAt: { lt: new Date() } } });
   }
 
-  private relyingParty(): { rpID: string; rpName: string; origins: string[] } {
-    const rpName = this.config.get<string>('WEBAUTHN_RP_NAME')?.trim() || 'سبدیار';
+  private relyingParty(requestOrigin?: string): { rpID: string; rpName: string; origins: string[] } {
+    const rpName = 'پیپ';
     const origins = uniqueOrigins([
       ...(this.config.get<string>('WEBAUTHN_ORIGINS') ?? '').split(','),
       this.config.get<string>('PUBLIC_URL') ?? '',
       ...(this.config.get<string>('CORS_ORIGIN') ?? '').split(','),
+      ...publicSiteOrigins(),
       'http://localhost:3000',
     ]);
-    const explicitRp = this.config.get<string>('WEBAUTHN_RP_ID')?.trim();
-    const fromPublic = hostnameOf(this.config.get<string>('PUBLIC_URL') ?? '');
-    const fromOrigin = origins.map(hostnameOf).find((h) => h && !isIpHost(h));
-    const rpID = stripWww(explicitRp || fromPublic || fromOrigin || 'localhost');
+    const allowedHosts = new Set(
+      origins
+        .map((item) => stripWww(hostnameOf(item) || ''))
+        .filter((host) => host && !isIpHost(host)),
+    );
+    const requestHost = stripWww(hostnameOf(requestOrigin ?? '') || '');
+    const explicitRp = stripWww(this.config.get<string>('WEBAUTHN_RP_ID')?.trim() || '');
+    const fromPublic = stripWww(hostnameOf(this.config.get<string>('PUBLIC_URL') ?? '') || '');
+    const rpID =
+      (requestHost && allowedHosts.has(requestHost) ? requestHost : '') ||
+      (explicitRp && !isIpHost(explicitRp) ? explicitRp : '') ||
+      fromPublic ||
+      'localhost';
 
     if (isIpHost(rpID)) {
       throw new BadRequestException(

@@ -4,12 +4,12 @@ import { AppShell } from '@/components/AppShell';
 
 export const metadata: Metadata = {
   metadataBase: new URL('https://sabad-yar.ir'),
-  title: 'سبدیار | کشف سبد بهینه بازار ایران',
-  description: 'پلتفرم فارسی مدیریت و پیشنهاد سبد سرمایه‌گذاری برای بازار ایران',
+  title: 'پیپ | پلتفرم بینش‌های هوشمند سرمایه‌گذاری شخصی',
+  description: 'پلتفرم بینش‌های هوشمند سرمایه‌گذاری شخصی برای بازار ایران',
   appleWebApp: {
     capable: true,
-    title: 'سبدیار',
-    statusBarStyle: 'default',
+    title: 'پیپ',
+    statusBarStyle: 'black-translucent',
   },
 };
 

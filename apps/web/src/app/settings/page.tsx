@@ -673,6 +673,25 @@ export default function SettingsPage() {
     }
   }
 
+  async function sendTelegramTestMessage() {
+    setTgBusy(true);
+    setTgFeedback(null);
+    try {
+      const res = await api<{ ok: boolean; messageFa?: string }>('/telegram/test-message', {
+        method: 'POST',
+      });
+      const text = res.messageFa ?? 'پیام آزمایشی فرستاده شد.';
+      setTgFeedback({ ok: true, text });
+      toast.success(text);
+    } catch (err) {
+      const text = (err as Error).message || 'ارسال پیام آزمایشی ناموفق بود.';
+      setTgFeedback({ ok: false, text });
+      toast.error(text);
+    } finally {
+      setTgBusy(false);
+    }
+  }
+
   async function sendTelegramToday() {
     setTgBusy(true);
     setTgFeedback(null);
@@ -1508,7 +1527,7 @@ export default function SettingsPage() {
       {tab === 'llm' && isAdmin && (
         <form onSubmit={saveLlm} className="card grid max-w-2xl gap-4">
           <p className="rounded-lg bg-navy-50 px-3 py-2 text-sm text-navy-800/80">
-            اشتراک Cursor API عمومی برای اپلیکیشن‌های بیرونی ندارد؛ فقط داخل IDE کار می‌کند. برای سبدیار از
+            اشتراک Cursor API عمومی برای اپلیکیشن‌های بیرونی ندارد؛ فقط داخل IDE کار می‌کند. برای پیپ از
             OpenRouter، OpenAI یا هر سرویس سازگار با OpenAI استفاده کنید.
           </p>
 
@@ -1910,6 +1929,9 @@ export default function SettingsPage() {
               </div>
             )}
           </div>
+          <p className="text-xs leading-6 text-navy-800/60">
+            «تست پیام به موبایل من» فقط به تلگرام وصل‌شده با شماره موبایل همین حساب مدیر می‌رود. کاربران دیگر این پیام را نمی‌گیرند و ارسال روزانهٔ همه عوض نمی‌شود.
+          </p>
           <div className="flex flex-wrap gap-2">
             <button type="submit" className="btn-primary w-fit" disabled={tgBusy}>
               {tgBusy ? 'در حال ذخیره...' : 'ذخیره ربات'}
@@ -1921,6 +1943,14 @@ export default function SettingsPage() {
               onClick={testTelegram}
             >
               تست اتصال
+            </button>
+            <button
+              type="button"
+              className="btn-secondary w-fit"
+              disabled={tgBusy || !tgMeta.hasToken}
+              onClick={sendTelegramTestMessage}
+            >
+              تست پیام به موبایل من
             </button>
             <button
               type="button"

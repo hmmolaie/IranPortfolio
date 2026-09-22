@@ -1,13 +1,20 @@
 import { NestFactory } from '@nestjs/core';
 import { ValidationPipe } from '@nestjs/common';
 import { AppModule } from './app.module';
+import { publicSiteOrigins } from './common/public-sites';
 
 async function bootstrap() {
   const app = await NestFactory.create(AppModule);
-  app.enableCors({
-    origin: (process.env.CORS_ORIGIN?.split(',') ?? ['http://localhost:3000'])
+  const allowedOrigins = new Set(
+    [...(process.env.CORS_ORIGIN?.split(',') ?? ['http://localhost:3000']), ...publicSiteOrigins()]
       .map((s) => s.trim())
       .filter(Boolean),
+  );
+  app.enableCors({
+    origin: (origin, callback) => {
+      if (!origin || allowedOrigins.has(origin)) callback(null, true);
+      else callback(null, false);
+    },
     credentials: true,
   });
   app.useGlobalPipes(
@@ -22,7 +29,7 @@ async function bootstrap() {
   const listenHost = process.env.API_LISTEN_HOST ?? '127.0.0.1';
   await app.listen(port, listenHost);
   // eslint-disable-next-line no-console
-  console.log(`سبدیار API روی ${listenHost}:${port}`);
+  console.log(`API روی ${listenHost}:${port}`);
 }
 
 bootstrap().catch((err) => {

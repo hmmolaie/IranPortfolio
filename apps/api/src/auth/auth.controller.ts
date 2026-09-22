@@ -73,27 +73,33 @@ export class AuthController {
 
   @Post('webauthn/register/options')
   @UseGuards(JwtAuthGuard)
-  webauthnRegisterOptions(@Req() req: { user: { userId: string } }) {
-    return this.webauthn.registrationOptions(req.user.userId);
+  webauthnRegisterOptions(@Req() req: { user: { userId: string }; headers: { origin?: string } }) {
+    return this.webauthn.registrationOptions(req.user.userId, req.headers.origin);
   }
 
   @Post('webauthn/register/verify')
   @UseGuards(JwtAuthGuard)
   webauthnRegisterVerify(
-    @Req() req: { user: { userId: string } },
+    @Req() req: { user: { userId: string }; headers: { origin?: string } },
     @Body() dto: WebAuthnRegisterVerifyDto,
   ) {
-    return this.webauthn.verifyRegistration(req.user.userId, dto.response, dto.nickname);
+    return this.webauthn.verifyRegistration(req.user.userId, dto.response, dto.nickname, req.headers.origin);
   }
 
   @Post('webauthn/login/options')
-  webauthnLoginOptions(@Body() dto: WebAuthnLoginOptionsDto) {
-    return this.webauthn.authenticationOptions(dto?.email);
+  webauthnLoginOptions(
+    @Req() req: { headers: { origin?: string } },
+    @Body() dto: WebAuthnLoginOptionsDto,
+  ) {
+    return this.webauthn.authenticationOptions(dto?.email, req.headers.origin);
   }
 
   @Post('webauthn/login/verify')
-  webauthnLoginVerify(@Body() dto: WebAuthnLoginVerifyDto) {
-    return this.webauthn.verifyAuthentication(dto.response);
+  webauthnLoginVerify(
+    @Req() req: { headers: { origin?: string } },
+    @Body() dto: WebAuthnLoginVerifyDto,
+  ) {
+    return this.webauthn.verifyAuthentication(dto.response, req.headers.origin);
   }
 
   @Get('webauthn/credentials')

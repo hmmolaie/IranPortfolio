@@ -4,6 +4,7 @@ import { ConfigService } from '@nestjs/config';
 import { UserRole } from '@prisma/client';
 import { PrismaService } from '../prisma/prisma.service';
 import { transcribeBytes } from '../telegram-assistant/youtube-subs/gapgpt';
+import { speechVoiceForModel } from './tts-voice';
 import { LLM_PROMPT_DEFAULTS, isValidPromptPurpose } from './prompt-defaults';
 import {
   NEWS_LLM_PURPOSES,
@@ -617,6 +618,13 @@ export class LlmService {
     const creds = await this.resolveTtsCredentials(userId);
     const input = text.replace(/\s+/g, ' ').trim().slice(0, 4096);
     if (!input) throw new Error('متن خالی برای گفتار');
+    const model =
+      opts?.model?.trim() || this.config.get<string>('TTS_MODEL') || 'gpt-4o-mini-tts';
+    const requestedVoice = opts?.voice ?? this.config.get<string>('TTS_VOICE');
+    const voice = speechVoiceForModel(model, requestedVoice);
+    if (requestedVoice && voice !== requestedVoice.trim().toLowerCase()) {
+      this.logger.warn(`صدای ${requestedVoice} با مدل ${model} سازگار نیست؛ ${voice} استفاده شد`);
+    }
     const res = await fetch(`${creds.baseUrl}/audio/speech`, {
       method: 'POST',
       headers: {
@@ -624,11 +632,8 @@ export class LlmService {
         'Content-Type': 'application/json',
       },
       body: JSON.stringify({
-        model:
-          opts?.model?.trim() ||
-          this.config.get<string>('TTS_MODEL') ||
-          'gpt-4o-mini-tts',
-        voice: opts?.voice ?? this.config.get<string>('TTS_VOICE') ?? 'nova',
+        model,
+        voice,
         input,
         response_format: 'mp3',
         instructions:

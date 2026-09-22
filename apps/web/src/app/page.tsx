@@ -145,30 +145,30 @@ export default function HomePage() {
 
   return (
     <div className="relative min-h-screen overflow-hidden">
-      <div
-        aria-hidden
-        className="pointer-events-none absolute -start-32 top-0 h-96 w-96 rounded-full bg-gold-400/20 blur-3xl"
+      <img
+        src="/brand/login-hero.jpg"
+        alt=""
+        className="absolute inset-0 h-full w-full object-cover object-[center_30%]"
       />
-      <div
-        aria-hidden
-        className="pointer-events-none absolute -end-24 bottom-0 h-[28rem] w-[28rem] rounded-full bg-navy-900/10 blur-3xl"
-      />
+      <div className="absolute inset-0 bg-gradient-to-t from-[#071018]/88 via-[#071018]/45 to-[#071018]/25" />
 
-      <div className="relative mx-auto grid min-h-screen max-w-6xl items-center gap-12 px-6 py-12 lg:grid-cols-2 lg:gap-16 lg:py-0">
-        <section className="order-2 lg:order-1">
-          <p className="text-xs font-medium tracking-[0.25em] text-gold-500">SABADYAR</p>
-          <h1 className="mt-4 text-4xl font-bold leading-tight text-navy-900 sm:text-5xl lg:text-6xl">
-            سبدیار
-          </h1>
-          <p className="mt-5 max-w-md text-base leading-8 text-navy-800/75 sm:text-lg">
-            پلتفرم فارسی مدیریت و کشف سبد سرمایه‌گذاری برای بازار ایران — سهام، طلا، سپرده و
-            اختیار.
+      <div className="relative mx-auto grid min-h-screen max-w-6xl items-center gap-10 px-6 py-10 lg:grid-cols-2 lg:gap-16 lg:py-0">
+        <section className="order-2 text-white lg:order-1">
+          <p className="text-xs font-medium tracking-[0.28em] text-gold-400" dir="ltr">
+            PIIIP
+          </p>
+          <h1 className="mt-4 text-5xl font-bold leading-tight sm:text-6xl">پیپ</h1>
+          <p className="mt-4 max-w-md text-lg leading-9 text-white/90">
+            پلتفرم بینش‌های هوشمند سرمایه‌گذاری شخصی
+          </p>
+          <p className="mt-2 max-w-md text-sm leading-7 text-white/70" dir="ltr">
+            Personal Investment Intelligence Insights Platform
           </p>
 
           <ul className="mt-8 space-y-3">
             {FEATURES.map((item) => (
-              <li key={item} className="flex items-center gap-3 text-sm text-navy-800/80">
-                <span className="flex h-6 w-6 shrink-0 items-center justify-center rounded-full bg-navy-900/8 text-xs text-gold-500">
+              <li key={item} className="flex items-center gap-3 text-sm text-white/85">
+                <span className="flex h-6 w-6 shrink-0 items-center justify-center rounded-full bg-white/10 text-xs text-gold-400">
                   ✓
                 </span>
                 {item}
@@ -176,13 +176,13 @@ export default function HomePage() {
             ))}
           </ul>
 
-          <p className="mt-10 text-xs leading-6 text-navy-800/45">
+          <p className="mt-10 text-xs leading-6 text-white/55">
             این سرویس ابزار تصمیم‌یار است و جایگزین مشاوره رسمی سرمایه‌گذاری نیست.
           </p>
         </section>
 
         <section className="order-1 lg:order-2">
-          <div className="card mx-auto w-full max-w-md border-navy-900/8 shadow-[0_24px_64px_-12px_rgba(11,31,58,0.18)]">
+          <div className="card mx-auto w-full max-w-md border-white/40 bg-white/92 shadow-[0_24px_64px_-12px_rgba(7,16,24,0.55)]">
             <div className="mb-6 border-b border-navy-900/8 pb-5">
               <h2 className="text-xl font-semibold text-navy-900">ورود به حساب</h2>
               <p className="mt-1 text-sm text-navy-800/55">

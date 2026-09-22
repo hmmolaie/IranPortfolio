@@ -13,7 +13,7 @@ export function pwaIconResponse(size: number) {
           display: 'flex',
           alignItems: 'center',
           justifyContent: 'center',
-          background: '#0b1f3a',
+          background: '#08131f',
         }}
       >
         <div
@@ -21,7 +21,7 @@ export function pwaIconResponse(size: number) {
             width: ring,
             height: ring,
             borderRadius: radius,
-            background: '#a8893e',
+            background: '#c48a3c',
             display: 'flex',
             alignItems: 'center',
             justifyContent: 'center',
@@ -32,7 +32,7 @@ export function pwaIconResponse(size: number) {
               width: inner,
               height: inner,
               borderRadius: '50%',
-              background: '#f7f5f1',
+              background: '#f3eee6',
             }}
           />
         </div>

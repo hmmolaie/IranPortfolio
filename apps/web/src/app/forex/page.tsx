@@ -313,7 +313,7 @@ export default function ForexPage() {
           <div className="flex flex-wrap items-center gap-2">
             <h1 className="text-3xl font-bold">آزمایش گراف فارکس</h1>
             <span className="rounded-full bg-gold-400/20 px-2.5 py-0.5 text-xs font-medium text-navy-800">
-              تست جدا از سبدیار
+              تست جدا از پیپ
             </span>
           </div>
           <p className="mt-2 max-w-2xl text-sm leading-7 text-navy-800/70">

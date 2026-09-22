@@ -88,7 +88,7 @@ export function TehranMarketChat() {
       <div className="max-h-80 space-y-3 overflow-y-auto rounded-lg bg-navy-50/60 p-4">
         {chat.length === 0 && !chatBusy && (
           <p className="text-sm text-navy-800/50">
-            هنوز پیامی نیست. مثلاً بپرسید: «فولاد را کدام صندوق‌ها خریده‌اند؟» یا «شاخص کل در دادهٔ سبدیار
+            هنوز پیامی نیست. مثلاً بپرسید: «فولاد را کدام صندوق‌ها خریده‌اند؟» یا «شاخص کل در دادهٔ پیپ
             چند است؟»
           </p>
         )}

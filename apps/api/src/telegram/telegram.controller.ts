@@ -82,6 +82,12 @@ export class TelegramController {
     return this.telegram.testConnection();
   }
 
+  @Post('test-message')
+  @UseGuards(AdminGuard)
+  testMessage(@Req() req: { user: { userId: string } }) {
+    return this.telegram.sendTestToAdmin(req.user.userId);
+  }
+
   @Post('send-today')
   @UseGuards(AdminGuard)
   sendToday(@Body() dto: SendTodayDto) {

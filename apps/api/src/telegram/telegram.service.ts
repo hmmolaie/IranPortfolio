@@ -1,6 +1,7 @@
-import { BadRequestException, Injectable, Logger, OnModuleInit } from '@nestjs/common';
+import { BadRequestException, ForbiddenException, Injectable, Logger, OnModuleInit } from '@nestjs/common';
 import { Cron, Interval } from '@nestjs/schedule';
 import { ConfigService } from '@nestjs/config';
+import { UserRole } from '@prisma/client';
 import { PrismaService } from '../prisma/prisma.service';
 import { decryptSecret, encryptSecret } from '../common/secret-box';
 import { normalizeIranMobile } from '../common/iran-mobile';
@@ -14,6 +15,7 @@ import { WalletService } from '../wallet/wallet.service';
 import { IntelligenceService } from '../intelligence/intelligence.service';
 import { renderPortfolioPiePng } from './pie-chart-png';
 import { fallbackDigestVoiceScript, trimSpokenScript } from './digest-voice';
+import { speechVoiceForModel } from '../llm/tts-voice';
 import {
   DEFAULT_TELEGRAM_BOT_NAME_FA,
   DEFAULT_TELEGRAM_BOT_URL,
@@ -53,8 +55,6 @@ type TelegramUpdate = {
 const CONFIG_ID = 'default';
 const DEFAULT_DIGEST_TTS_MODEL = 'gemini-2.5-pro-preview-tts';
 const TG_API = 'https://api.telegram.org';
-/** فقط صداهای زنانه؛ اگر TTS_VOICE چیز دیگری بود nova استفاده می‌شود */
-const FEMALE_TTS_VOICES = new Set(['nova', 'shimmer', 'coral', 'sage']);
 const DIGEST_TTS_INSTRUCTIONS =
   'Speak as an Iranian woman news presenter. Fluent contemporary Iranian Persian, not Dari. Warm, clear, natural pace. Past-tense reporting. Do not rush; keep the whole briefing under two minutes.';
 
@@ -237,6 +237,35 @@ export class TelegramService implements OnModuleInit {
       botUsername: me.username ?? '',
       botName: me.first_name ?? '',
     };
+  }
+
+  /** یک پیام آزمایشی فقط به چت وصل‌شده با موبایل همین مدیر. لاگ ارسال روزانه و بقیهٔ کاربران دست نمی‌خورند. */
+  async sendTestToAdmin(userId: string) {
+    const token = await this.readToken();
+    if (!token) throw new BadRequestException('ابتدا توکن ربات را ذخیره کنید');
+    const user = await this.prisma.user.findUnique({
+      where: { id: userId },
+      select: {
+        role: true,
+        profile: { select: { mobilePhone: true, telegramChatId: true } },
+      },
+    });
+    if (!user || user.role !== UserRole.ADMIN) throw new ForbiddenException();
+    const mobile = user.profile?.mobilePhone?.trim();
+    if (!mobile) {
+      throw new BadRequestException('ابتدا در پروفایل، شماره موبایل خود را ذخیره کنید.');
+    }
+    const chatId = user.profile?.telegramChatId?.trim();
+    if (!chatId) {
+      throw new BadRequestException(
+        'ربات با این شماره وصل نشده است. ربات را استارت کنید و همان شماره موبایل را در تلگرام به اشتراک بگذارید.',
+      );
+    }
+    await this.tg(token, 'sendMessage', {
+      chat_id: chatId,
+      text: `پیام آزمایشی سبدیار\nاین پیام فقط برای شماره ${mobile} فرستاده شد و برای کاربران دیگر ارسال نمی‌شود.`,
+    });
+    return { ok: true, messageFa: `پیام آزمایشی فقط به شماره ${mobile} فرستاده شد.` };
   }
 
   async unlink(userId: string) {
@@ -768,9 +797,8 @@ export class TelegramService implements OnModuleInit {
     return this.resolveDigestTtsModel(row?.ttsModel);
   }
 
-  private femaleTtsVoice(): string {
-    const configured = (this.config.get<string>('TTS_VOICE') ?? '').trim().toLowerCase();
-    return FEMALE_TTS_VOICES.has(configured) ? configured : 'nova';
+  private femaleTtsVoice(model: string): string {
+    return speechVoiceForModel(model, this.config.get<string>('TTS_VOICE'));
   }
 
   /**
@@ -805,9 +833,10 @@ export class TelegramService implements OnModuleInit {
 
     const adminId = await this.users.getAdminUserId();
     try {
+      const model = await this.digestTtsModel();
       const audio = await this.llm.speakTts(script, adminId ?? undefined, {
-        model: await this.digestTtsModel(),
-        voice: this.femaleTtsVoice(),
+        model,
+        voice: this.femaleTtsVoice(model),
         instructions: DIGEST_TTS_INSTRUCTIONS,
       });
       if (audio?.length) {
