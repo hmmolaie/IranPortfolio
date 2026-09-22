@@ -31,7 +31,7 @@ RUN npm run build -w @sabadyar/shared \
   && npm run build -w @sabadyar/api
 
 FROM node:20-alpine AS runner
-RUN apk add --no-cache libc6-compat openssl wget ffmpeg python3 py3-pip \
+RUN apk add --no-cache libc6-compat openssl wget ffmpeg python3 py3-pip postgresql-client \
   && (pip3 install --break-system-packages --no-cache-dir yt-dlp \
       || pip3 install --no-cache-dir yt-dlp) \
   && mkdir -p /usr/share/fonts/vazirmatn

@@ -636,13 +636,16 @@ model SpotPriceDaily {
   @@index([asOfDate])
 }
 
-/** ساعت به‌روزرسانی اخبار ایران و اقتصاد دنیا به وقت تهران */
+/** ساعت به‌روزرسانی اخبار ایران، اقتصاد دنیا و بازار سهام به وقت تهران */
 model ContentRefreshSchedule {
   id              String   @id @default("default")
   iranNewsHour    Int      @default(8)
   iranNewsMinute  Int      @default(0)
   worldHour       Int      @default(7)
   worldMinute     Int      @default(0)
+  /// پیش‌فرض ۲۲:۰۰ تهران، همان زمان قبلی به‌روزرسانی بازار
+  marketHour      Int      @default(22)
+  marketMinute    Int      @default(0)
   createdAt       DateTime @default(now())
   updatedAt       DateTime @updatedAt
 }

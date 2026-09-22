@@ -179,6 +179,8 @@ export default function SettingsPage() {
     iranNewsMinute: 0,
     worldHour: 7,
     worldMinute: 0,
+    marketHour: 22,
+    marketMinute: 0,
   });
   const [refreshTimeBusy, setRefreshTimeBusy] = useState(false);
   const [refreshTimeFeedback, setRefreshTimeFeedback] = useState<{ ok: boolean; text: string } | null>(null);
@@ -239,12 +241,16 @@ export default function SettingsPage() {
       iranNewsMinute: number;
       worldHour: number;
       worldMinute: number;
+      marketHour?: number;
+      marketMinute?: number;
     }>('/news/schedule');
     setRefreshTimes({
       iranNewsHour: cfg.iranNewsHour ?? 8,
       iranNewsMinute: cfg.iranNewsMinute ?? 0,
       worldHour: cfg.worldHour ?? 7,
       worldMinute: cfg.worldMinute ?? 0,
+      marketHour: cfg.marketHour ?? 22,
+      marketMinute: cfg.marketMinute ?? 0,
     });
   }
 
@@ -457,12 +463,14 @@ export default function SettingsPage() {
         iranNewsMinute: number;
         worldHour: number;
         worldMinute: number;
+        marketHour: number;
+        marketMinute: number;
       }>('/news/schedule', {
         method: 'PUT',
         body: JSON.stringify(refreshTimes),
       });
       setRefreshTimes(saved);
-      const text = 'ساعت به‌روزرسانی اخبار ذخیره شد.';
+      const text = 'ساعت‌های به‌روزرسانی ذخیره شد.';
       setRefreshTimeFeedback({ ok: true, text });
       toast.success(text);
     } catch (err) {
@@ -1755,7 +1763,7 @@ export default function SettingsPage() {
       {tab === 'refreshTimes' && isAdmin && (
         <form onSubmit={saveRefreshTimes} className="card grid max-w-2xl gap-4">
           <p className="text-sm leading-7 text-navy-800/75">
-            ساعت‌ها به وقت تهران است. اگر در همان روز خبر یا اقتصاد دنیا خالی بماند، یک ساعت و دو ساعت
+            ساعت‌ها به وقت تهران است. اگر در همان روز خبر، اقتصاد دنیا یا بازار سهام خالی بماند، یک ساعت و دو ساعت
             بعد دوباره تلاش می‌شود.
           </p>
           <div>
@@ -1783,6 +1791,20 @@ export default function SettingsPage() {
                 const [h, m] = e.target.value.split(':').map(Number);
                 if (!Number.isInteger(h) || !Number.isInteger(m)) return;
                 setRefreshTimes({ ...refreshTimes, worldHour: h, worldMinute: m });
+              }}
+            />
+          </div>
+          <div>
+            <label className="label">ساعت بازار سهام ایران</label>
+            <input
+              className="input max-w-[10rem]"
+              type="time"
+              dir="ltr"
+              value={clockValue(refreshTimes.marketHour, refreshTimes.marketMinute)}
+              onChange={(e) => {
+                const [h, m] = e.target.value.split(':').map(Number);
+                if (!Number.isInteger(h) || !Number.isInteger(m)) return;
+                setRefreshTimes({ ...refreshTimes, marketHour: h, marketMinute: m });
               }}
             />
           </div>

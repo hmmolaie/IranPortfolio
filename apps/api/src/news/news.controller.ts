@@ -25,6 +25,16 @@ class SaveRefreshScheduleDto {
   @Min(0)
   @Max(59)
   worldMinute!: number;
+
+  @IsInt()
+  @Min(0)
+  @Max(23)
+  marketHour!: number;
+
+  @IsInt()
+  @Min(0)
+  @Max(59)
+  marketMinute!: number;
 }
 
 class ListQueryDto {

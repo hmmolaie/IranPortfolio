@@ -19,6 +19,7 @@ import { ForexModule } from './forex/forex.module';
 import { TelegramAssistantModule } from './telegram-assistant/telegram-assistant.module';
 import { WalletModule } from './wallet/wallet.module';
 import { IntelligenceModule } from './intelligence/intelligence.module';
+import { BackupModule } from './backup/backup.module';
 
 @Module({
   imports: [
@@ -41,6 +42,7 @@ import { IntelligenceModule } from './intelligence/intelligence.module';
     ForexModule,
     WalletModule,
     IntelligenceModule,
+    BackupModule,
   ],
   controllers: [HealthController],
 })

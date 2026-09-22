@@ -1,4 +1,4 @@
-import { BadRequestException, Injectable, Logger, NotFoundException, ServiceUnavailableException } from '@nestjs/common';
+import { BadRequestException, Injectable, Logger, NotFoundException, OnModuleInit, ServiceUnavailableException } from '@nestjs/common';
 import { Cron } from '@nestjs/schedule';
 import { AssetType, Prisma, UserRole } from '@prisma/client';
 import { PrismaService } from '../prisma/prisma.service';
@@ -11,6 +11,8 @@ import {
   wantsEqualWeightIndex,
   wantsTotalIndex,
 } from './tehran-chat';
+import { isRefreshSlot, readRefreshSchedule } from '../content-refresh/refresh-schedule';
+import { tehranTimeParts } from '../news/tehran-date';
 
 const UA =
   'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/126.0.0.0 Safari/537.36';
@@ -148,7 +150,7 @@ const MAX_LOOKBACK_CALENDAR_DAYS = 14;
 type IngestRow = Record<string, unknown>;
 
 @Injectable()
-export class MarketService {
+export class MarketService implements OnModuleInit {
   private readonly logger = new Logger(MarketService.name);
   private ingestInFlight = false;
   private indexSnapshotInFlight: Promise<number> | null = null;
@@ -158,15 +160,55 @@ export class MarketService {
     private readonly llm: LlmService,
   ) {}
 
-  /** هر روز ۲۲:۰۰ به وقت ایران ≈ ۱۸:۳۰ UTC */
-  @Cron('0 30 18 * * *')
+  onModuleInit() {
+    setTimeout(() => {
+      void this.catchUpMarketIfDue();
+    }, 25_000);
+  }
+
+  /** هر دقیقه با ساعت ذخیره‌شدهٔ بازار سهام مقایسه می‌شود */
+  @Cron('* * * * *', { timeZone: 'Asia/Tehran', name: 'market-ingest-tick' })
   async scheduledIngest() {
-    this.logger.log('بروزرسانی زمان‌بندی‌شده بازار از TSETMC (۲۲ شب ایران)');
+    const schedule = await readRefreshSchedule(this.prisma);
+    const now = tehranTimeParts();
+    const slot = isRefreshSlot(
+      now.hour * 60 + now.minute,
+      schedule.marketHour * 60 + schedule.marketMinute,
+      true,
+    );
+    if (!slot) return;
+    if (slot === 'retry' && (await this.hasBarsForLatestTradingDay())) return;
+    const label = `${String(schedule.marketHour).padStart(2, '0')}:${String(schedule.marketMinute).padStart(2, '0')}`;
+    this.logger.log(`بروزرسانی زمان‌بندی‌شده بازار از TSETMC (${label} تهران)`);
     try {
       await this.ingestCatchUp();
     } catch (e) {
-      this.logger.error('کرون اینجست بازار ناموفق', e as Error);
+      this.logger.error(`کرون اینجست بازار ناموفق: ${(e as Error).message}`);
     }
+  }
+
+  private async catchUpMarketIfDue() {
+    const schedule = await readRefreshSchedule(this.prisma);
+    const now = tehranTimeParts();
+    if (now.hour * 60 + now.minute < schedule.marketHour * 60 + schedule.marketMinute) return;
+    if (await this.hasBarsForLatestTradingDay()) return;
+    this.logger.log('پس از راه‌اندازی: به‌روزرسانی بازار چون ساعت گذشته و دادهٔ روز نیست');
+    try {
+      await this.ingestCatchUp();
+    } catch (e) {
+      this.logger.error(`به‌روزرسانی بازار پس از راه‌اندازی ناموفق: ${(e as Error).message}`);
+    }
+  }
+
+  private async hasBarsForLatestTradingDay(): Promise<boolean> {
+    const today = toDEven();
+    for (let back = 0; back <= MAX_LOOKBACK_CALENDAR_DAYS; back++) {
+      const day = shiftDEven(today, back);
+      if (isTehranWeekend(day)) continue;
+      const count = await this.prisma.priceBar.count({ where: { tradeDate: dEvenToDate(day) } });
+      return count > 0;
+    }
+    return false;
   }
 
   async listLatest(params: {

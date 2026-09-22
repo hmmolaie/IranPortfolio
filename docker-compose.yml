@@ -60,6 +60,7 @@ services:
       LLM_MODEL_FALLBACKS: ${LLM_MODEL_FALLBACKS:-}
     volumes:
       - sabadyar_uploads:/app/apps/api/uploads
+      - sabadyar_backups:/app/apps/api/backups
     expose:
       - '3001'
     healthcheck:
@@ -135,6 +136,7 @@ services:
 volumes:
   sabadyar_pg:
   sabadyar_uploads:
+  sabadyar_backups:
   sabadyar_certbot:
 
 networks:

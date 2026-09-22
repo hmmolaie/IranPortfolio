@@ -8,6 +8,8 @@ export type ContentRefreshSchedule = {
   iranNewsMinute: number;
   worldHour: number;
   worldMinute: number;
+  marketHour: number;
+  marketMinute: number;
 };
 
 const DEFAULTS: ContentRefreshSchedule = {
@@ -15,6 +17,8 @@ const DEFAULTS: ContentRefreshSchedule = {
   iranNewsMinute: 0,
   worldHour: 7,
   worldMinute: 0,
+  marketHour: 22,
+  marketMinute: 0,
 };
 
 function clock(hour: number | null | undefined, minute: number | null | undefined, fallbackH: number, fallbackM: number) {
@@ -28,11 +32,14 @@ export async function readRefreshSchedule(prisma: PrismaService): Promise<Conten
   const row = await prisma.contentRefreshSchedule.findUnique({ where: { id: CONFIG_ID } });
   const iran = clock(row?.iranNewsHour, row?.iranNewsMinute, DEFAULTS.iranNewsHour, DEFAULTS.iranNewsMinute);
   const world = clock(row?.worldHour, row?.worldMinute, DEFAULTS.worldHour, DEFAULTS.worldMinute);
+  const market = clock(row?.marketHour, row?.marketMinute, DEFAULTS.marketHour, DEFAULTS.marketMinute);
   return {
     iranNewsHour: iran.hour,
     iranNewsMinute: iran.minute,
     worldHour: world.hour,
     worldMinute: world.minute,
+    marketHour: market.hour,
+    marketMinute: market.minute,
   };
 }
 
@@ -48,6 +55,7 @@ export async function saveRefreshSchedule(
 ): Promise<ContentRefreshSchedule> {
   assertClock(data.iranNewsHour, data.iranNewsMinute, 'اخبار ایران');
   assertClock(data.worldHour, data.worldMinute, 'اقتصاد دنیا');
+  assertClock(data.marketHour, data.marketMinute, 'بازار سهام');
   await prisma.contentRefreshSchedule.upsert({
     where: { id: CONFIG_ID },
     create: { id: CONFIG_ID, ...data },

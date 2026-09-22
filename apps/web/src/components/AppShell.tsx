@@ -20,6 +20,7 @@ const allLinks = [
   { href: '/forex', label: 'آزمایش فارکس', adminOnly: true },
   { href: '/admin/users', label: 'مدیریت کاربران', adminOnly: true },
   { href: '/admin/data-health', label: 'سلامت داده', adminOnly: true },
+  { href: '/admin/support', label: 'پشتیبانی', adminOnly: true },
 ];
 
 export function AppShell({ children }: { children: React.ReactNode }) {
