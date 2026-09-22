@@ -60,7 +60,12 @@ jobs:
             # نصب npm موازی روی سرور شبکه را خفه می‌کند و SSH تایم‌اوت می‌شود
             $DC build api
             $DC build web
-            $DC up -d
+            if ! $DC up -d; then
+              echo "==> API did not become healthy"
+              $DC ps -a || true
+              $DC logs --tail=200 api || true
+              exit 1
+            fi
             # nginx IP کانتینر api/web را در شروع resolve می‌کند؛ بعد از recreate باید از نو بالا بیاید
             $DC up -d --force-recreate --no-deps nginx
             $DC ps

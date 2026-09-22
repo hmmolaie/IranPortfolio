@@ -64,15 +64,11 @@ services:
     expose:
       - '3001'
     healthcheck:
-      test:
-        [
-          'CMD-SHELL',
-          "node -e \"fetch('http://127.0.0.1:3001/api/health').then((r)=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))\"",
-        ]
+      test: ['CMD', 'wget', '-qO-', 'http://127.0.0.1:3001/api/health']
       interval: 10s
-      timeout: 5s
+      timeout: 10s
       retries: 18
-      start_period: 90s
+      start_period: 120s
     networks:
       - sabadyar
 

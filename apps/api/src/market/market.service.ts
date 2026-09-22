@@ -163,7 +163,7 @@ export class MarketService implements OnModuleInit {
   onModuleInit() {
     setTimeout(() => {
       void this.catchUpMarketIfDue();
-    }, 25_000);
+    }, 180_000);
   }
 
   /** هر دقیقه با ساعت ذخیره‌شدهٔ بازار سهام مقایسه می‌شود */

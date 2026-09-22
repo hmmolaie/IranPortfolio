@@ -37,7 +37,19 @@ EOF
 
 echo "Applying Prisma schema..."
 cd /app/apps/api
-if ! CI=true npx prisma db push --skip-generate; then
+# قفل advisory اگر از کانتینر قبلی مانده باشد بی‌نهایت منتظر می‌ماند و سلامت API رد می‌شود
+export PGOPTIONS="-c lock_timeout=20s -c statement_timeout=120000"
+push_ok=0
+for attempt in 1 2 3; do
+  if CI=true npx prisma db push --skip-generate; then
+    push_ok=1
+    break
+  fi
+  echo "Prisma db push failed (attempt ${attempt})"
+  sleep 5
+done
+unset PGOPTIONS
+if [ "$push_ok" -ne 1 ]; then
   echo "Prisma db push failed"
   exit 1
 fi
