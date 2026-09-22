@@ -144,31 +144,24 @@ export default function HomePage() {
   }
 
   return (
-    <div className="relative min-h-screen overflow-hidden">
-      <img
-        src="/brand/login-hero.jpg"
-        alt=""
-        className="absolute inset-0 h-full w-full object-cover object-[center_30%]"
-      />
-      <div className="absolute inset-0 bg-gradient-to-t from-[#071018]/88 via-[#071018]/45 to-[#071018]/25" />
-
-      <div className="relative mx-auto grid min-h-screen max-w-6xl items-center gap-10 px-6 py-10 lg:grid-cols-2 lg:gap-16 lg:py-0">
-        <section className="order-2 text-white lg:order-1">
-          <p className="text-xs font-medium tracking-[0.28em] text-gold-400" dir="ltr">
+    <div className="min-h-screen bg-cream">
+      <div className="mx-auto grid min-h-screen max-w-6xl items-center gap-10 px-6 py-10 lg:grid-cols-2 lg:gap-14">
+        <section>
+          <p className="text-xs font-medium tracking-[0.28em] text-gold-500" dir="ltr">
             PIIIP
           </p>
-          <h1 className="mt-4 text-5xl font-bold leading-tight sm:text-6xl">پیپ</h1>
-          <p className="mt-4 max-w-md text-lg leading-9 text-white/90">
+          <h1 className="mt-4 text-5xl font-bold leading-tight text-navy-900 sm:text-6xl">پیپ</h1>
+          <p className="mt-4 max-w-md text-lg leading-9 text-navy-800/80">
             پلتفرم بینش‌های هوشمند سرمایه‌گذاری شخصی
           </p>
-          <p className="mt-2 max-w-md text-sm leading-7 text-white/70" dir="ltr">
+          <p className="mt-2 max-w-md text-sm leading-7 text-navy-800/55" dir="ltr">
             Personal Investment Intelligence Insights Platform
           </p>
 
           <ul className="mt-8 space-y-3">
             {FEATURES.map((item) => (
-              <li key={item} className="flex items-center gap-3 text-sm text-white/85">
-                <span className="flex h-6 w-6 shrink-0 items-center justify-center rounded-full bg-white/10 text-xs text-gold-400">
+              <li key={item} className="flex items-center gap-3 text-sm text-navy-800/80">
+                <span className="flex h-6 w-6 shrink-0 items-center justify-center rounded-full bg-navy-900/8 text-xs text-gold-500">
                   ✓
                 </span>
                 {item}
@@ -176,13 +169,7 @@ export default function HomePage() {
             ))}
           </ul>
 
-          <p className="mt-10 text-xs leading-6 text-white/55">
-            این سرویس ابزار تصمیم‌یار است و جایگزین مشاوره رسمی سرمایه‌گذاری نیست.
-          </p>
-        </section>
-
-        <section className="order-1 lg:order-2">
-          <div className="card mx-auto w-full max-w-md border-white/40 bg-white/92 shadow-[0_24px_64px_-12px_rgba(7,16,24,0.55)]">
+          <div className="card mt-8 w-full max-w-md border-navy-900/8 shadow-soft">
             <div className="mb-6 border-b border-navy-900/8 pb-5">
               <h2 className="text-xl font-semibold text-navy-900">ورود به حساب</h2>
               <p className="mt-1 text-sm text-navy-800/55">
@@ -250,7 +237,19 @@ export default function HomePage() {
               </button>
             </form>
           </div>
+
+          <p className="mt-6 max-w-md text-xs leading-6 text-navy-800/45">
+            این سرویس ابزار تصمیم‌یار است و جایگزین مشاوره رسمی سرمایه‌گذاری نیست.
+          </p>
         </section>
+
+        <figure className="mx-auto w-full max-w-xl overflow-hidden rounded-[1.75rem] border border-navy-900/10 shadow-soft lg:max-w-none">
+          <img
+            src="/brand/login-hero.jpg"
+            alt=""
+            className="aspect-[4/5] w-full object-cover object-[center_20%] sm:aspect-[5/4] lg:aspect-[4/5] lg:max-h-[40rem]"
+          />
+        </figure>
       </div>
 
       {enableOpen && (
