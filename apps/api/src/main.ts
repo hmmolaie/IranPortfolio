@@ -11,10 +11,7 @@ async function bootstrap() {
       .filter(Boolean),
   );
   app.enableCors({
-    origin: (origin, callback) => {
-      if (!origin || allowedOrigins.has(origin)) callback(null, true);
-      else callback(null, false);
-    },
+    origin: [...allowedOrigins],
     credentials: true,
   });
   app.useGlobalPipes(
