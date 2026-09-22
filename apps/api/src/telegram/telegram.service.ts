@@ -1,4 +1,4 @@
-import { BadRequestException, ForbiddenException, Injectable, Logger, OnModuleInit } from '@nestjs/common';
+import { BadRequestException, ForbiddenException, Injectable, Logger, NotFoundException, OnModuleInit, ServiceUnavailableException } from '@nestjs/common';
 import { Cron, Interval } from '@nestjs/schedule';
 import { ConfigService } from '@nestjs/config';
 import { UserRole } from '@prisma/client';
@@ -261,10 +261,16 @@ export class TelegramService implements OnModuleInit {
         'ربات با این شماره وصل نشده است. ربات را استارت کنید و همان شماره موبایل را در تلگرام به اشتراک بگذارید.',
       );
     }
-    await this.tg(token, 'sendMessage', {
-      chat_id: chatId,
-      text: `پیام آزمایشی سبدیار\nاین پیام فقط برای شماره ${mobile} فرستاده شد و برای کاربران دیگر ارسال نمی‌شود.`,
-    });
+    try {
+      await this.tg(token, 'sendMessage', {
+        chat_id: chatId,
+        text: `پیام آزمایشی سبدیار\nاین پیام فقط برای شماره ${mobile} فرستاده شد و برای کاربران دیگر ارسال نمی‌شود.`,
+      });
+    } catch (e) {
+      const detail = telegramFailureText(e);
+      this.logger.warn(`تست پیام ادمین ناموفق: ${detail.slice(0, 300)}`);
+      throw new ServiceUnavailableException(`ارسال به تلگرام ناموفق بود: ${detail}`);
+    }
     return { ok: true, messageFa: `پیام آزمایشی فقط به شماره ${mobile} فرستاده شد.` };
   }
 
@@ -274,6 +280,52 @@ export class TelegramService implements OnModuleInit {
       data: { telegramChatId: null, telegramUsername: null, telegramLinkedAt: null },
     });
     return { ok: true };
+  }
+
+  async listLinkedUsers() {
+    const rows = await this.prisma.userProfile.findMany({
+      where: { telegramChatId: { not: null } },
+      orderBy: { telegramLinkedAt: 'desc' },
+      select: {
+        userId: true,
+        mobilePhone: true,
+        telegramUsername: true,
+        telegramLinkedAt: true,
+        user: { select: { email: true, name: true, isActive: true } },
+      },
+    });
+    return rows.map((row) => ({
+      userId: row.userId,
+      name: row.user.name,
+      email: row.user.email,
+      isActive: row.user.isActive,
+      mobilePhone: row.mobilePhone,
+      telegramUsername: row.telegramUsername,
+      telegramLinkedAt: row.telegramLinkedAt,
+    }));
+  }
+
+  /** اتصال تلگرام یک کاربر را قطع می‌کند؛ حساب سایت دست نمی‌خورد. */
+  async unlinkByAdmin(userId: string) {
+    const profile = await this.prisma.userProfile.findUnique({
+      where: { userId },
+      select: { telegramChatId: true },
+    });
+    const chatId = profile?.telegramChatId?.trim();
+    if (!chatId) throw new NotFoundException('این کاربر به ربات وصل نیست');
+    const token = await this.readToken();
+    if (token) {
+      try {
+        await this.tg(token, 'sendMessage', {
+          chat_id: chatId,
+          text: 'اتصال تلگرام سبدیار توسط مدیر قطع شد. برای وصل دوباره /start را بزنید.',
+        });
+      } catch (e) {
+        this.logger.warn(`اطلاع قطع اتصال به کاربر ناموفق: ${(e as Error).message.slice(0, 160)}`);
+      }
+    }
+    await this.unlink(userId);
+    return { ok: true, messageFa: 'اتصال این کاربر به ربات قطع شد.' };
   }
 
   /** هر دقیقه ساعت تهران را با روزها و ساعت ذخیره‌شده مقایسه می‌کند */
@@ -984,18 +1036,40 @@ export class TelegramService implements OnModuleInit {
   }
 
   private async tg<T>(token: string, method: string, body?: Record<string, unknown>): Promise<T> {
-    const res = await fetch(`${TG_API}/bot${token}/${method}`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify(body ?? {}),
-      signal: AbortSignal.timeout(20_000),
-    });
-    const json = (await res.json()) as { ok?: boolean; result?: T; description?: string };
+    let res: Response;
+    try {
+      res = await fetch(`${TG_API}/bot${token}/${method}`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(body ?? {}),
+        signal: AbortSignal.timeout(20_000),
+      });
+    } catch (e) {
+      const name = e instanceof Error ? e.name : '';
+      if (name === 'TimeoutError' || name === 'AbortError') {
+        throw new Error(`تلگرام در ۲۰ ثانیه پاسخ نداد. متد ${method}`);
+      }
+      throw new Error(`اتصال به تلگرام برقرار نشد. متد ${method}. ${telegramFailureText(e)}`);
+    }
+    const raw = await res.text();
+    let json: { ok?: boolean; result?: T; description?: string };
+    try {
+      json = JSON.parse(raw) as { ok?: boolean; result?: T; description?: string };
+    } catch {
+      throw new Error(`پاسخ تلگرام JSON نبود. متد ${method}. HTTP ${res.status}. ${raw.slice(0, 400)}`);
+    }
     if (!res.ok || !json.ok) {
-      throw new Error(json.description || `خطای تلگرام ${res.status}`);
+      throw new Error(
+        json.description || `خطای تلگرام ${res.status}. متد ${method}. ${raw.slice(0, 400)}`,
+      );
     }
     return json.result as T;
   }
+}
+
+function telegramFailureText(err: unknown): string {
+  const msg = err instanceof Error ? err.message : String(err);
+  return msg.replace(/bot\d+:[A-Za-z0-9_-]+/g, 'bot***').replace(/https?:\/\/\S+/g, '').trim().slice(0, 500);
 }
 
 function escapeHtml(s: string): string {

@@ -164,20 +164,76 @@ function expireAndRedirect() {
   window.location.assign('/');
 }
 
-/** بدنهٔ پاسخ فقط یک بار خوانده می‌شود؛ اگر JSON نبود (مثل خطای nginx) کد وضعیت را نشان می‌دهد */
-async function readErrorMessage(res: Response): Promise<string> {
-  const raw = await res.text().catch(() => '');
-  const body = raw.trim();
-  if (!body) return `پاسخ سرور خطای ${res.status} بود`;
-  try {
-    const j = JSON.parse(body) as { message?: unknown; error?: unknown };
-    if (Array.isArray(j.message)) return j.message.join('، ');
-    if (typeof j.message === 'string' && j.message.trim()) return j.message;
-    if (typeof j.error === 'string' && j.error.trim()) return j.error;
-  } catch {
-    if (!body.startsWith('<')) return body.slice(0, 300);
+export class ApiError extends Error {
+  readonly status: number;
+  /** متن کامل پاسخ، برای صفحهٔ ادمین */
+  readonly detail: string;
+
+  constructor(status: number, summary: string, detail: string) {
+    super(summary);
+    this.name = 'ApiError';
+    this.status = status;
+    this.detail = detail;
   }
-  return `پاسخ سرور خطای ${res.status} بود`;
+}
+
+function statusContext(status: number): string {
+  if (status === 502) {
+    return 'کد ۵۰۲: nginx از سرویس API پاسخ معتبری نگرفت. پروسهٔ API ممکن است قطع شده باشد یا اتصال وسط درخواست بسته شده باشد.';
+  }
+  if (status === 504) {
+    return 'کد ۵۰۴: زمان انتظار nginx برای پاسخ API تمام شد.';
+  }
+  if (status === 500) {
+    return 'کد ۵۰۰: خطای داخلی API.';
+  }
+  return '';
+}
+
+function visibleHtml(html: string): string {
+  return html
+    .replace(/<script[\s\S]*?<\/script>/gi, ' ')
+    .replace(/<style[\s\S]*?<\/style>/gi, ' ')
+    .replace(/<[^>]+>/g, ' ')
+    .replace(/&nbsp;/gi, ' ')
+    .replace(/&amp;/gi, '&')
+    .replace(/&lt;/gi, '<')
+    .replace(/&gt;/gi, '>')
+    .replace(/\s+/g, ' ')
+    .trim();
+}
+
+function jsonSummary(body: { message?: unknown; error?: unknown }): string {
+  if (Array.isArray(body.message)) return body.message.map(String).join('، ');
+  if (typeof body.message === 'string' && body.message.trim()) return body.message.trim();
+  if (typeof body.error === 'string' && body.error.trim()) return body.error.trim();
+  return '';
+}
+
+/** بدنهٔ پاسخ فقط یک بار خوانده می‌شود. خلاصه برای کاربر عادی است و detail متن فنی را نگه می‌دارد. */
+async function readApiError(res: Response): Promise<ApiError> {
+  const raw = (await res.text().catch(() => '')).trim();
+  const context = statusContext(res.status);
+  const summaryFallback = `پاسخ سرور خطای ${res.status} بود`;
+  if (!raw) {
+    const detail = [`HTTP ${res.status}`, context, 'بدنهٔ پاسخ خالی بود.'].filter(Boolean).join('\n');
+    return new ApiError(res.status, summaryFallback, detail);
+  }
+  try {
+    const parsed = JSON.parse(raw) as { message?: unknown; error?: unknown };
+    const summary = jsonSummary(parsed) || summaryFallback;
+    const detail = [`HTTP ${res.status}`, context, raw].filter(Boolean).join('\n');
+    return new ApiError(res.status, summary, detail.slice(0, 8000));
+  } catch {
+    const text = raw.startsWith('<') ? visibleHtml(raw) : raw;
+    const detail = [`HTTP ${res.status}`, context, text || raw].filter(Boolean).join('\n');
+    return new ApiError(res.status, summaryFallback, detail.slice(0, 8000));
+  }
+}
+
+export function adminApiErrorText(err: unknown): string {
+  if (err instanceof ApiError) return err.detail.trim() || err.message;
+  return err instanceof Error ? err.message : 'خطای نامشخص';
 }
 
 export async function api<T>(
@@ -205,7 +261,7 @@ export async function api<T>(
     ) {
       expireAndRedirect();
     }
-    throw new Error(await readErrorMessage(res));
+    throw await readApiError(res);
   }
   if (res.status === 204) return undefined as T;
   return res.json() as Promise<T>;

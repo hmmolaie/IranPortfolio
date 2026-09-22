@@ -4,7 +4,12 @@ import { ConfigService } from '@nestjs/config';
 import { UserRole } from '@prisma/client';
 import { PrismaService } from '../prisma/prisma.service';
 import { transcribeBytes } from '../telegram-assistant/youtube-subs/gapgpt';
-import { speechVoiceForModel } from './tts-voice';
+import {
+  audioSpeechUrl,
+  speechModelAcceptsInstructions,
+  speechModelForBase,
+  speechVoiceForModel,
+} from './tts-voice';
 import { LLM_PROMPT_DEFAULTS, isValidPromptPurpose } from './prompt-defaults';
 import {
   NEWS_LLM_PURPOSES,
@@ -618,37 +623,56 @@ export class LlmService {
     const creds = await this.resolveTtsCredentials(userId);
     const input = text.replace(/\s+/g, ' ').trim().slice(0, 4096);
     if (!input) throw new Error('متن خالی برای گفتار');
-    const model =
+    const requestedModel =
       opts?.model?.trim() || this.config.get<string>('TTS_MODEL') || 'gpt-4o-mini-tts';
+    const model = speechModelForBase(creds.baseUrl, requestedModel);
     const requestedVoice = opts?.voice ?? this.config.get<string>('TTS_VOICE');
     const voice = speechVoiceForModel(model, requestedVoice);
+    if (model !== requestedModel) {
+      this.logger.warn(`مدل گفتار ${requestedModel} با این نشانی سازگار نیست؛ ${model} استفاده شد`);
+    }
     if (requestedVoice && voice !== requestedVoice.trim().toLowerCase()) {
       this.logger.warn(`صدای ${requestedVoice} با مدل ${model} سازگار نیست؛ ${voice} استفاده شد`);
     }
-    const res = await fetch(`${creds.baseUrl}/audio/speech`, {
-      method: 'POST',
-      headers: {
-        Authorization: `Bearer ${creds.apiKey}`,
-        'Content-Type': 'application/json',
-      },
-      body: JSON.stringify({
-        model,
-        voice,
-        input,
-        response_format: 'mp3',
-        instructions:
-          opts?.instructions ?? 'Speak in fluent, clear Persian (Farsi). Natural pace.',
-      }),
-      signal: AbortSignal.timeout(120_000),
-    });
+    const body: Record<string, string> = {
+      model,
+      voice,
+      input,
+      response_format: 'mp3',
+    };
+    if (speechModelAcceptsInstructions(model)) {
+      body.instructions =
+        opts?.instructions ?? 'Speak in fluent, clear Persian (Farsi). Natural pace.';
+    }
+    const url = audioSpeechUrl(creds.baseUrl);
+    let res: Response;
+    try {
+      res = await fetch(url, {
+        method: 'POST',
+        headers: {
+          Authorization: `Bearer ${creds.apiKey}`,
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify(body),
+        signal: AbortSignal.timeout(90_000),
+      });
+    } catch (e) {
+      const name = e instanceof Error ? e.name : '';
+      if (name === 'TimeoutError' || name === 'AbortError') {
+        throw new Error(`پاسخ گفتار نرسید. مدل ${model}`);
+      }
+      throw e;
+    }
     if (!res.ok) {
       const errText = await res.text();
       throw new Error(`خطای TTS: ${res.status} ${errText.slice(0, 240)}`);
     }
-    return Buffer.from(await res.arrayBuffer());
+    const audio = Buffer.from(await res.arrayBuffer());
+    if (audio.length < 64) throw new Error(`پاسخ گفتار خالی بود. مدل ${model}`);
+    return audio;
   }
 
-  /** نشانی و کلید رونویسی. مدل همیشه در کلاینت gapgpt/whisper-1 ثابت است. */
+  /** نشانی و کلید رونویسی. مدل همیشه در کلاینت whisper-1 ثابت است. */
   async transcriptionAccess(userId?: string): Promise<{ baseUrl: string; apiKey: string }> {
     const base = this.config.get<string>('GAPGPT_BASE_URL')?.trim();
     const key = this.config.get<string>('GAPGPT_API_KEY')?.trim();

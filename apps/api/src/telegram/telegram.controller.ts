@@ -1,4 +1,4 @@
-import { Body, Controller, Get, Post, Put, Req, UseGuards } from '@nestjs/common';
+import { Body, Controller, Get, Param, Post, Put, Req, UseGuards } from '@nestjs/common';
 import { IsArray, IsBoolean, IsInt, IsOptional, IsString, Max, Min } from 'class-validator';
 import { TelegramService } from './telegram.service';
 import { JwtAuthGuard } from '../auth/jwt-auth.guard';
@@ -62,6 +62,18 @@ export class TelegramController {
   @Post('unlink')
   unlink(@Req() req: { user: { userId: string } }) {
     return this.telegram.unlink(req.user.userId);
+  }
+
+  @Get('links')
+  @UseGuards(AdminGuard)
+  listLinks() {
+    return this.telegram.listLinkedUsers();
+  }
+
+  @Post('links/:userId/unlink')
+  @UseGuards(AdminGuard)
+  unlinkUser(@Param('userId') userId: string) {
+    return this.telegram.unlinkByAdmin(userId);
   }
 
   @Get('config')

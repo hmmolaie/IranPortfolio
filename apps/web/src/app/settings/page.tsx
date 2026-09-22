@@ -3,7 +3,7 @@
 import { FormEvent, useEffect, useRef, useState } from 'react';
 import { useRouter } from 'next/navigation';
 import clsx from 'clsx';
-import { api, getToken } from '@/lib/api';
+import { adminApiErrorText, api, getToken } from '@/lib/api';
 import { TELEGRAM_BOT_USERNAME } from '@/lib/telegram';
 import { TelegramBotLink } from '@/components/TelegramBotLink';
 import { useToast } from '@/components/Toast';
@@ -20,6 +20,16 @@ type FundDefinition = {
   description?: string | null;
   websiteUrl?: string | null;
   isActive: boolean;
+};
+
+type TelegramLink = {
+  userId: string;
+  name?: string | null;
+  email: string;
+  isActive: boolean;
+  mobilePhone?: string | null;
+  telegramUsername?: string | null;
+  telegramLinkedAt?: string | null;
 };
 
 type LlmPrompt = {
@@ -211,6 +221,7 @@ export default function SettingsPage() {
     deepLink: string | null;
     linked: boolean;
   } | null>(null);
+  const [tgLinks, setTgLinks] = useState<TelegramLink[]>([]);
   const [tgBusy, setTgBusy] = useState(false);
   const [tgFeedback, setTgFeedback] = useState<{ ok: boolean; text: string } | null>(null);
   const [assistForm, setAssistForm] = useState({
@@ -338,6 +349,30 @@ export default function SettingsPage() {
     }
   }
 
+  async function loadTelegramLinks() {
+    try {
+      const list = await api<TelegramLink[]>('/telegram/links');
+      setTgLinks(list);
+    } catch {
+      setTgLinks([]);
+    }
+  }
+
+  async function unlinkTelegramUser(link: TelegramLink) {
+    const label = link.name || link.email;
+    if (!confirm(`اتصال «${label}» به ربات قطع شود؟ پیام روزانه دیگر برای این نفر نمی‌رود.`)) return;
+    setTgBusy(true);
+    try {
+      await api(`/telegram/links/${link.userId}/unlink`, { method: 'POST' });
+      toast.success('اتصال این کاربر به ربات قطع شد.');
+      await Promise.all([loadTelegramConfig(), loadTelegramLinks()]);
+    } catch (err) {
+      toast.error((err as Error).message);
+    } finally {
+      setTgBusy(false);
+    }
+  }
+
   async function loadAssistantConfig() {
     try {
       const c = await api<{
@@ -447,6 +482,7 @@ export default function SettingsPage() {
     }
     if (tab === 'telegram' && isAdmin) {
       loadTelegramConfig().catch(() => undefined);
+      loadTelegramLinks().catch(() => undefined);
     }
     if (tab === 'telegramAssistant' && isAdmin) {
       loadAssistantConfig().catch(() => undefined);
@@ -673,7 +709,7 @@ export default function SettingsPage() {
       setTgFeedback({ ok: true, text });
       toast.success(text);
     } catch (err) {
-      const text = (err as Error).message || 'تست ربات ناموفق بود.';
+      const text = adminApiErrorText(err) || 'تست ربات ناموفق بود.';
       setTgFeedback({ ok: false, text });
       toast.error(text);
     } finally {
@@ -692,7 +728,7 @@ export default function SettingsPage() {
       setTgFeedback({ ok: true, text });
       toast.success(text);
     } catch (err) {
-      const text = (err as Error).message || 'ارسال پیام آزمایشی ناموفق بود.';
+      const text = adminApiErrorText(err) || 'ارسال پیام آزمایشی ناموفق بود.';
       setTgFeedback({ ok: false, text });
       toast.error(text);
     } finally {
@@ -722,7 +758,7 @@ export default function SettingsPage() {
         }
       }
     } catch (err) {
-      const text = (err as Error).message || 'ارسال ناموفق بود.';
+      const text = adminApiErrorText(err) || 'ارسال ناموفق بود.';
       setTgFeedback({ ok: false, text });
       toast.error(text);
     } finally {
@@ -1878,7 +1914,7 @@ export default function SettingsPage() {
               spellCheck={false}
             />
             <p className="mt-1 text-xs leading-6 text-navy-800/55">
-              همین نام برای ساخت فایل صوتی اخبار روزانه استفاده می‌شود.
+              همین نام برای ساخت فایل صوتی اخبار روزانه استفاده می‌شود. اگر نشانی مدل زبانی گپ‌جی‌پی‌تی باشد، مدل Gemini فرستاده نمی‌شود و به‌جای آن مدل سازگار همان سرویس با صدای زنانه می‌رود.
             </p>
           </div>
           <div>
@@ -1986,7 +2022,7 @@ export default function SettingsPage() {
           {tgFeedback && (
             <div
               className={clsx(
-                'rounded-lg px-3 py-3 text-sm leading-7',
+                'whitespace-pre-wrap break-words rounded-lg px-3 py-3 text-sm leading-7',
                 tgFeedback.ok ? 'bg-emerald-50 text-emerald-900' : 'bg-red-50 text-red-800',
               )}
               role={tgFeedback.ok ? 'status' : 'alert'}
@@ -1996,6 +2032,59 @@ export default function SettingsPage() {
             </div>
           )}
         </form>
+      )}
+
+      {tab === 'telegram' && isAdmin && (
+        <section className="card max-w-4xl overflow-x-auto p-0">
+          <div className="px-4 py-4">
+            <h2 className="text-lg font-semibold">کاربران وصل‌شده به ربات</h2>
+            <p className="mt-1 text-sm leading-7 text-navy-800/70">
+              قطع اتصال فقط دریافت پیام روزانه را برای همان نفر متوقف می‌کند. حساب سایت حذف نمی‌شود.
+            </p>
+          </div>
+          <table className="min-w-full text-sm">
+            <thead className="bg-navy-900 text-white">
+              <tr>
+                <th className="px-4 py-3 text-start font-medium">نام</th>
+                <th className="px-4 py-3 text-start font-medium">نام کاربری</th>
+                <th className="px-4 py-3 text-start font-medium">موبایل</th>
+                <th className="px-4 py-3 text-start font-medium">تلگرام</th>
+                <th className="px-4 py-3 text-start font-medium">تاریخ اتصال</th>
+                <th className="px-4 py-3 text-start font-medium">عملیات</th>
+              </tr>
+            </thead>
+            <tbody>
+              {tgLinks.map((link) => (
+                <tr key={link.userId} className="border-b border-navy-900/5 odd:bg-white even:bg-navy-50/40">
+                  <td className="px-4 py-3 font-medium">{link.name || '—'}</td>
+                  <td className="px-4 py-3">{link.email}</td>
+                  <td className="px-4 py-3" dir="ltr">
+                    {link.mobilePhone || '—'}
+                  </td>
+                  <td className="px-4 py-3" dir="ltr">
+                    {link.telegramUsername ? `@${link.telegramUsername}` : '—'}
+                  </td>
+                  <td className="px-4 py-3 text-navy-800/70">
+                    {link.telegramLinkedAt ? formatShamsiDate(link.telegramLinkedAt) : '—'}
+                  </td>
+                  <td className="px-4 py-3">
+                    <button
+                      type="button"
+                      className="text-xs text-red-700 hover:underline"
+                      disabled={tgBusy}
+                      onClick={() => unlinkTelegramUser(link)}
+                    >
+                      قطع اتصال
+                    </button>
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+          {tgLinks.length === 0 && (
+            <p className="p-6 text-sm text-navy-800/60">کسی به ربات وصل نیست.</p>
+          )}
+        </section>
       )}
 
       {tab === 'telegramAssistant' && isAdmin && (

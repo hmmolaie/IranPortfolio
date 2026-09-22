@@ -13,6 +13,9 @@ type AppUser = {
   name?: string | null;
   createdAt: string;
   isActive: boolean;
+  mobilePhone?: string | null;
+  telegramLinked?: boolean;
+  telegramUsername?: string | null;
 };
 
 type EditMode = 'edit' | 'password' | null;
@@ -127,6 +130,20 @@ export default function AdminUsersPage() {
     }
   }
 
+  async function unlinkTelegram(user: AppUser) {
+    if (!confirm(`اتصال «${user.name || user.email}» به ربات تلگرام قطع شود؟`)) return;
+    setLoading(true);
+    try {
+      await api(`/telegram/links/${user.id}/unlink`, { method: 'POST' });
+      await loadUsers();
+      toast.success('اتصال این کاربر به ربات قطع شد.');
+    } catch (err) {
+      toast.error((err as Error).message);
+    } finally {
+      setLoading(false);
+    }
+  }
+
   async function toggleActive(user: AppUser) {
     const next = !user.isActive;
     const label = next ? 'فعال' : 'غیرفعال';
@@ -151,7 +168,7 @@ export default function AdminUsersPage() {
     <div className="space-y-8">
       <div>
         <h1 className="text-3xl font-bold">مدیریت کاربران</h1>
-        <p className="mt-2 text-navy-800/70">ایجاد، ویرایش، تغییر رمز و غیرفعال‌سازی کاربران</p>
+        <p className="mt-2 text-navy-800/70">ایجاد، ویرایش، تغییر رمز، غیرفعال‌سازی و قطع اتصال ربات تلگرام</p>
       </div>
 
       <section className="card overflow-x-auto p-0">
@@ -162,6 +179,7 @@ export default function AdminUsersPage() {
               <th className="px-4 py-3 text-start font-medium">نام کاربری</th>
               <th className="px-4 py-3 text-start font-medium">تاریخ ایجاد</th>
               <th className="px-4 py-3 text-start font-medium">وضعیت</th>
+              <th className="px-4 py-3 text-start font-medium">ربات تلگرام</th>
               <th className="px-4 py-3 text-start font-medium">عملیات</th>
             </tr>
           </thead>
@@ -190,6 +208,17 @@ export default function AdminUsersPage() {
                   </span>
                 </td>
                 <td className="px-4 py-3">
+                  {u.telegramLinked ? (
+                    <span className="text-emerald-800">
+                      وصل
+                      {u.telegramUsername ? ` (@${u.telegramUsername})` : ''}
+                      {u.mobilePhone ? ` — ${u.mobilePhone}` : ''}
+                    </span>
+                  ) : (
+                    <span className="text-navy-800/50">وصل نیست</span>
+                  )}
+                </td>
+                <td className="px-4 py-3">
                   <div className="flex flex-wrap gap-2">
                     <button
                       type="button"
@@ -216,6 +245,16 @@ export default function AdminUsersPage() {
                     >
                       {u.isActive ? 'غیرفعال' : 'فعال‌سازی'}
                     </button>
+                    {u.telegramLinked && (
+                      <button
+                        type="button"
+                        className="text-xs text-red-700 hover:underline"
+                        onClick={() => unlinkTelegram(u)}
+                        disabled={loading}
+                      >
+                        قطع اتصال ربات
+                      </button>
+                    )}
                   </div>
                 </td>
               </tr>

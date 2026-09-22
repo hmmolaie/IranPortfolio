@@ -2,8 +2,8 @@ import * as fs from 'fs/promises';
 import { TranscriptionError } from './errors';
 import { PermanentHttpError, ProcessTimedOut, withRetry } from './spawn';
 
-/** مدل رونویسی ثابت است و از محیط خوانده نمی‌شود */
-export const GAPGPT_TRANSCRIPTION_MODEL = 'gapgpt/whisper-1';
+/** مدل رونویسی GapGPT؛ همان مقدار راهنمای audio/transcriptions */
+export const GAPGPT_TRANSCRIPTION_MODEL = 'whisper-1';
 
 export type TranscriptPiece = { start: number; end: number; text: string };
 

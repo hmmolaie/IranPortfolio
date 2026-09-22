@@ -22,8 +22,8 @@ export class UsersService {
     });
   }
 
-  listForAdmin() {
-    return this.prisma.user.findMany({
+  async listForAdmin() {
+    const rows = await this.prisma.user.findMany({
       where: { role: UserRole.USER },
       orderBy: { createdAt: 'desc' },
       select: {
@@ -32,9 +32,21 @@ export class UsersService {
         name: true,
         createdAt: true,
         isActive: true,
-        profile: { select: { mobilePhone: true, telegramChatId: true } },
+        profile: {
+          select: { mobilePhone: true, telegramChatId: true, telegramUsername: true },
+        },
       },
     });
+    return rows.map((row) => ({
+      id: row.id,
+      email: row.email,
+      name: row.name,
+      createdAt: row.createdAt,
+      isActive: row.isActive,
+      mobilePhone: row.profile?.mobilePhone ?? null,
+      telegramLinked: Boolean(row.profile?.telegramChatId),
+      telegramUsername: row.profile?.telegramUsername ?? null,
+    }));
   }
 
   async getAdminUserId(): Promise<string | null> {
