@@ -218,9 +218,10 @@ export default function SettingsPage() {
     configured: boolean;
     botNameFa: string;
     botUsername: string;
-    deepLink: string | null;
-    linked: boolean;
-  } | null>(null);
+        deepLink: string | null;
+        linked: boolean;
+        linkedOnThisAccount?: boolean;
+      } | null>(null);
   const [tgLinks, setTgLinks] = useState<TelegramLink[]>([]);
   const [tgBusy, setTgBusy] = useState(false);
   const [tgFeedback, setTgFeedback] = useState<{ ok: boolean; text: string } | null>(null);
@@ -303,6 +304,7 @@ export default function SettingsPage() {
         botUsername: string;
         deepLink: string | null;
         linked: boolean;
+        linkedOnThisAccount?: boolean;
       }>('/telegram/me');
       setTgMe(s);
     } catch {
@@ -1235,6 +1237,11 @@ export default function SettingsPage() {
                   وضعیت اتصال:{' '}
                   <strong>{tgMe.linked ? 'وصل شده' : 'هنوز وصل نشده'}</strong>
                 </p>
+                {tgMe.linked && tgMe.linkedOnThisAccount === false && (
+                  <p className="text-sm leading-7 text-navy-800/70">
+                    همین شماره در حساب دیگری به ربات وصل است. پیام آزمایشی به همان چت تلگرام می‌رود.
+                  </p>
+                )}
                 {tgMe.linked && (
                   <button
                     type="button"

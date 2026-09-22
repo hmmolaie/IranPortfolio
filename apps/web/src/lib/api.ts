@@ -241,7 +241,8 @@ export async function api<T>(
   options: RequestInit & { auth?: boolean } = {},
 ): Promise<T> {
   const headers = new Headers(options.headers);
-  if (!(options.body instanceof FormData)) {
+  const hasJsonBody = options.body != null && options.body !== '' && !(options.body instanceof FormData);
+  if (hasJsonBody) {
     headers.set('Content-Type', 'application/json');
   }
   if (options.auth !== false) {

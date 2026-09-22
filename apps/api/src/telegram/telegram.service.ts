@@ -150,6 +150,9 @@ export class TelegramService implements OnModuleInit {
   async getUserStatus(userId: string) {
     const row = await this.prisma.telegramBotConfig.findUnique({ where: { id: CONFIG_ID } });
     const profile = await this.prisma.userProfile.findUnique({ where: { userId } });
+    const sharedLink = profile?.telegramChatId
+      ? null
+      : await this.chatForMobile(profile?.mobilePhone);
     const username = this.resolveBotUsername(row?.botUsername);
     const configured = Boolean(row?.botTokenEncrypted && row.enabled !== false);
     return {
@@ -159,8 +162,9 @@ export class TelegramService implements OnModuleInit {
       botUsername: username,
       deepLink: this.botDeepLink(),
       mobilePhone: profile?.mobilePhone ?? null,
-      linked: Boolean(profile?.telegramChatId),
-      telegramUsername: profile?.telegramUsername ?? null,
+      linked: Boolean(profile?.telegramChatId) || Boolean(sharedLink?.telegramChatId),
+      linkedOnThisAccount: Boolean(profile?.telegramChatId),
+      telegramUsername: profile?.telegramUsername ?? sharedLink?.telegramUsername ?? null,
       ...this.scheduleFrom(row),
     };
   }
@@ -255,7 +259,10 @@ export class TelegramService implements OnModuleInit {
     if (!mobile) {
       throw new BadRequestException('ابتدا در پروفایل، شماره موبایل خود را ذخیره کنید.');
     }
-    const chatId = user.profile?.telegramChatId?.trim();
+    const shared = user.profile?.telegramChatId?.trim()
+      ? null
+      : await this.chatForMobile(mobile);
+    const chatId = user.profile?.telegramChatId?.trim() || shared?.telegramChatId?.trim();
     if (!chatId) {
       throw new BadRequestException(
         'ربات با این شماره وصل نشده است. ربات را استارت کنید و همان شماره موبایل را در تلگرام به اشتراک بگذارید.',
@@ -275,8 +282,13 @@ export class TelegramService implements OnModuleInit {
   }
 
   async unlink(userId: string) {
-    await this.prisma.userProfile.updateMany({
+    const profile = await this.prisma.userProfile.findUnique({
       where: { userId },
+      select: { mobilePhone: true },
+    });
+    const mobile = normalizeIranMobile(profile?.mobilePhone ?? '');
+    await this.prisma.userProfile.updateMany({
+      where: mobile ? { mobilePhone: mobile } : { userId },
       data: { telegramChatId: null, telegramUsername: null, telegramLinkedAt: null },
     });
     return { ok: true };
@@ -1008,7 +1020,21 @@ export class TelegramService implements OnModuleInit {
   private async findProfileByMobile(phone: string) {
     const normalized = normalizeIranMobile(phone);
     if (!normalized) return null;
-    return this.prisma.userProfile.findFirst({ where: { mobilePhone: normalized } });
+    return this.prisma.userProfile.findFirst({
+      where: { mobilePhone: normalized },
+      orderBy: { telegramLinkedAt: 'desc' },
+    });
+  }
+
+  /** اگر همین حساب وصل نباشد، اتصال همان شماره روی حساب دیگر را برمی‌گرداند */
+  private async chatForMobile(mobile: string | null | undefined) {
+    const normalized = normalizeIranMobile(mobile ?? '');
+    if (!normalized) return null;
+    return this.prisma.userProfile.findFirst({
+      where: { mobilePhone: normalized, telegramChatId: { not: null } },
+      orderBy: { telegramLinkedAt: 'desc' },
+      select: { telegramChatId: true, telegramUsername: true },
+    });
   }
 
   private async readToken(): Promise<string | null> {
