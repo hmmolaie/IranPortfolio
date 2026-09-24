@@ -57,6 +57,35 @@ export function speechModelAcceptsInstructions(model: string): boolean {
   return !/^tts-1(-hd)?$/i.test(model.trim());
 }
 
+/** متن بلند را برای پروکسی‌هایی که روی یک درخواست طولانی جواب نمی‌دهند کوتاه می‌کند. */
+export function splitSpeechInput(text: string, maxChars: number): string[] {
+  const clean = text.replace(/\s+/g, ' ').trim();
+  if (!clean) return [];
+  if (clean.length <= maxChars) return [clean];
+  const parts: string[] = [];
+  let rest = clean;
+  while (rest) {
+    if (rest.length <= maxChars) {
+      parts.push(rest);
+      break;
+    }
+    const window = rest.slice(0, maxChars);
+    const marks = ['؟', '!', '.', '؛', '،'];
+    let cut = -1;
+    for (const mark of marks) {
+      const at = window.lastIndexOf(mark);
+      if (at > cut) cut = at;
+    }
+    if (cut < Math.floor(maxChars * 0.45)) {
+      const space = window.lastIndexOf(' ');
+      cut = space > 40 ? space : maxChars - 1;
+    }
+    parts.push(rest.slice(0, cut + 1).trim());
+    rest = rest.slice(cut + 1).trim();
+  }
+  return parts.filter(Boolean);
+}
+
 export function audioSpeechUrl(baseUrl: string): string {
   const trimmed = baseUrl.trim().replace(/\/+$/, '');
   if (/\/v1$/i.test(trimmed)) return `${trimmed}/audio/speech`;

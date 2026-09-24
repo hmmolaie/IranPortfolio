@@ -27,7 +27,7 @@ export function buildFfmpegArgs(input: string, output: string, style: SubtitleSt
     'BackColour=&H80000000',
     'WrapStyle=0',
   ].join(',');
-  const vf = `subtitles='${srt}':fontsdir='${fonts}':force_style='${force}'`;
+  const vf = `subtitles='${srt}':charenc=UTF-8:fontsdir='${fonts}':force_style='${force}'`;
   return [
     '-y',
     '-i',

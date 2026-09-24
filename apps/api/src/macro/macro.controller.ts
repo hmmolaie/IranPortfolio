@@ -86,6 +86,7 @@ export class MacroController {
       usdIrr: spot?.usdIrr ?? macro?.usdIrr ?? null,
       goldGramRial: spot?.goldGramRial ?? null,
       spotDateKey: spot?.dateKey ?? null,
+      spotUpdatedAt: spot?.updatedAt ?? null,
       sourceNoteFa: spot && 'sourceNoteFa' in spot ? spot.sourceNoteFa : null,
     };
   }

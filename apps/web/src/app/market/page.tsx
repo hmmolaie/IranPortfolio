@@ -111,6 +111,9 @@ function IndexSparkline({ index, onOpen }: { index: MarketIndex; onOpen?: () => 
         <div className="text-[11px] text-navy-800/55">{index.nameFa}</div>
         <div className="mt-0.5 text-base font-semibold tabular-nums leading-6 text-navy-900">
           {formatIndexValue(index.lastValue, index.unit)}
+          {index.unit === 'usd' && index.lastValue != null && (
+            <span className="ms-1 text-[11px] font-medium text-navy-800/55">دلار</span>
+          )}
         </div>
         {pct && (
           <div className={clsx('text-[11px] font-medium', up ? 'text-emerald-700' : 'text-red-700')}>

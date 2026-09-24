@@ -1,10 +1,12 @@
 import { BadRequestException, Injectable, Logger } from '@nestjs/common';
 import { Interval } from '@nestjs/schedule';
 import { ConfigService } from '@nestjs/config';
+import { UserRole } from '@prisma/client';
 import { PrismaService } from '../prisma/prisma.service';
 import { LlmService } from '../llm/llm.service';
 import { UsersService } from '../users/users.service';
 import { decryptSecret, encryptSecret } from '../common/secret-box';
+import { normalizeIranMobile } from '../common/iran-mobile';
 import { extractHttpUrls, explicitLanguage, fetchWebPage, wantsSummary } from './page-fetch';
 import {
   downloadYoutubeAudio,
@@ -15,6 +17,7 @@ import {
 import { extractPdfContent } from './pdf-extract';
 import { buildRtlPdf } from './pdf-rtl-build';
 import { runYoutubeSubtitleJob } from './youtube-subs/pipeline';
+import { describeError } from './youtube-subs/errors';
 import * as fs from 'fs/promises';
 
 type TgUser = { id: number };
@@ -403,28 +406,80 @@ export class TelegramAssistantService {
   }
 
   private async handleYoutubeVideo(token: string, chatId: string, videoId: string) {
-    await this.sendText(token, chatId, '🔗 لینک دریافت شد');
-    const adminId = (await this.users.getAdminUserId()) ?? undefined;
-    const access = await this.llm.transcriptionAccess(adminId);
-    const result = await runYoutubeSubtitleJob({
-      videoId,
-      transcribeBaseUrl: access.baseUrl,
-      transcribeApiKey: access.apiKey,
-      translate: (system, user) =>
-        this.llm.chatText('telegram_assistant_youtube_subs', system, user, adminId),
-      onStep: async (text) => {
-        await this.sendText(token, chatId, text);
-      },
-      log: (line) => this.logger.log(line.replace(/sk-[A-Za-z0-9_-]+/g, 'sk-***')),
-    });
     try {
-      this.logger.log(`[job=${result.jobId}] Upload started`);
-      await this.sendText(token, chatId, '📤 در حال ارسال...');
-      const buf = await fs.readFile(result.finalPath);
-      await this.sendVideo(token, chatId, buf, 'video-fa.mp4', 'ویدئو با زیرنویس فارسی آماده است.');
-      this.logger.log(`[job=${result.jobId}] Job completed`);
-    } finally {
-      await result.cleanup();
+      await this.sendText(token, chatId, '🔗 لینک دریافت شد');
+      const adminId = (await this.users.getAdminUserId()) ?? undefined;
+      const access = await this.llm.transcriptionAccess(adminId);
+      const result = await runYoutubeSubtitleJob({
+        videoId,
+        transcribeBaseUrl: access.baseUrl,
+        transcribeApiKey: access.apiKey,
+        translate: (system, user) =>
+          this.llm.chatText('telegram_assistant_youtube_subs', system, user, adminId),
+        onStep: async (text) => {
+          await this.sendText(token, chatId, text);
+        },
+        log: (line) => this.logger.log(redactSecrets(line)),
+      });
+      try {
+        this.logger.log(`[job=${result.jobId}] Upload started`);
+        await this.sendText(token, chatId, '📤 در حال ارسال...');
+        const buf = await fs.readFile(result.finalPath);
+        await this.sendVideo(token, chatId, buf, 'video-fa.mp4', 'ویدئو با زیرنویس فارسی آماده است.');
+        this.logger.log(`[job=${result.jobId}] Job completed`);
+      } finally {
+        await result.cleanup();
+      }
+    } catch (e) {
+      await this.notifyAdminJobError(videoId, e);
+      const headline = e instanceof Error ? e.message.split('\n')[0].slice(0, 280) : 'انجام این درخواست ممکن نشد.';
+      throw new Error(headline);
+    }
+  }
+
+  private async notifyAdminJobError(videoId: string, error: unknown) {
+    const text = redactSecrets(
+      [`خطای زیرنویس فارسی یوتیوب در دستیار تلگرام`, `شناسه ویدئو: ${videoId}`, describeError(error)].join('\n\n'),
+    );
+    this.logger.error(text.slice(0, 4000));
+    try {
+      const botToken = await this.readDigestBotToken();
+      const adminChatId = await this.adminLinkedChatId();
+      if (!botToken || !adminChatId) {
+        this.logger.warn('متن کامل خطا به ادمین نرسید: توکن ربات سبدیار یا چت وصل‌شدهٔ ادمین نیست');
+        return;
+      }
+      await this.sendText(botToken, adminChatId, text);
+    } catch (sendErr) {
+      this.logger.warn(`ارسال خطای یوتیوب به ادمین ناموفق: ${(sendErr as Error).message.slice(0, 300)}`);
+    }
+  }
+
+  private async adminLinkedChatId(): Promise<string | null> {
+    const admin = await this.prisma.user.findFirst({
+      where: { role: UserRole.ADMIN },
+      select: { profile: { select: { mobilePhone: true, telegramChatId: true } } },
+    });
+    const own = admin?.profile?.telegramChatId?.trim();
+    if (own) return own;
+    const mobile = normalizeIranMobile(admin?.profile?.mobilePhone ?? '');
+    if (!mobile) return null;
+    const shared = await this.prisma.userProfile.findFirst({
+      where: { mobilePhone: mobile, telegramChatId: { not: null } },
+      orderBy: { telegramLinkedAt: 'desc' },
+      select: { telegramChatId: true },
+    });
+    return shared?.telegramChatId?.trim() || null;
+  }
+
+  private async readDigestBotToken(): Promise<string | null> {
+    const row = await this.prisma.telegramBotConfig.findUnique({ where: { id: 'default' } });
+    if (!row?.botTokenEncrypted) return null;
+    try {
+      return decryptSecret(this.encKey(), row.botTokenEncrypted);
+    } catch {
+      this.logger.error('رمزگشایی توکن ربات سبدیار برای گزارش خطا ناموفق بود');
+      return null;
     }
   }
 
@@ -534,6 +589,14 @@ function splitForTts(text: string): string[] {
     rest = rest.slice(cut).trim();
   }
   return parts;
+}
+
+function redactSecrets(text: string): string {
+  return text
+    .replace(/bot\d+:[A-Za-z0-9_-]+/gi, 'bot***')
+    .replace(/sk-[A-Za-z0-9_-]+/g, 'sk-***')
+    .replace(/Bearer\s+[A-Za-z0-9._~+/-]+=*/gi, 'Bearer ***')
+    .replace(/([?&]key=)[^&\s]+/gi, '$1***');
 }
 
 function splitTelegram(text: string): string[] {

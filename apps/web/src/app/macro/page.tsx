@@ -5,7 +5,7 @@ import Link from 'next/link';
 import { useRouter } from 'next/navigation';
 import { api, formatNum, formatRial, getToken } from '@/lib/api';
 import { useToast } from '@/components/Toast';
-import { formatShamsiDate } from '@/lib/shamsi-date';
+import { formatShamsiDate, formatShamsiDateTime } from '@/lib/shamsi-date';
 
 type Macro = {
   inflationPct?: number | null;
@@ -17,6 +17,7 @@ type Macro = {
   geoRiskScore?: number | null;
   summaryFa?: string | null;
   spotDateKey?: string | null;
+  spotUpdatedAt?: string | null;
   sourceNoteFa?: string | null;
 };
 
@@ -147,18 +148,28 @@ export default function MacroPage() {
           <h1 className="text-3xl font-bold">اقتصاد ایران</h1>
           <p className="mt-2 text-navy-800/70">تورم، نرخ بهره، ارز، طلا و ریسک ژئوپلیتیک برای زمینه پیشنهاد سبد</p>
         </div>
-        <div className="flex flex-wrap gap-2">
-          <button
-            type="button"
-            className="btn-primary"
-            onClick={refreshSpot}
-            disabled={spotBusy}
-          >
-            {spotBusy ? 'در حال به‌روزرسانی...' : 'به‌روزرسانی دلار و طلا'}
-          </button>
-          <Link href="/macro/prices" className="btn-secondary">
-            روند قیمت دلار و طلا
-          </Link>
+        <div className="flex flex-col items-start gap-2">
+          <div className="flex flex-wrap gap-2">
+            <button
+              type="button"
+              className="btn-primary"
+              onClick={refreshSpot}
+              disabled={spotBusy}
+            >
+              {spotBusy ? 'در حال به‌روزرسانی...' : 'به‌روزرسانی دلار و طلا'}
+            </button>
+            <Link href="/macro/prices" className="btn-secondary">
+              روند قیمت دلار و طلا
+            </Link>
+          </div>
+          <p className="text-xs text-navy-800/55">
+            آخرین به‌روزرسانی:{' '}
+            {macro?.spotUpdatedAt
+              ? formatShamsiDateTime(macro.spotUpdatedAt)
+              : macro?.spotDateKey
+                ? formatShamsiDate(macro.spotDateKey)
+                : '—'}
+          </p>
         </div>
       </div>
 

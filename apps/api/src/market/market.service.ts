@@ -118,7 +118,7 @@ function tradeDateKey(d: Date): string {
   return d.toISOString().slice(0, 10);
 }
 
-/** شاخص دلاری = امتیاز شاخص ÷ (دلار آزاد به تومان). usdIrr به ریال است. */
+/** شاخص دلاری = امتیاز شاخص ÷ نرخ فعلی دلار آزاد به تومان. usdIrr به ریال است. */
 function indexPointsToUsd(points: number, usdIrr: number): number | null {
   const toman = usdIrr / 10;
   if (!(points > 0) || !(toman > 0)) return null;
@@ -135,6 +135,10 @@ function usdIrrOnOrBefore(
     found = row.usdIrr;
   }
   return found;
+}
+
+function currentUsdIrr(rates: Array<{ dateKey: string; usdIrr: number }>): number | null {
+  return rates.length ? rates[rates.length - 1].usdIrr : null;
 }
 
 /** پنجشنبه و جمعه بورس تهران تعطیل است */
@@ -996,7 +1000,7 @@ export class MarketService implements OnModuleInit {
     return upserted;
   }
 
-  /** شاخص کل و هم‌وزن را بر دلار آزاد همان روز تقسیم و مثل خود شاخص ذخیره می‌کند. */
+  /** شاخص کل و هم‌وزن را بر دلار آزاد تقسیم و مثل خود شاخص ذخیره می‌کند. آخرین روز همیشه بر نرخ فعلی دلار است. */
   private async syncUsdIndexBars(mode: 'all' | 'latest'): Promise<number> {
     const spots = await this.prisma.spotPriceDaily.findMany({
       where: { usdIrr: { gt: 0 } },
@@ -1041,10 +1045,14 @@ export class MarketService implements OnModuleInit {
         },
       });
 
+      const newestMs = bars[bars.length - 1]?.tradeDate.getTime();
       for (const bar of bars) {
         const points = bar.closePrice ?? bar.lastPrice;
         if (points == null || !(points > 0)) continue;
-        const usdIrr = usdIrrOnOrBefore(rates, tradeDateKey(bar.tradeDate));
+        const useCurrentRate = bar.tradeDate.getTime() === newestMs;
+        const usdIrr = useCurrentRate
+          ? currentUsdIrr(rates)
+          : usdIrrOnOrBefore(rates, tradeDateKey(bar.tradeDate));
         const usdValue = usdIrr == null ? null : indexPointsToUsd(points, usdIrr);
         if (usdValue == null) continue;
         await this.prisma.priceBar.upsert({

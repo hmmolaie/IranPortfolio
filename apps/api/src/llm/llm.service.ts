@@ -6,8 +6,10 @@ import { PrismaService } from '../prisma/prisma.service';
 import { transcribeBytes } from '../telegram-assistant/youtube-subs/gapgpt';
 import {
   audioSpeechUrl,
+  isGapGptBase,
   speechModelAcceptsInstructions,
   speechModelForBase,
+  splitSpeechInput,
   speechVoiceForModel,
 } from './tts-voice';
 import { LLM_PROMPT_DEFAULTS, isValidPromptPurpose } from './prompt-defaults';
@@ -634,41 +636,84 @@ export class LlmService {
     if (requestedVoice && voice !== requestedVoice.trim().toLowerCase()) {
       this.logger.warn(`صدای ${requestedVoice} با مدل ${model} سازگار نیست؛ ${voice} استفاده شد`);
     }
-    const body: Record<string, string> = {
-      model,
-      voice,
-      input,
-      response_format: 'mp3',
-    };
-    if (speechModelAcceptsInstructions(model)) {
-      body.instructions =
-        opts?.instructions ?? 'Speak in fluent, clear Persian (Farsi). Natural pace.';
-    }
+    const instructions = speechModelAcceptsInstructions(model)
+      ? (opts?.instructions ?? 'Speak in fluent, clear Persian (Farsi). Natural pace.')
+      : undefined;
     const url = audioSpeechUrl(creds.baseUrl);
+    const maxChunk = isGapGptBase(creds.baseUrl) ? 400 : 4096;
+    const chunks = splitSpeechInput(input, maxChunk);
+    const pieces: Buffer[] = [];
+    for (const chunk of chunks) {
+      pieces.push(await this.requestSpeech(url, creds.apiKey, model, voice, chunk, instructions));
+    }
+    return Buffer.concat(pieces);
+  }
+
+  private async requestSpeech(
+    url: string,
+    apiKey: string,
+    model: string,
+    voice: string,
+    input: string,
+    instructions?: string,
+  ): Promise<Buffer> {
+    const attempts = [{ model, voice, instructions }];
+    if (model !== 'tts-1') {
+      attempts.push({ model: 'tts-1', voice: 'nova', instructions: undefined });
+    } else {
+      attempts.push({ model, voice, instructions });
+    }
+    let last: unknown;
+    for (let i = 0; i < attempts.length; i += 1) {
+      const attempt = attempts[i];
+      try {
+        return await this.postSpeech(url, apiKey, attempt.model, attempt.voice, input, attempt.instructions);
+      } catch (e) {
+        last = e;
+        const retry = isSpeechTimeout(e) || (e instanceof Error && /خطای TTS: 5\d\d/.test(e.message));
+        if (!retry || i === attempts.length - 1) break;
+        this.logger.warn(`گفتار ${attempt.model} ناموفق؛ تلاش بعدی. ${e instanceof Error ? e.message.slice(0, 180) : ''}`);
+      }
+    }
+    throw last instanceof Error ? last : new Error(String(last));
+  }
+
+  private async postSpeech(
+    url: string,
+    apiKey: string,
+    model: string,
+    voice: string,
+    input: string,
+    instructions?: string,
+  ): Promise<Buffer> {
+    const body: Record<string, string> = { model, voice, input };
+    if (instructions && speechModelAcceptsInstructions(model)) body.instructions = instructions;
+    const where = speechEndpointLabel(url);
     let res: Response;
     try {
       res = await fetch(url, {
         method: 'POST',
         headers: {
-          Authorization: `Bearer ${creds.apiKey}`,
+          Authorization: `Bearer ${apiKey}`,
           'Content-Type': 'application/json',
         },
         body: JSON.stringify(body),
-        signal: AbortSignal.timeout(90_000),
+        signal: AbortSignal.timeout(55_000),
       });
     } catch (e) {
-      const name = e instanceof Error ? e.name : '';
-      if (name === 'TimeoutError' || name === 'AbortError') {
-        throw new Error(`پاسخ گفتار نرسید. مدل ${model}`);
+      if (isSpeechTimeout(e)) {
+        throw new Error(`پاسخ گفتار نرسید.\nمدل: ${model}\nصدا: ${voice}\nنشانی: ${where}\n${errorText(e)}`);
       }
-      throw e;
-    }
-    if (!res.ok) {
-      const errText = await res.text();
-      throw new Error(`خطای TTS: ${res.status} ${errText.slice(0, 240)}`);
+      throw new Error(`اتصال گفتار برقرار نشد.\nمدل: ${model}\nصدا: ${voice}\nنشانی: ${where}\n${errorText(e)}`);
     }
     const audio = Buffer.from(await res.arrayBuffer());
-    if (audio.length < 64) throw new Error(`پاسخ گفتار خالی بود. مدل ${model}`);
+    const asText = audio.toString('utf8');
+    const notAudio = asText.trim().startsWith('{') || asText.trim().startsWith('<');
+    if (!res.ok || notAudio || audio.length < 64) {
+      throw new Error(
+        `خطای TTS: ${res.status}\nمدل: ${model}\nصدا: ${voice}\nنشانی: ${where}\n${asText.slice(0, 3500)}`,
+      );
+    }
     return audio;
   }
 
@@ -802,5 +847,24 @@ export class LlmService {
         messageFa: `تست ناموفق: ${err.message}`,
       };
     }
+  }
+}
+
+function isSpeechTimeout(error: unknown): boolean {
+  if (!(error instanceof Error)) return false;
+  if (error.name === 'TimeoutError' || error.name === 'AbortError') return true;
+  return /aborted due to timeout|operation was aborted|پاسخ گفتار نرسید/i.test(error.message);
+}
+
+function errorText(error: unknown): string {
+  return error instanceof Error ? error.message : String(error);
+}
+
+function speechEndpointLabel(url: string): string {
+  try {
+    const parsed = new URL(url);
+    return `${parsed.host}${parsed.pathname}`;
+  } catch {
+    return 'audio/speech';
   }
 }

@@ -14,9 +14,11 @@ export function parseTranslationJson(raw: string): Map<number, string> {
   const out = new Map<number, string>();
   for (const row of parsed) {
     if (!row || typeof row !== 'object') continue;
-    const rec = row as { id?: unknown; translation?: unknown };
+    const rec = row as { id?: unknown; translation?: unknown; text?: unknown; fa?: unknown };
     const id = Number(rec.id);
-    const translation = String(rec.translation ?? '').replace(/\s+/g, ' ').trim();
+    const translation = String(rec.translation ?? rec.text ?? rec.fa ?? '')
+      .replace(/\s+/g, ' ')
+      .trim();
     if (!Number.isInteger(id) || id < 1 || !translation) continue;
     out.set(id, translation);
   }

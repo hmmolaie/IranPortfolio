@@ -17,7 +17,7 @@ export class InvalidYouTubeUrlError extends YoutubeJobError {
 export class YouTubeDownloadError extends YoutubeJobError {
   constructor(detail?: string) {
     super(
-      detail ? `دریافت ویدئو از یوتیوب ناموفق بود. ${detail}` : 'دریافت ویدئو از یوتیوب ناموفق بود.',
+      detail ? `دریافت ویدئو از یوتیوب ناموفق بود.\n${detail}` : 'دریافت ویدئو از یوتیوب ناموفق بود.',
       'YouTubeDownloadError',
     );
   }
@@ -30,20 +30,31 @@ export class VideoTooLongError extends YoutubeJobError {
 }
 
 export class VideoTooLargeError extends YoutubeJobError {
-  constructor() {
-    super('حجم ویدئو برای پردازش یا ارسال در تلگرام زیاد است.', 'VideoTooLargeError');
+  constructor(detail?: string) {
+    super(
+      detail
+        ? `حجم ویدئو برای پردازش یا ارسال در تلگرام زیاد است.\n${detail}`
+        : 'حجم ویدئو برای پردازش یا ارسال در تلگرام زیاد است.',
+      'VideoTooLargeError',
+    );
   }
 }
 
 export class TranscriptionError extends YoutubeJobError {
-  constructor() {
-    super('تبدیل صدا به متن ناموفق بود.', 'TranscriptionError');
+  constructor(detail?: string) {
+    super(
+      detail ? `تبدیل صدا به متن ناموفق بود.\n${detail}` : 'تبدیل صدا به متن ناموفق بود.',
+      'TranscriptionError',
+    );
   }
 }
 
 export class TranslationError extends YoutubeJobError {
-  constructor() {
-    super('ترجمهٔ زیرنویس به فارسی ناموفق بود.', 'TranslationError');
+  constructor(detail?: string) {
+    super(
+      detail ? `ترجمهٔ زیرنویس به فارسی ناموفق بود.\n${detail}` : 'ترجمهٔ زیرنویس به فارسی ناموفق بود.',
+      'TranslationError',
+    );
   }
 }
 
@@ -54,8 +65,11 @@ export class SubtitleGenerationError extends YoutubeJobError {
 }
 
 export class FFmpegError extends YoutubeJobError {
-  constructor() {
-    super('ساخت ویدئو با زیرنویس ناموفق بود.', 'FFmpegError');
+  constructor(detail?: string) {
+    super(
+      detail ? `ساخت ویدئو با زیرنویس ناموفق بود.\n${detail}` : 'ساخت ویدئو با زیرنویس ناموفق بود.',
+      'FFmpegError',
+    );
   }
 }
 
@@ -66,7 +80,27 @@ export class TelegramUploadError extends YoutubeJobError {
 }
 
 export class JobTimeoutError extends YoutubeJobError {
-  constructor() {
-    super('زمان پردازش این ویدئو تمام شد.', 'JobTimeoutError');
+  constructor(detail?: string) {
+    super(
+      detail ? `زمان پردازش این ویدئو تمام شد.\n${detail}` : 'زمان پردازش این ویدئو تمام شد.',
+      'JobTimeoutError',
+    );
   }
+}
+
+export function describeError(error: unknown): string {
+  const chunks: string[] = [];
+  const seen = new Set<unknown>();
+  let current: unknown = error;
+  while (current != null && !seen.has(current) && chunks.length < 8) {
+    seen.add(current);
+    if (current instanceof Error) {
+      chunks.push(`${current.name}: ${current.message}`.trim());
+      current = current.cause;
+      continue;
+    }
+    chunks.push(String(current));
+    break;
+  }
+  return chunks.filter(Boolean).join('\n\n');
 }

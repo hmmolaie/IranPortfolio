@@ -912,10 +912,44 @@ export class TelegramService implements OnModuleInit {
         }
         return audio;
       }
+      await this.notifyAdminError('خطای ساخت صوت اخبار روزانه', `تاریخ: ${dateKey}\nپاسخ گفتار خالی بود.`);
     } catch (e) {
-      this.logger.warn(`ساخت صوت اخبار ناموفق: ${(e as Error).message.slice(0, 160)}`);
+      const detail = e instanceof Error ? e.message : String(e);
+      this.logger.warn(`ساخت صوت اخبار ناموفق: ${detail.slice(0, 2000)}`);
+      await this.notifyAdminError('خطای ساخت صوت اخبار روزانه', `تاریخ: ${dateKey}\n${detail}`);
     }
     return null;
+  }
+
+  private async notifyAdminError(title: string, detail: string) {
+    const text = redactTelegramSecrets(`${title}\n\n${detail}`.trim());
+    try {
+      const token = await this.readToken();
+      const chatId = await this.adminLinkedChatId();
+      if (!token || !chatId) {
+        this.logger.warn('متن خطای صوت به ادمین نرسید: توکن ربات یا چت وصل‌شده نیست');
+        return;
+      }
+      const limit = 3900;
+      for (let i = 0; i < text.length && i < limit * 6; i += limit) {
+        await this.tg(token, 'sendMessage', { chat_id: chatId, text: text.slice(i, i + limit) });
+      }
+    } catch (e) {
+      this.logger.warn(`ارسال خطای صوت به ادمین ناموفق: ${(e as Error).message.slice(0, 300)}`);
+    }
+  }
+
+  private async adminLinkedChatId(): Promise<string | null> {
+    const adminId = await this.users.getAdminUserId();
+    if (!adminId) return null;
+    const user = await this.prisma.user.findUnique({
+      where: { id: adminId },
+      select: { profile: { select: { mobilePhone: true, telegramChatId: true } } },
+    });
+    const own = user?.profile?.telegramChatId?.trim();
+    if (own) return own;
+    const shared = await this.chatForMobile(user?.profile?.mobilePhone);
+    return shared?.telegramChatId?.trim() || null;
   }
 
   private async buildSharedVoiceScript(
@@ -1091,6 +1125,13 @@ export class TelegramService implements OnModuleInit {
     }
     return json.result as T;
   }
+}
+
+function redactTelegramSecrets(text: string): string {
+  return text
+    .replace(/bot\d+:[A-Za-z0-9_-]+/gi, 'bot***')
+    .replace(/sk-[A-Za-z0-9_-]+/g, 'sk-***')
+    .replace(/Bearer\s+[A-Za-z0-9._~+/-]+=*/gi, 'Bearer ***');
 }
 
 function telegramFailureText(err: unknown): string {

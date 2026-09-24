@@ -16,7 +16,7 @@ import { applyTranslations, parseTranslationJson } from './parse-translation';
 import { chunkSegments } from './chunk';
 import { buildPersianSrt } from './srt';
 import { normalizeSegments, SubtitleSegment } from './subtitle';
-import { ProcessTimedOut, runProcess, withRetry } from './spawn';
+import { ProcessTimedOut, runProcess, usefulProcessLog, withRetry } from './spawn';
 import { assertDuration, downloadEnglishCaptions, downloadYoutubeVideo, readYoutubeDurationSec } from './ytdlp';
 import { loadVazirmatn } from '../vazir-font';
 
@@ -55,31 +55,53 @@ function cap(deadline: number, requestedMs: number): number {
   return Math.min(requestedMs, left);
 }
 
-async function within<T>(deadline: number, fn: () => Promise<T>, onStepTimeout: () => Error): Promise<T> {
+async function within<T>(
+  deadline: number,
+  fn: () => Promise<T>,
+  onStepTimeout: (detail?: string) => Error,
+): Promise<T> {
   try {
     return await fn();
   } catch (e) {
     if (e instanceof JobTimeoutError) throw e;
     if (e instanceof ProcessTimedOut) {
-      throw Date.now() >= deadline - 2_000 ? new JobTimeoutError() : onStepTimeout();
+      throw Date.now() >= deadline - 2_000 ? new JobTimeoutError(e.detail) : onStepTimeout(e.detail);
     }
     throw e;
   }
 }
 
-async function extractAudio(video: string, audio: string, timeoutMs: number) {
-  let res: { code: number };
+async function extractAudio(video: string, dir: string, timeoutMs: number): Promise<string> {
+  const mp3 = path.join(dir, 'audio.mp3');
+  let mp3Log = '';
   try {
-    res = await runProcess(
+    const mp3Res = await runProcess(
       ffmpegBin(),
-      ['-y', '-i', video, '-vn', '-ac', '1', '-ar', '16000', '-c:a', 'aac', '-b:a', '64k', audio],
+      ['-y', '-i', video, '-vn', '-ac', '1', '-ar', '16000', '-c:a', 'libmp3lame', '-b:a', '64k', mp3],
+      timeoutMs,
+    );
+    if (mp3Res.code === 0) return mp3;
+    mp3Log = usefulProcessLog(`${mp3Res.stderr}\n${mp3Res.stdout}`);
+  } catch (e) {
+    if (e instanceof ProcessTimedOut) throw e;
+    mp3Log = e instanceof Error ? e.message : String(e);
+  }
+  const m4a = path.join(dir, 'audio.m4a');
+  let m4aRes: { code: number; stderr: string; stdout: string };
+  try {
+    m4aRes = await runProcess(
+      ffmpegBin(),
+      ['-y', '-i', video, '-vn', '-ac', '1', '-ar', '16000', '-c:a', 'aac', '-b:a', '64k', m4a],
       timeoutMs,
     );
   } catch (e) {
     if (e instanceof ProcessTimedOut) throw e;
-    throw new TranscriptionError();
+    throw new TranscriptionError(`${mp3Log}\n${e instanceof Error ? e.message : String(e)}`);
   }
-  if (res.code !== 0) throw new TranscriptionError();
+  if (m4aRes.code !== 0) {
+    throw new TranscriptionError(usefulProcessLog(`${mp3Log}\n${m4aRes.stderr}\n${m4aRes.stdout}`));
+  }
+  return m4a;
 }
 
 async function translateAll(
@@ -99,8 +121,8 @@ async function translateAll(
         3,
       );
       map = parseTranslationJson(raw);
-    } catch {
-      throw new TranslationError();
+    } catch (e) {
+      throw new TranslationError(e instanceof Error ? e.message : String(e));
     }
     const missing = chunk.filter((s) => !map.get(s.index));
     if (missing.length) {
@@ -110,11 +132,13 @@ async function translateAll(
           JSON.stringify(missing.map((s) => ({ id: s.index, text: s.originalText }))),
         );
         for (const [id, text] of parseTranslationJson(raw)) map.set(id, text);
-      } catch {
-        throw new TranslationError();
+      } catch (e) {
+        throw new TranslationError(e instanceof Error ? e.message : String(e));
       }
     }
-    if (chunk.some((s) => !map.get(s.index))) throw new TranslationError();
+    if (chunk.some((s) => !map.get(s.index))) {
+      throw new TranslationError('برخی قطعه‌های زیرنویس ترجمه نشدند.');
+    }
     current = applyTranslations(current, map);
   }
   return current;
@@ -141,7 +165,7 @@ export async function runYoutubeSubtitleJob(opts: {
     const duration = await within(
       deadline,
       () => readYoutubeDurationSec(opts.videoId, cap(deadline, 60_000)),
-      () => new YouTubeDownloadError(),
+      (detail) => new YouTubeDownloadError(detail),
     );
     log('YouTube metadata fetched');
     assertDuration(duration, maxSec);
@@ -151,7 +175,7 @@ export async function runYoutubeSubtitleJob(opts: {
     await within(
       deadline,
       () => downloadYoutubeVideo(opts.videoId, video, maxBytes, cap(deadline, 12 * 60_000)),
-      () => new YouTubeDownloadError(),
+      (detail) => new YouTubeDownloadError(detail),
     );
     log('Video downloaded');
 
@@ -159,7 +183,7 @@ export async function runYoutubeSubtitleJob(opts: {
     try {
       segments = await downloadEnglishCaptions(opts.videoId, dir, cap(deadline, 90_000));
     } catch (e) {
-      if (e instanceof ProcessTimedOut && Date.now() >= deadline - 2_000) throw new JobTimeoutError();
+      if (e instanceof ProcessTimedOut && Date.now() >= deadline - 2_000) throw new JobTimeoutError(e.detail);
       if (!(e instanceof ProcessTimedOut) && !(e instanceof YouTubeDownloadError)) throw e;
       segments = [];
     }
@@ -168,23 +192,29 @@ export async function runYoutubeSubtitleJob(opts: {
       await opts.onStep('🎙️ زیرنویس انگلیسی پیدا شد.');
     } else {
       await opts.onStep('🎙️ در حال تبدیل صدا به متن...');
-      const audio = path.join(dir, 'audio.m4a');
-      await within(
+      const audio = await within(
         deadline,
-        () => extractAudio(video, audio, cap(deadline, 8 * 60_000)),
-        () => new TranscriptionError(),
+        () => extractAudio(video, dir, cap(deadline, 8 * 60_000)),
+        (detail) => new TranscriptionError(detail),
       );
       log('Audio extracted');
       log('Transcription started');
       const pieces = await within(
         deadline,
-        () => transcribeWithGapGpt(audio, opts.transcribeBaseUrl, opts.transcribeApiKey, cap(deadline, 180_000)),
-        () => new TranscriptionError(),
+        () =>
+          transcribeWithGapGpt(
+            audio,
+            opts.transcribeBaseUrl,
+            opts.transcribeApiKey,
+            cap(deadline, 180_000),
+            duration,
+          ),
+        (detail) => new TranscriptionError(detail),
       );
       segments = normalizeSegments(pieces);
       log(`Transcription completed: ${segments.length} segments`);
     }
-    if (segments.length < 1) throw new TranscriptionError();
+    if (segments.length < 1) throw new TranscriptionError('زیرنویس انگلیسی و رونویسی هر دو خالی بودند.');
     await fs.writeFile(path.join(dir, 'transcript.json'), JSON.stringify(segments), 'utf8');
 
     await opts.onStep('🌐 در حال ترجمه به فارسی...');
@@ -198,10 +228,16 @@ export async function runYoutubeSubtitleJob(opts: {
     log('SRT generated');
 
     await opts.onStep('🎬 در حال ساخت ویدئو...');
-    const fontBuf = await loadVazirmatn().catch(async () => {
+    const fontBuf = await loadVazirmatn().catch(async (fontErr: unknown) => {
       const fromEnv = (process.env.SUBTITLE_FONT ?? '').trim();
-      if (!fromEnv) throw new FFmpegError();
-      return fs.readFile(fromEnv);
+      const why = fontErr instanceof Error ? fontErr.message : 'فونت فارسی پیدا نشد';
+      if (!fromEnv) throw new FFmpegError(why);
+      try {
+        return await fs.readFile(fromEnv);
+      } catch (readErr) {
+        const readWhy = readErr instanceof Error ? readErr.message : String(readErr);
+        throw new FFmpegError(`${why}\n${readWhy}`);
+      }
     });
     const fontsDir = path.join(dir, 'fonts');
     await fs.writeFile(path.join(fontsDir, 'Vazirmatn-Regular.ttf'), fontBuf);
@@ -223,11 +259,11 @@ export async function runYoutubeSubtitleJob(opts: {
           cap(deadline, 20 * 60_000),
         ).catch((e: unknown) => {
           if (e instanceof ProcessTimedOut) throw e;
-          throw new FFmpegError();
+          throw new FFmpegError(e instanceof Error ? e.message : String(e));
         }),
-      () => new FFmpegError(),
+      (detail) => new FFmpegError(detail),
     );
-    if (ff.code !== 0) throw new FFmpegError();
+    if (ff.code !== 0) throw new FFmpegError(usefulProcessLog(`${ff.stderr}\n${ff.stdout}`));
     const stat = await fs.stat(finalPath);
     const telegramLimit = 49 * 1024 * 1024;
     if (stat.size > telegramLimit) {

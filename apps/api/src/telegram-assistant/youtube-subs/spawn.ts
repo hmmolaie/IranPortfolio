@@ -1,10 +1,20 @@
 import { spawn } from 'child_process';
 
 export class ProcessTimedOut extends Error {
-  constructor() {
-    super('زمان دستور تمام شد');
+  constructor(readonly detail = '') {
+    super(detail ? `زمان دستور تمام شد\n${detail}` : 'زمان دستور تمام شد');
     this.name = 'ProcessTimedOut';
   }
+}
+
+export function usefulProcessLog(raw: string, max = 6000): string {
+  const lines = raw
+    .split(/\r|\n/)
+    .map((line) => line.trim())
+    .filter((line) => line && !/^frame=\s*\d+/.test(line) && !/^size=\s*\d+/.test(line));
+  const text = lines.join('\n').trim();
+  if (text.length <= max) return text;
+  return text.slice(-max);
 }
 
 export class PermanentHttpError extends Error {
@@ -32,7 +42,7 @@ export function runProcess(
     };
     const timer = setTimeout(() => {
       child.kill('SIGKILL');
-      finish(() => reject(new ProcessTimedOut()));
+      finish(() => reject(new ProcessTimedOut(usefulProcessLog(stderr))));
     }, timeoutMs);
     child.stdout?.on('data', (b: Buffer) => {
       stdout += b.toString('utf8');
