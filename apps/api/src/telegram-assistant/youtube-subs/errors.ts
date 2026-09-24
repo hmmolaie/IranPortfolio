@@ -96,7 +96,8 @@ export function describeError(error: unknown): string {
     seen.add(current);
     if (current instanceof Error) {
       chunks.push(`${current.name}: ${current.message}`.trim());
-      current = current.cause;
+      const withCause = current as Error & { cause?: unknown };
+      current = withCause.cause;
       continue;
     }
     chunks.push(String(current));
