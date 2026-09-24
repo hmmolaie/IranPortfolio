@@ -56,10 +56,47 @@ jobs:
             echo "==> Build and start stack ($DC)"
             export DOCKER_BUILDKIT=1
             export COMPOSE_DOCKER_CLI_BUILD=1
+            echo "==> Memory before build"
+            free -h || true
+            swap_kb="$(awk '/SwapTotal/ {print $2}' /proc/meminfo 2>/dev/null || echo 0)"
+            if [ "${swap_kb:-0}" -lt 1048576 ]; then
+              echo "==> Adding 2G swap so npm ci is not killed"
+              if [ "$(id -u)" -eq 0 ]; then
+                rootcmd=""
+              else
+                rootcmd="sudo"
+              fi
+              if [ ! -f /swapfile ]; then
+                if $rootcmd fallocate -l 2G /swapfile 2>/dev/null || $rootcmd dd if=/dev/zero of=/swapfile bs=1M count=2048; then
+                  $rootcmd chmod 600 /swapfile
+                  $rootcmd mkswap /swapfile
+                else
+                  echo "==> Could not create swap; continuing"
+                fi
+              fi
+              if [ -f /swapfile ]; then
+                $rootcmd swapon /swapfile || true
+              fi
+              free -h || true
+            fi
             $DC pull || true
-            # نصب npm موازی روی سرور شبکه را خفه می‌کند و SSH تایم‌اوت می‌شود
+            echo "==> Stop app containers to free RAM for the image build"
+            $DC stop nginx web api db || true
+            set +e
             $DC build api
-            $DC build web
+            api_build=$?
+            if [ "$api_build" -eq 0 ]; then
+              $DC build web
+              web_build=$?
+            else
+              web_build=1
+            fi
+            set -e
+            if [ "$api_build" -ne 0 ] || [ "$web_build" -ne 0 ]; then
+              echo "==> Build failed; starting the previous containers"
+              $DC start db api web nginx || true
+              exit 1
+            fi
             if ! $DC up -d; then
               echo "==> API did not become healthy"
               $DC ps -a || true
