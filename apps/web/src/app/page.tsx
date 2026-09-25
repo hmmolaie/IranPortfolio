@@ -144,21 +144,21 @@ export default function HomePage() {
   }
 
   return (
-    <div className="min-h-screen bg-cream">
-      <div className="mx-auto grid min-h-screen max-w-6xl items-center gap-10 px-6 py-10 lg:grid-cols-2 lg:gap-14">
-        <section>
+    <div className="bg-cream lg:h-dvh lg:overflow-hidden">
+      <div className="mx-auto grid w-full max-w-6xl items-start gap-5 px-5 py-5 lg:h-full lg:grid-cols-[minmax(0,28rem)_minmax(0,1fr)] lg:items-stretch lg:gap-8 lg:px-8 lg:py-6">
+        <section className="flex min-h-0 flex-col lg:overflow-y-auto lg:py-1">
           <p className="text-xs font-medium tracking-[0.28em] text-gold-500" dir="ltr">
             PIIIP
           </p>
-          <h1 className="mt-4 text-5xl font-bold leading-tight text-navy-900 sm:text-6xl">پیپ</h1>
-          <p className="mt-4 max-w-md text-lg leading-9 text-navy-800/80">
+          <h1 className="mt-2 text-4xl font-bold leading-tight text-navy-900 lg:text-5xl">پیپ</h1>
+          <p className="mt-2 max-w-md text-base leading-7 text-navy-800/80">
             پلتفرم بینش‌های هوشمند سرمایه‌گذاری شخصی
           </p>
-          <p className="mt-2 max-w-md text-sm leading-7 text-navy-800/55" dir="ltr">
+          <p className="mt-1 max-w-md text-sm leading-6 text-navy-800/55" dir="ltr">
             Personal Investment Intelligence Insights Platform
           </p>
 
-          <ul className="mt-8 space-y-3">
+          <ul className="mt-4 space-y-2">
             {FEATURES.map((item) => (
               <li key={item} className="flex items-center gap-3 text-sm text-navy-800/80">
                 <span className="flex h-6 w-6 shrink-0 items-center justify-center rounded-full bg-navy-900/8 text-xs text-gold-500">
@@ -169,8 +169,8 @@ export default function HomePage() {
             ))}
           </ul>
 
-          <div className="card mt-8 w-full max-w-md border-navy-900/8 shadow-soft">
-            <div className="mb-6 border-b border-navy-900/8 pb-5">
+          <div className="card mt-4 w-full max-w-md border-navy-900/8 p-5 shadow-soft">
+            <div className="mb-4 border-b border-navy-900/8 pb-3">
               <h2 className="text-xl font-semibold text-navy-900">ورود به حساب</h2>
               <p className="mt-1 text-sm text-navy-800/55">
                 {showBiometric
@@ -200,7 +200,7 @@ export default function HomePage() {
               </div>
             )}
 
-            <form onSubmit={onSubmit} className="space-y-4">
+            <form onSubmit={onSubmit} className="space-y-3">
               <div>
                 <label className="label" htmlFor="username">
                   نام کاربری
@@ -238,16 +238,16 @@ export default function HomePage() {
             </form>
           </div>
 
-          <p className="mt-6 max-w-md text-xs leading-6 text-navy-800/45">
+          <p className="mt-3 max-w-md text-xs leading-5 text-navy-800/45">
             این سرویس ابزار تصمیم‌یار است و جایگزین مشاوره رسمی سرمایه‌گذاری نیست.
           </p>
         </section>
 
-        <figure className="mx-auto w-full max-w-xl overflow-hidden rounded-[1.75rem] border border-navy-900/10 shadow-soft lg:max-w-none">
+        <figure className="relative mx-auto h-44 w-full max-w-xl overflow-hidden rounded-[1.75rem] border border-navy-900/10 shadow-soft sm:h-56 lg:h-full lg:max-w-none lg:min-h-0">
           <img
             src="/brand/login-hero.jpg"
             alt=""
-            className="aspect-[4/5] w-full object-cover object-[center_20%] sm:aspect-[5/4] lg:aspect-[4/5] lg:max-h-[40rem]"
+            className="h-full w-full object-cover object-[center_18%] lg:absolute lg:inset-0"
           />
         </figure>
       </div>
