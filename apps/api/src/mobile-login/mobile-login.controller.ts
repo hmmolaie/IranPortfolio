@@ -1,4 +1,4 @@
-import { Body, Controller, Get, Param, Patch, Post, Put, Req, UseGuards } from '@nestjs/common';
+import { Body, Controller, Delete, Get, Param, Patch, Post, Put, Req, UseGuards } from '@nestjs/common';
 import { IsBoolean, IsString, MaxLength } from 'class-validator';
 import { AdminGuard } from '../auth/admin.guard';
 import { JwtAuthGuard } from '../auth/jwt-auth.guard';
@@ -55,6 +55,12 @@ export class MobileLoginController {
   @UseGuards(JwtAuthGuard, AdminGuard)
   adminList() {
     return this.mobileLogin.listForAdmin();
+  }
+
+  @Delete('admin/logs')
+  @UseGuards(JwtAuthGuard, AdminGuard)
+  adminClearLogs() {
+    return this.mobileLogin.clearLogs();
   }
 
   @Put('admin/config')

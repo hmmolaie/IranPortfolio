@@ -58,7 +58,6 @@ export default function MobileLoginPage() {
           auth: false,
           body: JSON.stringify({ location: coords }),
         });
-        if (!cancelled) setLocationNote('موقعیت ثبت شد.');
       } catch (e) {
         if (!cancelled) setLocationNote((e as Error).message || 'ثبت موقعیت ممکن نشد.');
       }

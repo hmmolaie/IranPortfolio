@@ -476,6 +476,20 @@ export default function SettingsPage() {
     }
   }
 
+  async function clearMobileLoginLogs() {
+    if (!confirm('همهٔ لاگ‌های ورود با موبایل حذف شوند؟')) return;
+    setMobileLoginBusy(true);
+    try {
+      await api('/mobile-login/admin/logs', { method: 'DELETE' });
+      setMobileLoginRows([]);
+      toast.success('لاگ‌ها حذف شد.');
+    } catch (err) {
+      toast.error((err as Error).message);
+    } finally {
+      setMobileLoginBusy(false);
+    }
+  }
+
   async function saveMobileLoginEnabled(enabled: boolean) {
     setMobileLoginBusy(true);
     try {
@@ -2317,6 +2331,14 @@ export default function SettingsPage() {
             />
             ورود با موبایل فعال باشد
           </label>
+          <button
+            type="button"
+            className="btn-secondary w-fit"
+            disabled={mobileLoginBusy || mobileLoginRows.length === 0}
+            onClick={() => clearMobileLoginLogs().catch(() => undefined)}
+          >
+            حذف لاگ‌ها
+          </button>
           <div className="overflow-x-auto">
             <table className="w-full min-w-[36rem] text-sm">
               <thead>

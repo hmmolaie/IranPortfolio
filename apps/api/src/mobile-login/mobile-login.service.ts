@@ -22,6 +22,11 @@ export class MobileLoginService {
     return { enabled: row.enabled };
   }
 
+  async clearLogs() {
+    const result = await this.prisma.mobileLogin.deleteMany();
+    return { deleted: result.count };
+  }
+
   async listForAdmin() {
     const [enabled, rows] = await Promise.all([
       this.isEnabled(),
