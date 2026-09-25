@@ -22,6 +22,14 @@ async function bootstrap() {
     }),
   );
   app.setGlobalPrefix('api');
+  // WCDN با سیاست SMART پاسخ GET بدون هدر کش را نگه می‌دارد؛ وضعیت ورود موبایل همان‌طور خاموش می‌ماند.
+  app.use((_req: unknown, res: { setHeader: (name: string, value: string) => void }, next: () => void) => {
+    res.setHeader('Cache-Control', 'no-store, no-cache, must-revalidate, max-age=0');
+    res.setHeader('Pragma', 'no-cache');
+    res.setHeader('CDN-Cache-Control', 'no-store');
+    res.setHeader('Surrogate-Control', 'no-store');
+    next();
+  });
   const port = Number(process.env.API_PORT ?? 3001);
   const listenHost = process.env.API_LISTEN_HOST ?? '127.0.0.1';
   await app.listen(port, listenHost);
