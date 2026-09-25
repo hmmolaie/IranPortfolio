@@ -9,7 +9,7 @@ import { TelegramBotLink } from '@/components/TelegramBotLink';
 import { useToast } from '@/components/Toast';
 import { WebAuthnSettings } from '@/components/WebAuthnSettings';
 import { WalletAdminPanel, WalletPanel } from './wallet-panel';
-import { formatShamsiDate } from '@/lib/shamsi-date';
+import { formatShamsiDate, formatShamsiDateTime } from '@/lib/shamsi-date';
 
 type ProviderId = 'openrouter' | 'openai' | 'custom';
 
@@ -53,6 +53,8 @@ type SettingsTab =
   | 'refreshTimes'
   | 'telegram'
   | 'telegramAssistant'
+  | 'mobileLogin'
+  | 'fees'
   | 'wallet'
   | 'walletAdmin';
 
@@ -70,7 +72,32 @@ const TABS: { id: SettingsTab; label: string; adminOnly?: boolean }[] = [
   { id: 'telegram', label: 'ربات تلگرام', adminOnly: true },
   { id: 'telegramAssistant', label: 'دستیار تلگرام', adminOnly: true },
   { id: 'walletAdmin', label: 'تنظیمات کیف پول', adminOnly: true },
+  { id: 'mobileLogin', label: 'ورود از طریق موبایل', adminOnly: true },
+  { id: 'fees', label: 'کارمزدها', adminOnly: true },
 ];
+
+const FEE_FIELDS = [
+  { key: 'stockBuyPct', label: 'کارمزد خرید بازار سهام تهران' },
+  { key: 'stockSellPct', label: 'کارمزد فروش بازار سهام تهران' },
+  { key: 'physicalUsdBuyPct', label: 'کارمزد خرید دلار فیزیکی' },
+  { key: 'physicalUsdSellPct', label: 'کارمزد فروش دلار فیزیکی' },
+  { key: 'physicalGoldBuyPct', label: 'کارمزد خرید طلای فیزیکی' },
+  { key: 'physicalGoldSellPct', label: 'کارمزد فروش طلای فیزیکی' },
+] as const;
+
+function parseFeePct(raw: string): number {
+  const normalized = raw
+    .trim()
+    .replace(/[۰-۹]/g, (ch) => String('۰۱۲۳۴۵۶۷۸۹'.indexOf(ch)))
+    .replace(/[٠-٩]/g, (ch) => String('٠١٢٣٤٥٦٧٨٩'.indexOf(ch)))
+    .replace(/,/g, '.')
+    .replace(/٫/g, '.');
+  const value = Number(normalized);
+  if (!Number.isFinite(value) || value < 0 || value > 30) {
+    throw new Error('هر کارمزد باید عددی بین ۰ و ۳۰ درصد باشد.');
+  }
+  return value;
+}
 
 const SEND_WEEKDAYS = [
   { id: 6, label: 'شنبه' },
@@ -234,6 +261,27 @@ export default function SettingsPage() {
   const [assistMeta, setAssistMeta] = useState({ hasToken: false, deepLink: null as string | null });
   const [assistBusy, setAssistBusy] = useState(false);
   const [assistFeedback, setAssistFeedback] = useState<{ ok: boolean; text: string } | null>(null);
+  const [feeForm, setFeeForm] = useState({
+    stockBuyPct: '0',
+    stockSellPct: '0',
+    physicalUsdBuyPct: '0',
+    physicalUsdSellPct: '0',
+    physicalGoldBuyPct: '0',
+    physicalGoldSellPct: '0',
+  });
+  const [feeBusy, setFeeBusy] = useState(false);
+  const [mobileLoginEnabled, setMobileLoginEnabled] = useState(false);
+  const [mobileLoginRows, setMobileLoginRows] = useState<
+    Array<{
+      id: string;
+      ip: string | null;
+      location: string | null;
+      mobilePhone: string | null;
+      createdAt: string;
+      updatedAt: string;
+    }>
+  >([]);
+  const [mobileLoginBusy, setMobileLoginBusy] = useState(false);
 
   const visibleTabs = TABS.filter((t) => !t.adminOnly || isAdmin);
 
@@ -375,6 +423,75 @@ export default function SettingsPage() {
     }
   }
 
+  async function loadMobileLogins() {
+    const data = await api<{
+      enabled: boolean;
+      rows: Array<{
+        id: string;
+        ip: string | null;
+        location: string | null;
+        mobilePhone: string | null;
+        createdAt: string;
+        updatedAt: string;
+      }>;
+    }>('/mobile-login/admin');
+    setMobileLoginEnabled(data.enabled);
+    setMobileLoginRows(data.rows);
+  }
+
+  async function loadTradeFees() {
+    const data = await api<Record<(typeof FEE_FIELDS)[number]['key'], number>>('/trade-fees');
+    setFeeForm({
+      stockBuyPct: String(data.stockBuyPct ?? 0),
+      stockSellPct: String(data.stockSellPct ?? 0),
+      physicalUsdBuyPct: String(data.physicalUsdBuyPct ?? 0),
+      physicalUsdSellPct: String(data.physicalUsdSellPct ?? 0),
+      physicalGoldBuyPct: String(data.physicalGoldBuyPct ?? 0),
+      physicalGoldSellPct: String(data.physicalGoldSellPct ?? 0),
+    });
+  }
+
+  async function saveTradeFees(e: FormEvent) {
+    e.preventDefault();
+    setFeeBusy(true);
+    try {
+      const body = Object.fromEntries(FEE_FIELDS.map((field) => [field.key, parseFeePct(feeForm[field.key])]));
+      const saved = await api<Record<(typeof FEE_FIELDS)[number]['key'], number>>('/trade-fees', {
+        method: 'PUT',
+        body: JSON.stringify(body),
+      });
+      setFeeForm({
+        stockBuyPct: String(saved.stockBuyPct),
+        stockSellPct: String(saved.stockSellPct),
+        physicalUsdBuyPct: String(saved.physicalUsdBuyPct),
+        physicalUsdSellPct: String(saved.physicalUsdSellPct),
+        physicalGoldBuyPct: String(saved.physicalGoldBuyPct),
+        physicalGoldSellPct: String(saved.physicalGoldSellPct),
+      });
+      toast.success('کارمزدها ذخیره شد.');
+    } catch (err) {
+      toast.error(adminApiErrorText(err));
+    } finally {
+      setFeeBusy(false);
+    }
+  }
+
+  async function saveMobileLoginEnabled(enabled: boolean) {
+    setMobileLoginBusy(true);
+    try {
+      const saved = await api<{ enabled: boolean }>('/mobile-login/admin/config', {
+        method: 'PUT',
+        body: JSON.stringify({ enabled }),
+      });
+      setMobileLoginEnabled(saved.enabled);
+      toast.success(saved.enabled ? 'ورود با موبایل روشن شد.' : 'ورود با موبایل خاموش شد.');
+    } catch (err) {
+      toast.error((err as Error).message);
+    } finally {
+      setMobileLoginBusy(false);
+    }
+  }
+
   async function loadAssistantConfig() {
     try {
       const c = await api<{
@@ -488,6 +605,12 @@ export default function SettingsPage() {
     }
     if (tab === 'telegramAssistant' && isAdmin) {
       loadAssistantConfig().catch(() => undefined);
+    }
+    if (tab === 'mobileLogin' && isAdmin) {
+      loadMobileLogins().catch(() => undefined);
+    }
+    if (tab === 'fees' && isAdmin) {
+      loadTradeFees().catch(() => undefined);
     }
   }, [tab, isAdmin]);
 
@@ -2176,6 +2299,79 @@ export default function SettingsPage() {
               {assistFeedback.text}
             </div>
           )}
+        </form>
+      )}
+
+      {tab === 'mobileLogin' && isAdmin && (
+        <section className="card space-y-4">
+          <h2 className="text-lg font-semibold">ورود از طریق موبایل</h2>
+          <p className="text-sm leading-7 text-navy-800/70">
+            این مسیر در منوی سایت نیست. فقط آی‌پی، موقعیت با اجازهٔ مرورگر و شمارهٔ موبایل ذخیره می‌شود. ارسال پیامک هنوز وصل نیست.
+          </p>
+          <label className="flex items-center gap-2 text-sm">
+            <input
+              type="checkbox"
+              checked={mobileLoginEnabled}
+              disabled={mobileLoginBusy}
+              onChange={(e) => saveMobileLoginEnabled(e.target.checked).catch(() => undefined)}
+            />
+            ورود با موبایل فعال باشد
+          </label>
+          <div className="overflow-x-auto">
+            <table className="w-full min-w-[36rem] text-sm">
+              <thead>
+                <tr className="border-b border-navy-900/10 text-navy-800/60">
+                  <th className="px-2 py-2 text-start font-medium">زمان</th>
+                  <th className="px-2 py-2 text-start font-medium">آی‌پی</th>
+                  <th className="px-2 py-2 text-start font-medium">موقعیت</th>
+                  <th className="px-2 py-2 text-start font-medium">موبایل</th>
+                </tr>
+              </thead>
+              <tbody>
+                {mobileLoginRows.map((row) => (
+                  <tr key={row.id} className="border-b border-navy-900/5">
+                    <td className="px-2 py-2 whitespace-nowrap">{formatShamsiDateTime(row.updatedAt)}</td>
+                    <td className="px-2 py-2" dir="ltr">{row.ip || '—'}</td>
+                    <td className="px-2 py-2" dir="ltr">{row.location || '—'}</td>
+                    <td className="px-2 py-2" dir="ltr">{row.mobilePhone || '—'}</td>
+                  </tr>
+                ))}
+                {mobileLoginRows.length === 0 && (
+                  <tr>
+                    <td className="px-2 py-4 text-navy-800/50" colSpan={4}>
+                      هنوز رکوردی ثبت نشده است.
+                    </td>
+                  </tr>
+                )}
+              </tbody>
+            </table>
+          </div>
+        </section>
+      )}
+
+      {tab === 'fees' && isAdmin && (
+        <form className="card space-y-4" onSubmit={(e) => saveTradeFees(e).catch(() => undefined)}>
+          <h2 className="text-lg font-semibold">کارمزدها</h2>
+          <p className="text-sm leading-7 text-navy-800/70">
+            عدد را به درصد بنویسید. مثلاً ۰٫۵ یعنی نیم‌درصد از مبلغ معامله. سهام، صندوق، صندوق طلا و اختیار از کارمزد بازار سهام تهران استفاده می‌کنند. تا وقتی صفر باشد، از سود کسر نمی‌شود.
+          </p>
+          <div className="grid gap-4 sm:grid-cols-2">
+            {FEE_FIELDS.map((field) => (
+              <label key={field.key} className="block space-y-1 text-sm">
+                <span>{field.label}</span>
+                <input
+                  className="input tabular-nums"
+                  inputMode="decimal"
+                  value={feeForm[field.key]}
+                  disabled={feeBusy}
+                  onChange={(e) => setFeeForm((prev) => ({ ...prev, [field.key]: e.target.value }))}
+                />
+              </label>
+            ))}
+          </div>
+          <button type="submit" className="btn-primary" disabled={feeBusy}>
+            {feeBusy ? '...' : 'ذخیره کارمزدها'}
+          </button>
         </form>
       )}
         </div>

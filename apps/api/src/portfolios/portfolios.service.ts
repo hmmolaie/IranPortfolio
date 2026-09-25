@@ -12,6 +12,13 @@ import { NewsService } from '../news/news.service';
 import { UsersService } from '../users/users.service';
 import { WorldMarketsService } from '../world-markets/world-markets.service';
 import { WalletService } from '../wallet/wallet.service';
+import { TradeFeesService } from '../trade-fees/trade-fees.service';
+import {
+  feeInstructionFa,
+  filterStrategyItems,
+  holdingFeeRial,
+  suggestionClearsFees,
+} from '../trade-fees/trade-fees';
 import { daysAgoDateKey } from '../news/tehran-date';
 import { foldFa, tokenizeMarketQuestion } from '../market/tehran-chat';
 
@@ -67,6 +74,7 @@ export class PortfoliosService {
     private readonly users: UsersService,
     private readonly worldMarkets: WorldMarketsService,
     private readonly wallet: WalletService,
+    private readonly tradeFees: TradeFeesService,
   ) {}
 
   list(userId: string) {
@@ -113,10 +121,12 @@ export class PortfoliosService {
           amountRial: number;
           unitPrice: number | null;
           avgBuyPrice?: number | null;
+          assetType?: string;
         }>;
       }>;
     },
   >(portfolio: T) {
+    const fees = await this.tradeFees.read();
     const universe = await this.buildUniverse();
     const lastBySymbol = new Map(
       universe.map((u) => [u.symbol.trim(), u.lastPrice] as const),
@@ -141,8 +151,13 @@ export class PortfoliosService {
             avgBuyPrice != null && qty > 0 ? avgBuyPrice * qty : Number(item.amountRial) || 0;
           const marketValueRial =
             lastPrice != null && qty > 0 ? lastPrice * qty : Number(item.amountRial) || 0;
-          const pnlRial =
-            avgBuyPrice != null && lastPrice != null ? (lastPrice - avgBuyPrice) * qty : 0;
+          const grossPnl =
+            avgBuyPrice != null && lastPrice != null ? (lastPrice - avgBuyPrice) * qty : null;
+          const feeRial =
+            grossPnl == null
+              ? 0
+              : Math.round(holdingFeeRial(fees, item.assetType, costBasisRial, marketValueRial));
+          const pnlRial = grossPnl == null ? 0 : Math.round(grossPnl - feeRial);
 
           return {
             ...item,
@@ -150,6 +165,7 @@ export class PortfoliosService {
             lastPrice,
             costBasisRial,
             marketValueRial,
+            feeRial,
             pnlRial,
             amountRial: Number(item.amountRial) || 0,
           };
@@ -275,7 +291,10 @@ export class PortfoliosService {
           })
         : [];
 
-    const system = await this.llm.getSystemPrompt(userId, 'portfolio_suggest_multi');
+    const fees = await this.tradeFees.read();
+    const system =
+      (await this.llm.getSystemPrompt(userId, 'portfolio_suggest_multi')) +
+      `\n\n${feeInstructionFa(fees)}`;
 
     const userPrompt = JSON.stringify(
       {
@@ -329,6 +348,7 @@ export class PortfoliosService {
           llmReasoningFa: i.llmReasoningFa,
         })),
         lessons: lessons.map((l) => ({ title: l.titleFa, body: l.bodyFa })),
+        tradeFees: fees,
         instruction: options?.initialCreate
           ? `این ایجاد اولیه سبد است. سرمایه کل ${portfolio.capitalRial} ریال و استراتژی ${portfolio.strategy} است.
 فقط weightPct بده (جمع ≈ ۱۰۰). جمع ارزش سبد نباید از ${portfolio.capitalRial} ریال بیشتر شود.
@@ -352,13 +372,37 @@ weightPct فقط درصد از همین سرمایه است (جمع هر است�
           assetType: AssetType;
           weightPct: number;
           reasonFa: string;
+          expectedProfitPct?: number | null;
         }>;
       }>;
     };
 
     try {
       const out = await this.llm.chatJson<Out>('portfolio_suggest_multi', system, userPrompt, userId);
-      if (out.strategies?.length) return out;
+      if (out.strategies?.length) {
+        const strategies = out.strategies
+          .map((strategy) => ({
+            ...strategy,
+            items: filterStrategyItems(strategy.items ?? [], fees).map((item) => ({
+              symbol: item.symbol,
+              assetType: (item.assetType || AssetType.STOCK) as AssetType,
+              weightPct: Number(item.weightPct) || 0,
+              reasonFa: item.reasonFa ?? '',
+            })),
+          }))
+          .filter((strategy) => strategy.items.length > 0);
+        if (strategies.length) return { strategies };
+        return {
+          strategies: [
+            {
+              labelFa: 'بدون معامله',
+              strategySummaryFa:
+                'سود پیش‌بینی‌شده از کارمزد خرید و فروش بیشتر نبود؛ پیشنهادی برای معامله ثبت نشد.',
+              items: [],
+            },
+          ],
+        };
+      }
     } catch {
       /* fallback */
     }
@@ -1319,7 +1363,9 @@ ${historyText}`,
       };
     });
 
+    const fees = await this.tradeFees.read();
     let system = await this.llm.getSystemPrompt(userId, 'portfolio_analyze');
+    system += `\n\n${feeInstructionFa(fees)}`;
     if (personal) {
       system += `
 
@@ -1350,6 +1396,7 @@ summaryFa و نقاط قوت و ضعف گزارش وضعیت سبد هستند �
             portfolio: portfolioPayload,
             userProfile: profile,
             currentItems: pricedItems,
+            tradeFees: fees,
           }
         : {
             portfolio: portfolioPayload,
@@ -1360,6 +1407,7 @@ summaryFa و نقاط قوت و ضعف گزارش وضعیت سبد هستند �
             worldMacroNews,
             fxHistory,
             lessons: lessons.map((l) => ({ title: l.titleFa, body: l.bodyFa })),
+            tradeFees: fees,
           },
       null,
       2,
@@ -1380,6 +1428,7 @@ summaryFa و نقاط قوت و ضعف گزارش وضعیت سبد هستند �
         quantity?: number;
         amountRial?: number;
         weightPct?: number;
+        expectedProfitPct?: number | null;
       }>;
     };
 
@@ -1416,7 +1465,9 @@ summaryFa و نقاط قوت و ضعف گزارش وضعیت سبد هستند �
       summaryFa: analysis.summaryFa ?? '',
       strengthsFa: analysis.strengthsFa ?? [],
       weaknessesFa: analysis.weaknessesFa ?? [],
-      suggestions: (analysis.suggestions ?? []).map((s) => this.normalizeAnalysisSuggestion(s)),
+      suggestions: (analysis.suggestions ?? [])
+        .map((s) => this.normalizeAnalysisSuggestion(s))
+        .filter((s) => suggestionClearsFees(s, fees)),
       analyzedAt: new Date().toISOString(),
     };
   }
@@ -1476,6 +1527,7 @@ summaryFa و نقاط قوت و ضعف گزارش وضعیت سبد هستند �
     quantity?: number;
     amountRial?: number;
     weightPct?: number;
+    expectedProfitPct?: number | null;
   }) {
     const actionRaw = String(s.action ?? '').toUpperCase();
     const action = (
@@ -1488,6 +1540,8 @@ summaryFa و نقاط قوت و ضعف گزارش وضعیت سبد هستند �
       : undefined;
     const num = (v: number | undefined) =>
       v != null && Number.isFinite(Number(v)) && Number(v) > 0 ? Number(v) : undefined;
+    const expectedRaw = Number(s.expectedProfitPct);
+    const expectedProfitPct = Number.isFinite(expectedRaw) ? expectedRaw : undefined;
     return {
       titleFa: s.titleFa ?? '',
       bodyFa: s.bodyFa ?? '',
@@ -1498,6 +1552,7 @@ summaryFa و نقاط قوت و ضعف گزارش وضعیت سبد هستند �
       quantity: num(s.quantity),
       amountRial: num(s.amountRial),
       weightPct: num(s.weightPct),
+      expectedProfitPct,
     };
   }
 

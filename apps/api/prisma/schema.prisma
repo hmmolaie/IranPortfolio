@@ -827,6 +827,39 @@ model IntelligenceLog {
   @@index([userId, createdAt])
 }
 
+/** کارمزد خرید و فروش به درصد از مبلغ معامله */
+model TradeFeeConfig {
+  id                  String   @id @default("default")
+  stockBuyPct         Float    @default(0)
+  stockSellPct        Float    @default(0)
+  physicalUsdBuyPct   Float    @default(0)
+  physicalUsdSellPct  Float    @default(0)
+  physicalGoldBuyPct  Float    @default(0)
+  physicalGoldSellPct Float    @default(0)
+  updatedAt           DateTime @updatedAt
+}
+
+/** روشن یا خاموش بودن ورود با موبایل در مسیر جدا */
+model MobileLoginConfig {
+  id        String   @id @default("default")
+  enabled   Boolean  @default(false)
+  updatedAt DateTime @updatedAt
+}
+
+/** ثبت آی‌پی، موقعیت و شمارهٔ موبایل برای ورود با موبایل */
+model MobileLogin {
+  id          String   @id @default(cuid())
+  ip          String?
+  location    String?
+  mobilePhone String?
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  @@index([createdAt])
+  @@index([mobilePhone])
+  @@map("mobilelogin")
+}
+
 model ForexGraphEdge {
   id          String  @id @default(cuid())
   snapshotId  String

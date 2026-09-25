@@ -2,7 +2,7 @@ import { NextResponse } from 'next/server';
 import type { NextRequest } from 'next/server';
 
 /** مسیرهای عمومی بدون لاگین */
-const PUBLIC_PATHS = new Set(['/', '/login', '/register']);
+const PUBLIC_PATHS = new Set(['/', '/login', '/register', '/login2']);
 
 function isPublicPath(pathname: string): boolean {
   if (PUBLIC_PATHS.has(pathname)) return true;

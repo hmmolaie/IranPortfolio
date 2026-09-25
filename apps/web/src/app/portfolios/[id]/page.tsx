@@ -23,6 +23,7 @@ type Item = {
   lastPrice?: number | null;
   costBasisRial?: number | null;
   marketValueRial?: number | null;
+  feeRial?: number | null;
   pnlRial?: number | null;
 };
 
@@ -439,6 +440,9 @@ export default function PortfolioDetailPage() {
         return s + (cost || 0);
       }, 0)
     : 0;
+  const feeTotal = latest
+    ? latest.items.reduce((s, i) => s + (i.feeRial ?? 0), 0)
+    : 0;
   const pnlTotal = latest
     ? latest.items.reduce((s, i) => s + (i.pnlRial ?? 0), 0)
     : 0;
@@ -664,7 +668,8 @@ export default function PortfolioDetailPage() {
           <div className="overflow-x-auto">
             <p className="mb-3 text-xs leading-6 text-navy-800/60">
               در هر ردیف تعداد یا مبلغ را عوض کنید و ذخیره کنید. فیلد دیگر از آخرین قیمت دیتابیس حساب
-              می‌شود. وزن٪ فقط نمایشی است.
+              می‌شود. وزن٪ فقط نمایشی است. سود و زیان پس از کسر کارمزد خرید روی بهای تمام‌شده و
+              کارمزد فروش روی ارزش روز است.
             </p>
             <table className="min-w-full text-sm">
               <thead>
@@ -676,6 +681,7 @@ export default function PortfolioDetailPage() {
                   <th className="py-2 pe-4 font-medium">مبلغ (ریال)</th>
                   <th className="py-2 pe-4 font-medium">میانگین خرید</th>
                   <th className="py-2 pe-4 font-medium">آخرین قیمت</th>
+                  <th className="py-2 pe-4 font-medium">کارمزد</th>
                   <th className="py-2 pe-4 font-medium">سود/زیان</th>
                   <th className="py-2 pe-4 font-medium">دلیل</th>
                   <th className="py-2 font-medium">عملیات</th>
@@ -686,7 +692,8 @@ export default function PortfolioDetailPage() {
                   const market = i.marketValueRial ?? i.amountRial;
                   const avg = i.avgBuyPrice ?? i.unitPrice ?? null;
                   const last = i.lastPrice ?? null;
-                  const pnl = i.pnlRial ?? (avg != null && last != null ? (last - avg) * i.quantity : 0);
+                  const fee = i.feeRial ?? 0;
+                  const pnl = i.pnlRial ?? (avg != null && last != null ? (last - avg) * i.quantity - fee : 0);
                   const edit = rowEdit(i);
                   const rowBusy = busy === `edit:${i.symbol}`;
                   return (
@@ -728,6 +735,7 @@ export default function PortfolioDetailPage() {
                       <td className="py-3 pe-4 tabular-nums">
                         {last != null ? formatRial(last) : '—'}
                       </td>
+                      <td className="py-3 pe-4 tabular-nums text-navy-800/80">{formatRial(fee)}</td>
                       <td
                         className={`py-3 pe-4 tabular-nums font-medium ${
                           pnl > 0 ? 'text-emerald-800' : pnl < 0 ? 'text-red-700' : 'text-navy-800/70'
@@ -786,6 +794,9 @@ export default function PortfolioDetailPage() {
                   <td className="py-3 pe-4 font-semibold tabular-nums text-navy-900">
                     <div className="text-[10px] font-normal text-navy-800/45">ارزش روز</div>
                     {formatRial(itemsTotal)}
+                  </td>
+                  <td className="py-3 pe-4 font-semibold tabular-nums text-navy-900">
+                    {formatRial(feeTotal)}
                   </td>
                   <td
                     className={`py-3 pe-4 font-semibold tabular-nums ${

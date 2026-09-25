@@ -20,6 +20,8 @@ import { TelegramAssistantModule } from './telegram-assistant/telegram-assistant
 import { WalletModule } from './wallet/wallet.module';
 import { IntelligenceModule } from './intelligence/intelligence.module';
 import { BackupModule } from './backup/backup.module';
+import { MobileLoginModule } from './mobile-login/mobile-login.module';
+import { TradeFeesModule } from './trade-fees/trade-fees.module';
 
 @Module({
   imports: [
@@ -43,6 +45,8 @@ import { BackupModule } from './backup/backup.module';
     WalletModule,
     IntelligenceModule,
     BackupModule,
+    MobileLoginModule,
+    TradeFeesModule,
   ],
   controllers: [HealthController],
 })

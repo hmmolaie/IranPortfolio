@@ -30,7 +30,7 @@ export function AppShell({ children }: { children: React.ReactNode }) {
   const [authed, setAuthed] = useState(false);
   const [role, setRole] = useState<UserRole | null>(null);
   const [userLabel, setUserLabel] = useState('');
-  const isAuthPage = pathname === '/login' || pathname === '/register' || pathname === '/';
+  const isAuthPage = pathname === '/login' || pathname === '/login2' || pathname === '/register' || pathname === '/';
 
   useEffect(() => {
     const token = getToken();

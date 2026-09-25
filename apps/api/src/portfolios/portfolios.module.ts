@@ -6,9 +6,10 @@ import { NewsModule } from '../news/news.module';
 import { UsersModule } from '../users/users.module';
 import { WorldMarketsModule } from '../world-markets/world-markets.module';
 import { WalletModule } from '../wallet/wallet.module';
+import { TradeFeesModule } from '../trade-fees/trade-fees.module';
 
 @Module({
-  imports: [LlmModule, NewsModule, UsersModule, WorldMarketsModule, WalletModule],
+  imports: [LlmModule, NewsModule, UsersModule, WorldMarketsModule, WalletModule, TradeFeesModule],
   providers: [PortfoliosService],
   controllers: [PortfoliosController],
   exports: [PortfoliosService],

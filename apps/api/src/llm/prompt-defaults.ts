@@ -89,7 +89,7 @@ export const LLM_PROMPT_DEFAULTS: Record<string, PromptDefinition> = {
       "labelFa": "نام کوتاه استراتژی",
       "strategySummaryFa": "توضیح فارسی با ارجاع به درس‌آموخته/اخبار/ارز/سبد صندوق‌ها",
       "items": [
-        { "symbol": "نماد", "assetType": "STOCK|GOLD_ETF|OPTION|DEPOSIT|FUND|CASH|PHYSICAL_GOLD|PHYSICAL_USD", "weightPct": 10, "reasonFa": "دلیل با ارجاع به دادهٔ ورودی" }
+        { "symbol": "نماد", "assetType": "STOCK|GOLD_ETF|OPTION|DEPOSIT|FUND|CASH|PHYSICAL_GOLD|PHYSICAL_USD", "weightPct": 10, "expectedProfitPct": 8, "reasonFa": "دلیل با ارجاع به دادهٔ ورودی" }
       ]
     }
   ]
@@ -97,6 +97,7 @@ export const LLM_PROMPT_DEFAULTS: Record<string, PromptDefinition> = {
 حداقل ۲ و حداکثر ۴ استراتژی.
 اولین استراتژی باید بهترین و کامل‌ترین ترکیب متناسب با strategy و capitalRial کاربر باشد.
 می‌توانی PHYSICAL_GOLD و PHYSICAL_USD را وقتی پوشش تورمی/ارزی مناسب است پیشنهاد بدهی.
+اگر tradeFees در ورودی است، expectedProfitPct هر آیتم باید از مجموع کارمزد خرید و فروش همان نوع دارایی بیشتر باشد؛ وگرنه آن آیتم را نیاور. نقد و سپرده کارمزد ندارند.
 در متن خروجی نام شبکه (X، Twitter، توییتر) ننویس؛ اگر به محل انتشار خبر اشاره می‌کنی فقط بگو شبکه اجتماعی.`,
   },
   portfolio_analyze: {
@@ -122,7 +123,8 @@ export const LLM_PROMPT_DEFAULTS: Record<string, PromptDefinition> = {
       "assetType": "STOCK",
       "amountRial": 50000000,
       "quantity": null,
-      "weightPct": null
+      "weightPct": null,
+      "expectedProfitPct": 8
     }
   ]
 }
@@ -132,7 +134,8 @@ export const LLM_PROMPT_DEFAULTS: Record<string, PromptDefinition> = {
 - ADD نماد جدید؛ INCREASE/DECREASE مقدار تغییر (دلتا) نسبت به موقعیت فعلی؛ SET مقدار هدف جدید؛ REMOVE حذف نماد.
 - amountRial مبلغ ریالی خرید/فروش (ترجیحی). quantity تعداد سهم. weightPct درصد از سرمایه اگر مبلغ نداری.
 - PHYSICAL_GOLD و PHYSICAL_USD مجاز است. assetType یکی از STOCK, GOLD_ETF, FUND, CASH, DEPOSIT, PHYSICAL_GOLD, PHYSICAL_USD.
-- score عدد صحیح ۰ تا ۱۰۰. مشاوره قطعی مالی نده؛ پیشنهاد تصمیم‌یار بده.`,
+- score عدد صحیح ۰ تا ۱۰۰. مشاوره قطعی مالی نده؛ پیشنهاد تصمیم‌یار بده.
+- expectedProfitPct سود پیش‌بینی‌شده به درصد، پیش از کارمزد است. اگر از مجموع کارمزد خرید و فروش همان دارایی در tradeFees بیشتر نیست، آن پیشنهاد را در خروجی نیاور.`,
   },
   portfolio_apply_suggestion: {
     labelFa: 'اعمال یک پیشنهاد بهبود سبد',
