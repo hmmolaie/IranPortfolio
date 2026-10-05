@@ -153,6 +153,13 @@ class ApplyStrategyDto {
   items!: StrategyItemDto[];
 }
 
+class ApplySuggestionsDto {
+  @IsArray()
+  @ValidateNested({ each: true })
+  @Type(() => ApplySuggestionDto)
+  suggestions!: ApplySuggestionDto[];
+}
+
 class ApplySuggestionDto {
   @IsString()
   titleFa!: string;
@@ -292,6 +299,15 @@ export class PortfoliosController {
     @Body() dto: ApplySuggestionDto,
   ) {
     return this.portfolios.applySuggestion(req.user.userId, id, dto);
+  }
+
+  @Post(':id/apply-suggestions')
+  applySuggestions(
+    @Req() req: { user: { userId: string } },
+    @Param('id') id: string,
+    @Body() dto: ApplySuggestionsDto,
+  ) {
+    return this.portfolios.applySuggestions(req.user.userId, id, dto.suggestions);
   }
 
   @Post(':id/adjust')

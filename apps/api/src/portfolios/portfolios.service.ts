@@ -1575,34 +1575,55 @@ summaryFa و نقاط قوت و ضعف گزارش وضعیت سبد هستند �
       weightPct?: number;
     },
   ) {
-    const concrete = this.isConcreteSuggestionAction(data);
-    const resolved = concrete
-      ? {
-          action: data.action as 'ADD' | 'INCREASE' | 'DECREASE' | 'REMOVE' | 'SET',
-          symbol: data.symbol!.trim(),
-          assetType: data.assetType,
-          quantity: data.quantity,
-          amountRial: data.amountRial,
-          weightPct: data.weightPct,
-          reasonFa: data.titleFa,
-        }
-      : await this.resolveSuggestionAction(userId, portfolioId, data);
-
-    if (resolved.action === 'SKIP' || !resolved.symbol.trim()) {
+    const action = data.action;
+    const symbol = data.symbol?.trim() ?? '';
+    if (!action || action === 'SKIP' || !symbol || !this.isConcreteSuggestionAction(data)) {
       throw new BadRequestException(
-        'این پیشنهاد به‌صورت خودکار قابل اعمال نیست؛ فقط راهنمایی است.',
+        'این پیشنهاد مقدار یا نماد مشخصی برای نوشتن در سبد ندارد.',
       );
     }
 
     return this.executeSuggestionAction(userId, portfolioId, {
-      action: resolved.action,
-      symbol: resolved.symbol,
-      assetType: resolved.assetType,
-      quantity: resolved.quantity,
-      amountRial: resolved.amountRial,
-      weightPct: resolved.weightPct,
-      reasonFa: resolved.reasonFa || data.titleFa,
+      action,
+      symbol,
+      assetType: data.assetType,
+      quantity: data.quantity,
+      amountRial: data.amountRial,
+      weightPct: data.weightPct,
+      reasonFa: data.titleFa,
     });
+  }
+
+  /** پیشنهادهای آنالیز را بدون مدل، به ترتیب، روی آخرین ترکیب سبد می‌نویسد. */
+  async applySuggestions(
+    userId: string,
+    portfolioId: string,
+    suggestions: Array<{
+      titleFa: string;
+      bodyFa: string;
+      priority?: string;
+      action?: 'ADD' | 'INCREASE' | 'DECREASE' | 'REMOVE' | 'SET' | 'SKIP';
+      symbol?: string;
+      assetType?: AssetType;
+      quantity?: number;
+      amountRial?: number;
+      weightPct?: number;
+    }>,
+  ) {
+    const concrete = suggestions.filter((item) => this.isConcreteSuggestionAction(item));
+    if (!concrete.length) {
+      throw new BadRequestException('در این فهرست پیشنهادی با مقدار مشخص برای اعمال روی سبد نیست.');
+    }
+    const charged = await this.wallet.charge(userId, 'rebalance');
+    try {
+      for (const item of concrete) {
+        await this.applySuggestion(userId, portfolioId, item);
+      }
+      return this.get(userId, portfolioId);
+    } catch (e) {
+      await this.wallet.refund(userId, charged, 'rebalance');
+      throw e;
+    }
   }
 
   private normalizeAnalysisSuggestion(s: {
@@ -1659,91 +1680,6 @@ summaryFa و نقاط قوت و ضعف گزارش وضعیت سبد هستند �
       (data.amountRial != null && data.amountRial > 0) ||
       (data.weightPct != null && data.weightPct > 0)
     );
-  }
-
-  private async resolveSuggestionAction(
-    userId: string,
-    portfolioId: string,
-    data: {
-      titleFa: string;
-      bodyFa: string;
-      action?: string;
-      symbol?: string;
-      assetType?: AssetType;
-      quantity?: number;
-      amountRial?: number;
-      weightPct?: number;
-    },
-  ) {
-    const portfolio = await this.get(userId, portfolioId);
-    const latest = portfolio.snapshots[0];
-    const universe = await this.buildUniverse();
-    const system = await this.llm.getSystemPrompt(userId, 'portfolio_apply_suggestion');
-    type Out = {
-      action?: string;
-      symbol?: string;
-      assetType?: string;
-      quantity?: number;
-      amountRial?: number;
-      weightPct?: number;
-      reasonFa?: string;
-    };
-    let out: Out;
-    try {
-      out = await this.llm.chatJson<Out>(
-        'portfolio_apply_suggestion',
-        system,
-        JSON.stringify(
-          {
-            suggestion: data,
-            capitalRial: portfolio.capitalRial,
-            cashRial: portfolio.cashRial,
-            holdings: (latest?.items ?? []).map((i) => ({
-              symbol: i.symbol,
-              assetType: i.assetType,
-              quantity: i.quantity,
-              amountRial: i.amountRial,
-            })),
-            universe: universe.slice(0, 80).map((u) => ({
-              symbol: u.symbol,
-              nameFa: u.nameFa,
-              assetType: u.assetType,
-              lastPrice: u.lastPrice,
-            })),
-          },
-          null,
-          2,
-        ),
-        userId,
-      );
-    } catch {
-      throw new BadRequestException('نتوانستیم این پیشنهاد را به یک معامله مشخص تبدیل کنیم.');
-    }
-    const normalized = this.normalizeAnalysisSuggestion({
-      titleFa: out.reasonFa || data.titleFa,
-      bodyFa: data.bodyFa,
-      action: out.action,
-      symbol: out.symbol,
-      assetType: out.assetType,
-      quantity: out.quantity,
-      amountRial: out.amountRial,
-      weightPct: out.weightPct,
-    });
-    return {
-      action: (normalized.action ?? 'SKIP') as
-        | 'ADD'
-        | 'INCREASE'
-        | 'DECREASE'
-        | 'REMOVE'
-        | 'SET'
-        | 'SKIP',
-      symbol: normalized.symbol ?? '',
-      assetType: normalized.assetType,
-      quantity: normalized.quantity,
-      amountRial: normalized.amountRial,
-      weightPct: normalized.weightPct,
-      reasonFa: normalized.titleFa,
-    };
   }
 
   private async executeSuggestionAction(

@@ -329,6 +329,41 @@ export default function PortfolioDetailPage() {
     }
   }
 
+  function suggestionIsActionable(s: AnalysisSuggestion) {
+    if (!s.action || s.action === 'SKIP' || !s.symbol?.trim()) return false;
+    if (s.action === 'REMOVE') return true;
+    return (
+      (s.quantity != null && s.quantity > 0) ||
+      (s.amountRial != null && s.amountRial > 0) ||
+      (s.weightPct != null && s.weightPct > 0)
+    );
+  }
+
+  async function applyAllSuggestions() {
+    if (!analysis) return;
+    const suggestions = analysis.suggestions.filter(suggestionIsActionable);
+    if (!suggestions.length) {
+      toast.error('پیشنهاد قابل نوشتن در سبد در این فهرست نیست.');
+      return;
+    }
+    setBusy('rebalance');
+    try {
+      await api(`/portfolios/${id}/apply-suggestions`, {
+        method: 'POST',
+        body: JSON.stringify({ suggestions: analysis.suggestions }),
+      });
+      setAppliedSuggestions(
+        analysis.suggestions.flatMap((item, index) => (suggestionIsActionable(item) ? [index] : [])),
+      );
+      await load();
+      toast.success('پیشنهادها روی سبد اعمال شد.');
+    } catch (err) {
+      toast.error((err as Error).message);
+    } finally {
+      setBusy('');
+    }
+  }
+
   async function applyOneSuggestion(s: AnalysisSuggestion, index: number) {
     if (s.action === 'SKIP' || appliedSuggestions.includes(index)) return;
     setBusy(`apply-sugg:${index}`);
@@ -537,7 +572,7 @@ export default function PortfolioDetailPage() {
               <h3 className="text-sm font-semibold">پیشنهادهای بهبود</h3>
               {analysis.suggestions.map((s, i) => {
                 const applied = appliedSuggestions.includes(i);
-                const skip = s.action === 'SKIP';
+                const skip = !suggestionIsActionable(s);
                 const rowBusy = busy === `apply-sugg:${i}`;
                 return (
                   <article
@@ -553,7 +588,7 @@ export default function PortfolioDetailPage() {
                       className="btn-primary shrink-0 px-3 py-1.5 text-xs"
                       disabled={!!busy || skip || applied || !latest}
                       title={
-                        skip ? 'این مورد فقط راهنمایی است و معاملهٔ مشخصی ندارد' : undefined
+                        skip ? 'این مورد مقدار مشخصی برای نوشتن در سبد ندارد' : undefined
                       }
                       onClick={() => applyOneSuggestion(s, i)}
                     >
@@ -566,13 +601,13 @@ export default function PortfolioDetailPage() {
           )}
           <div className="flex flex-col items-start gap-2 border-t border-navy-900/10 pt-4">
             <p className="text-sm text-navy-800/65">
-              اگر می‌خواهید سبد با توجه به پیشنهادهای بالا بازچینش شود، از دکمهٔ زیر استفاده کنید.
+              پیشنهادهای دارای مقدار مشخص، به ترتیب روی ترکیب فعلی سبد نوشته می‌شوند.
             </p>
             <button
               type="button"
               className="btn-primary"
-              disabled={!!busy || !latest}
-              onClick={() => run('rebalance', `/portfolios/${id}/rebalance`)}
+              disabled={!!busy || !latest || !analysis.suggestions.some(suggestionIsActionable)}
+              onClick={() => applyAllSuggestions()}
             >
               {busy === 'rebalance' ? '...' : 'بازچینش بر اساس این پیشنهادها'}
             </button>
