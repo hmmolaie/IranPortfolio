@@ -563,6 +563,19 @@ model AiTrace {
   @@index([purpose])
 }
 
+/** خطای فنی مدل زبانی برای نمایش کامل در تنظیمات ادمین */
+model LlmErrorLog {
+  id         String   @id @default(cuid())
+  userId     String?
+  purpose    String?
+  statusCode Int?
+  message    String
+  detail     String
+  createdAt  DateTime @default(now())
+
+  @@index([createdAt])
+}
+
 /** تنظیمات تک‌ردیفی ربات تلگرام (توکن رمزنگاری‌شده). نام کاربری پیش‌فرض: sabadyaar_bot */
 model TelegramBotConfig {
   id                String   @id @default("default")

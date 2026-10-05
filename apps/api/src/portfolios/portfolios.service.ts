@@ -7,7 +7,7 @@ import {
   SnapshotKind,
 } from '@prisma/client';
 import { PrismaService } from '../prisma/prisma.service';
-import { LlmService } from '../llm/llm.service';
+import { isLlmGatewayFailure, LlmService } from '../llm/llm.service';
 import { NewsService } from '../news/news.service';
 import { UsersService } from '../users/users.service';
 import { WorldMarketsService } from '../world-markets/world-markets.service';
@@ -38,6 +38,38 @@ type PortfolioNewsRow = {
   isRetailActionable: boolean | null;
   xSourceHintFa: string | null;
 };
+
+function clipText(value: string | null | undefined, max: number): string | null {
+  if (!value) return null;
+  const text = value.replace(/\s+/g, ' ').trim();
+  if (!text) return null;
+  return text.length <= max ? text : `${text.slice(0, max)}…`;
+}
+
+function compactProfile(profile: {
+  riskTolerance?: number;
+  horizonMonths?: number;
+  investmentPreferencesFa?: string | null;
+  constraintsFa?: string | null;
+  objectiveFa?: string | null;
+  liquidityNeed?: string | null;
+  maxDrawdownPct?: number | null;
+  inflationSensitivity?: string | null;
+  fxSensitivity?: string | null;
+} | null) {
+  if (!profile) return null;
+  return {
+    riskTolerance: profile.riskTolerance,
+    horizonMonths: profile.horizonMonths,
+    preferencesFa: clipText(profile.investmentPreferencesFa, 400),
+    constraintsFa: clipText(profile.constraintsFa, 300),
+    objectiveFa: clipText(profile.objectiveFa, 240),
+    liquidityNeed: profile.liquidityNeed ?? null,
+    maxDrawdownPct: profile.maxDrawdownPct ?? null,
+    inflationSensitivity: profile.inflationSensitivity ?? null,
+    fxSensitivity: profile.fxSensitivity ?? null,
+  };
+}
 
 function splitNewsForPortfolio(rows: PortfolioNewsRow[]) {
   const isOpp = (n: PortfolioNewsRow) => n.category === 'opportunity' || Boolean(n.isRetailActionable);
@@ -1390,28 +1422,73 @@ summaryFa و نقاط قوت و ضعف گزارش وضعیت سبد هستند �
       cashRial: portfolio.cashRial,
       preferencesNoteFa: portfolio.preferencesNoteFa,
     };
-    const userPrompt = JSON.stringify(
+    const news = splitNewsForPortfolio(economicNews);
+    const fullPrompt = JSON.stringify(
       personal
         ? {
             portfolio: portfolioPayload,
-            userProfile: profile,
-            currentItems: pricedItems,
+            userProfile: compactProfile(profile),
+            currentItems: pricedItems.map((item) => ({
+              ...item,
+              reasonFa: clipText(item.reasonFa, 160),
+            })),
             tradeFees: fees,
           }
         : {
             portfolio: portfolioPayload,
-            userProfile: profile,
-            currentItems: pricedItems,
-            macro,
-            ...splitNewsForPortfolio(economicNews),
-            worldMacroNews,
-            fxHistory,
-            lessons: lessons.map((l) => ({ title: l.titleFa, body: l.bodyFa })),
+            userProfile: compactProfile(profile),
+            currentItems: pricedItems.map((item) => ({
+              ...item,
+              reasonFa: clipText(item.reasonFa, 160),
+            })),
+            macro: macro
+              ? {
+                  asOfDate: macro.asOfDate,
+                  inflationPct: macro.inflationPct,
+                  interestRatePct: macro.interestRatePct,
+                  usdIrr: macro.usdIrr,
+                  geoRiskScore: macro.geoRiskScore,
+                  summaryFa: clipText(macro.summaryFa, 400),
+                }
+              : null,
+            economicNews: news.economicNews.map((item) => ({
+              ...item,
+              summary: clipText(item.summary, 220),
+              marketImpact: clipText(item.marketImpact, 180),
+            })),
+            investmentOpportunities: news.investmentOpportunities.map((item) => ({
+              ...item,
+              summary: clipText(item.summary, 220),
+              participateHow: clipText(item.participateHow, 180),
+            })),
+            worldMacroNews: worldMacroNews.map((item) => ({
+              dateKey: item.dateKey,
+              titleFa: item.titleFa,
+              summaryFa: clipText(item.summaryFa, 220),
+              iranImpactFa: clipText(item.iranImpactFa, 220),
+              assetsFa: item.assetsFa,
+              impactDirection: item.impactDirection,
+            })),
+            fxHistory: fxHistory.slice(-10),
+            lessons: lessons.slice(0, 8).map((lesson) => ({
+              title: lesson.titleFa,
+              body: clipText(lesson.bodyFa, 220),
+            })),
             tradeFees: fees,
           },
-      null,
-      2,
     );
+    const slimPrompt = JSON.stringify({
+      portfolio: portfolioPayload,
+      currentItems: pricedItems.map((item) => ({
+        symbol: item.symbol,
+        assetType: item.assetType,
+        weightPct: item.weightPct,
+        amountRial: item.amountRial,
+        unitPrice: item.unitPrice,
+      })),
+      tradeFees: fees,
+      noteFa: 'تلاش کوتاه بعد از قطع پاسخ مدل. فقط ترکیب و قیمت همین سبد را ارزیابی کن.',
+    });
 
     type AnalysisOut = {
       score: number;
@@ -1435,17 +1512,28 @@ summaryFa و نقاط قوت و ضعف گزارش وضعیت سبد هستند �
     let analysis: AnalysisOut;
     const charged = opts?.bill ? await this.wallet.charge(userId, 'suggest') : 0;
     try {
-      analysis = await this.llm.chatJson<AnalysisOut>(
-        'portfolio_analyze',
-        system,
-        userPrompt,
-        userId,
-      );
-    } catch (e) {
+      try {
+        analysis = await this.llm.chatJson<AnalysisOut>(
+          'portfolio_analyze',
+          system,
+          fullPrompt,
+          userId,
+        );
+      } catch (first) {
+        if (!isLlmGatewayFailure(first)) throw first;
+        analysis = await this.llm.chatJson<AnalysisOut>(
+          'portfolio_analyze',
+          system,
+          slimPrompt,
+          userId,
+        );
+      }
+    } catch {
       await this.wallet.refund(userId, charged, 'suggest');
       analysis = {
         score: 55,
-        summaryFa: `آنالیز خودکار بدون LLM: ترکیب فعلی را با اخبار و قیمت روز بررسی کنید. (${(e as Error).message.slice(0, 80)})`,
+        summaryFa:
+          'آنالیز خودکار بدون مدل زبانی: ترکیب فعلی را با اخبار و قیمت روز بررسی کنید. جزئیات فنی در بخش خطاهای مشاهده‌شدهٔ تنظیمات ادمین است.',
         strengthsFa: ['وجود تخصیص ثبت‌شده در سبد'],
         weaknessesFa: ['دسترسی به مدل زبانی برای تحلیل عمیق‌تر برقرار نشد'],
         suggestions: [

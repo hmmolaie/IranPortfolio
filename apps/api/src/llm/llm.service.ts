@@ -34,6 +34,22 @@ class LlmHttpError extends Error {
   get isRateLimited() {
     return this.status === 429 || /rate.?limit/i.test(this.body) || /rate.?limit/i.test(this.message);
   }
+
+  get isGatewayTimeout() {
+    return this.status === 502 || this.status === 503 || this.status === 504 || this.status === 524;
+  }
+}
+
+export function isLlmGatewayFailure(err: unknown): boolean {
+  if (err instanceof LlmHttpError) return err.isGatewayTimeout;
+  const message = err instanceof Error ? err.message : String(err);
+  return /\b50[234]\b|\b524\b|gateway time-?out|<!DOCTYPE html/i.test(message);
+}
+
+function redactSecrets(text: string): string {
+  return text
+    .replace(/Bearer\s+\S+/gi, 'Bearer [redacted]')
+    .replace(/sk-[A-Za-z0-9_-]{8,}/g, 'sk-[redacted]');
 }
 
 function sleep(ms: number) {
@@ -351,6 +367,11 @@ export class LlmService {
             await sleep(1500 * attempt * attempt);
             continue;
           }
+          const gateway = e instanceof LlmHttpError && e.isGatewayTimeout;
+          if (gateway && attempt === 1) {
+            await sleep(1500);
+            continue;
+          }
           // برای ۴۲۹ برو سراغ مدل بعدی؛ برای بقیه خطاها اگر json_object بود لایه بالا retry می‌کند
           if (rateLimited) break;
           throw e;
@@ -552,6 +573,7 @@ export class LlmService {
           : {}),
       }));
     } catch (e) {
+      if (e instanceof LlmHttpError && e.isGatewayTimeout) throw e;
       if (e instanceof LlmHttpError && e.isRateLimited) throw this.humanizeError(e);
       this.logger.warn(`chatJson با json_object ناموفق، تلاش بدون آن: ${(e as Error).message}`);
       return this.callWithModelFallback(creds, (model) => ({
@@ -563,6 +585,21 @@ export class LlmService {
   }
 
   async chatJson<T>(
+    purpose: string,
+    systemPrompt: string,
+    userPrompt: string,
+    userId?: string,
+    options?: LlmChatOptions,
+  ): Promise<T> {
+    try {
+      return await this.chatJsonInner<T>(purpose, systemPrompt, userPrompt, userId, options);
+    } catch (e) {
+      await this.recordFailure(purpose, userId, e);
+      throw this.humanizeError(e);
+    }
+  }
+
+  private async chatJsonInner<T>(
     purpose: string,
     systemPrompt: string,
     userPrompt: string,
@@ -766,7 +803,52 @@ export class LlmService {
       });
       return content;
     } catch (e) {
+      await this.recordFailure(purpose, userId, e);
       throw this.humanizeError(e);
+    }
+  }
+
+  async listErrors() {
+    const rows = await this.prisma.llmErrorLog.findMany({
+      orderBy: { createdAt: 'desc' },
+      take: 100,
+    });
+    return rows.map((row) => ({
+      id: row.id,
+      purpose: row.purpose,
+      statusCode: row.statusCode,
+      message: row.message,
+      detail: row.detail,
+      createdAt: row.createdAt,
+    }));
+  }
+
+  async clearErrors() {
+    const result = await this.prisma.llmErrorLog.deleteMany();
+    return { deleted: result.count };
+  }
+
+  private async recordFailure(purpose: string, userId: string | undefined, err: unknown) {
+    try {
+      const raw =
+        err instanceof LlmHttpError
+          ? err.body || err.message
+          : err instanceof Error
+            ? err.message
+            : String(err);
+      const detail = redactSecrets(raw).slice(0, 20000);
+      const message = redactSecrets(err instanceof Error ? err.message : raw).slice(0, 4000);
+      await this.prisma.llmErrorLog.create({
+        data: {
+          userId: userId ?? null,
+          purpose,
+          statusCode: err instanceof LlmHttpError ? err.status : null,
+          message,
+          detail,
+        },
+      });
+    } catch (logErr) {
+      this.logger.warn(`ثبت خطای LLM ناموفق: ${(logErr as Error).message}`);
     }
   }
 
@@ -838,6 +920,7 @@ export class LlmService {
         messageFa: `اتصال برقرار است. مدل «${model}» در ${latencyMs.toLocaleString('fa-IR')} میلی‌ثانیه پاسخ داد.`,
       };
     } catch (e) {
+      await this.recordFailure('llm_test', userId, e);
       const latencyMs = Date.now() - started;
       const err = this.humanizeError(e);
       return {

@@ -48,6 +48,7 @@ type SettingsTab =
   | 'funds'
   | 'prompts'
   | 'llm'
+  | 'llmErrors'
   | 'spotPrices'
   | 'worldApis'
   | 'refreshTimes'
@@ -66,6 +67,7 @@ const TABS: { id: SettingsTab; label: string; adminOnly?: boolean }[] = [
   { id: 'funds', label: 'صندوق‌ها', adminOnly: true },
   { id: 'prompts', label: 'پرامپت‌ها', adminOnly: true },
   { id: 'llm', label: 'API مدل زبانی', adminOnly: true },
+  { id: 'llmErrors', label: 'خطاهای مشاهده شده', adminOnly: true },
   { id: 'spotPrices', label: 'API قیمت لحظه‌ای دلار و طلا', adminOnly: true },
   { id: 'worldApis', label: 'API اقتصاد دنیا', adminOnly: true },
   { id: 'refreshTimes', label: 'ساعت به‌روزرسانی', adminOnly: true },
@@ -261,6 +263,17 @@ export default function SettingsPage() {
   const [assistMeta, setAssistMeta] = useState({ hasToken: false, deepLink: null as string | null });
   const [assistBusy, setAssistBusy] = useState(false);
   const [assistFeedback, setAssistFeedback] = useState<{ ok: boolean; text: string } | null>(null);
+  const [llmErrors, setLlmErrors] = useState<
+    Array<{
+      id: string;
+      purpose: string | null;
+      statusCode: number | null;
+      message: string;
+      detail: string;
+      createdAt: string;
+    }>
+  >([]);
+  const [llmErrorsBusy, setLlmErrorsBusy] = useState(false);
   const [feeForm, setFeeForm] = useState({
     stockBuyPct: '0',
     stockSellPct: '0',
@@ -476,6 +489,34 @@ export default function SettingsPage() {
     }
   }
 
+  async function loadLlmErrors() {
+    const rows = await api<
+      Array<{
+        id: string;
+        purpose: string | null;
+        statusCode: number | null;
+        message: string;
+        detail: string;
+        createdAt: string;
+      }>
+    >('/llm/errors');
+    setLlmErrors(rows);
+  }
+
+  async function clearLlmErrors() {
+    if (!confirm('خطاهای ثبت‌شدهٔ مدل زبانی حذف شوند؟')) return;
+    setLlmErrorsBusy(true);
+    try {
+      await api('/llm/errors', { method: 'DELETE' });
+      setLlmErrors([]);
+      toast.success('خطاها حذف شد.');
+    } catch (err) {
+      toast.error((err as Error).message);
+    } finally {
+      setLlmErrorsBusy(false);
+    }
+  }
+
   async function clearMobileLoginLogs() {
     if (!confirm('همهٔ لاگ‌های ورود با موبایل حذف شوند؟')) return;
     setMobileLoginBusy(true);
@@ -625,6 +666,9 @@ export default function SettingsPage() {
     }
     if (tab === 'fees' && isAdmin) {
       loadTradeFees().catch(() => undefined);
+    }
+    if (tab === 'llmErrors' && isAdmin) {
+      loadLlmErrors().catch(() => undefined);
     }
   }, [tab, isAdmin]);
 
@@ -2367,6 +2411,43 @@ export default function SettingsPage() {
                 )}
               </tbody>
             </table>
+          </div>
+        </section>
+      )}
+
+      {tab === 'llmErrors' && isAdmin && (
+        <section className="card space-y-4">
+          <h2 className="text-lg font-semibold">خطاهای مشاهده شده</h2>
+          <p className="text-sm leading-7 text-navy-800/70">
+            وقتی مدل زبانی خطا بدهد، متن فنی کامل اینجا می‌ماند. تست اتصال کوتاه است و این فهرست خطاهای کارهای سنگین‌تر مثل آنالیز سبد را نشان می‌دهد.
+          </p>
+          <button
+            type="button"
+            className="btn-secondary w-fit"
+            disabled={llmErrorsBusy || llmErrors.length === 0}
+            onClick={() => clearLlmErrors().catch(() => undefined)}
+          >
+            حذف خطاها
+          </button>
+          <div className="space-y-3">
+            {llmErrors.map((row) => (
+              <article key={row.id} className="rounded-lg border border-navy-900/10 bg-white px-3 py-3">
+                <p className="text-sm text-navy-900">
+                  {formatShamsiDateTime(row.createdAt)}
+                  {row.purpose ? ` · ${row.purpose}` : ''}
+                  {row.statusCode != null ? ` · ${row.statusCode}` : ''}
+                </p>
+                <pre
+                  className="mt-2 max-h-80 overflow-auto whitespace-pre-wrap break-words text-xs leading-6 text-navy-800/80"
+                  dir="ltr"
+                >
+                  {row.detail || row.message}
+                </pre>
+              </article>
+            ))}
+            {llmErrors.length === 0 && (
+              <p className="text-sm text-navy-800/50">خطایی ثبت نشده است.</p>
+            )}
           </div>
         </section>
       )}

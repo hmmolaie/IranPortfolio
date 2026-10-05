@@ -61,6 +61,16 @@ export class LlmController {
     return this.llm.testConnection(req.user.userId, dto);
   }
 
+  @Get('errors')
+  errors() {
+    return this.llm.listErrors();
+  }
+
+  @Delete('errors')
+  clearErrors() {
+    return this.llm.clearErrors();
+  }
+
   @Get('prompts')
   listPrompts(@Req() req: { user: { userId: string } }) {
     return this.llm.listPrompts(req.user.userId);
