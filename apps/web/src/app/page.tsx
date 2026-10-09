@@ -2,7 +2,7 @@
 
 import { FormEvent, useEffect, useState } from 'react';
 import { useRouter } from 'next/navigation';
-import { api, getToken, setToken, setUserRole } from '@/lib/api';
+import { ApiError, api, getToken, setToken, setUserRole } from '@/lib/api';
 import {
   canUsePlatformBiometrics,
   defaultDeviceName,
@@ -30,6 +30,18 @@ function safeNextPath(raw: string | null): string {
 function nextFromUrl(): string {
   if (typeof window === 'undefined') return '/dashboard';
   return safeNextPath(new URLSearchParams(window.location.search).get('next'));
+}
+
+function loginErrorText(err: unknown): string {
+  const wrongCredentials = 'نام کاربری و کلمه عبور اشتباه است';
+  if (err instanceof ApiError && err.status === 401) {
+    const message = err.message.trim();
+    if (!message || message === 'Unauthorized' || message.startsWith('پاسخ سرور خطای')) {
+      return wrongCredentials;
+    }
+    return message;
+  }
+  return err instanceof Error ? err.message : wrongCredentials;
 }
 
 export default function HomePage() {
@@ -104,7 +116,7 @@ export default function HomePage() {
       });
       await maybeOfferPasskey(res);
     } catch (err) {
-      setError((err as Error).message);
+      setError(loginErrorText(err));
     } finally {
       setLoading(false);
     }

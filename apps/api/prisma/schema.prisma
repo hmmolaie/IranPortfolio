@@ -639,6 +639,8 @@ model TelegramBotConfig {
   ttsApiTokenEncrypted String?
   /// مدل متن‌به‌صدا برای فایل صوتی اخبار روزانه
   ttsModel          String   @default("gpt-4o-mini-tts")
+  /// نام صدای گفتار، مثلاً alloy
+  ttsVoice          String   @default("alloy")
   /// ساعت ارسال به وقت تهران
   sendHour          Int      @default(8)
   sendMinute        Int      @default(30)
@@ -716,6 +718,15 @@ model ContentRefreshSchedule {
   marketMinute    Int      @default(0)
   createdAt       DateTime @default(now())
   updatedAt       DateTime @updatedAt
+}
+
+/** نشانی و توکن BrsApi برای بورس ایران. توکن رمزنگاری‌شده است. */
+model IranMarketApiConfig {
+  id                 String   @id @default("default")
+  baseUrl            String   @default("https://Api.BrsApi.ir")
+  apiTokenEncrypted  String?
+  createdAt          DateTime @default(now())
+  updatedAt          DateTime @updatedAt
 }
 
 /** نشانی API بیت‌پین و یاهو فایننس برای اقتصاد دنیا */

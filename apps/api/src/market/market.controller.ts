@@ -6,12 +6,13 @@ import {
   NotFoundException,
   Param,
   Post,
+  Put,
   Query,
   Req,
   UseGuards,
 } from '@nestjs/common';
 import { AssetType } from '@prisma/client';
-import { IsString, MaxLength, MinLength } from 'class-validator';
+import { IsOptional, IsString, MaxLength, MinLength } from 'class-validator';
 import { MarketService } from './market.service';
 import { JwtAuthGuard } from '../auth/jwt-auth.guard';
 import { AdminGuard } from '../auth/admin.guard';
@@ -27,6 +28,18 @@ class MarketChatDto {
   @MinLength(2)
   @MaxLength(800)
   message!: string;
+}
+
+class SaveBrsApiDto {
+  @IsOptional()
+  @IsString()
+  @MaxLength(300)
+  baseUrl?: string;
+
+  @IsOptional()
+  @IsString()
+  @MaxLength(200)
+  apiToken?: string;
 }
 
 @Controller('market')
@@ -102,5 +115,23 @@ export class MarketController {
   @UseGuards(AdminGuard)
   ingest() {
     return this.market.ingestCatchUp();
+  }
+
+  @Get('brs-api')
+  @UseGuards(AdminGuard)
+  brsApi() {
+    return this.market.getBrsApiConfig();
+  }
+
+  @Put('brs-api')
+  @UseGuards(AdminGuard)
+  saveBrsApi(@Body() dto: SaveBrsApiDto) {
+    return this.market.saveBrsApiConfig(dto);
+  }
+
+  @Post('brs-api/test')
+  @UseGuards(AdminGuard)
+  testBrsApi() {
+    return this.market.testBrsApi();
   }
 }

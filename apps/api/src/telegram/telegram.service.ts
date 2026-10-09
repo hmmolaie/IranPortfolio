@@ -55,6 +55,7 @@ type TelegramUpdate = {
 
 const CONFIG_ID = 'default';
 const DEFAULT_DIGEST_TTS_MODEL = 'gpt-4o-mini-tts';
+const DEFAULT_DIGEST_TTS_VOICE = 'alloy';
 const TG_API = 'https://api.telegram.org';
 const DIGEST_TTS_INSTRUCTIONS =
   'Speak as an Iranian woman news presenter. Fluent contemporary Iranian Persian, not Dari. Warm, clear, natural pace. Past-tense reporting. Do not rush; keep the whole briefing under two minutes.';
@@ -144,6 +145,7 @@ export class TelegramService implements OnModuleInit {
       ttsBaseUrl: row?.ttsBaseUrl?.trim() ?? '',
       hasTtsToken: Boolean(row?.ttsApiTokenEncrypted),
       ttsModel: this.resolveDigestTtsModel(row?.ttsModel),
+      ttsVoice: this.resolveDigestTtsVoice(row?.ttsVoice),
       ...this.scheduleFrom(row),
       hasToken: Boolean(row?.botTokenEncrypted),
       linkedCount,
@@ -181,6 +183,7 @@ export class TelegramService implements OnModuleInit {
     ttsBaseUrl?: string;
     ttsApiToken?: string;
     ttsModel?: string;
+    ttsVoice?: string;
     sendHour?: number;
     sendMinute?: number;
     sendWeekdays?: number[];
@@ -213,6 +216,7 @@ export class TelegramService implements OnModuleInit {
       ttsApiTokenEncrypted = encryptSecret(this.encKey(), data.ttsApiToken.trim());
     }
     const ttsModel = this.resolveDigestTtsModel(data.ttsModel ?? current?.ttsModel);
+    const ttsVoice = this.resolveDigestTtsVoice(data.ttsVoice ?? current?.ttsVoice);
     const schedule = this.resolveSchedule(data, current);
 
     return this.prisma.telegramBotConfig.upsert({
@@ -226,6 +230,7 @@ export class TelegramService implements OnModuleInit {
         ttsBaseUrl,
         ttsApiTokenEncrypted,
         ttsModel,
+        ttsVoice,
         sendHour: schedule.hour,
         sendMinute: schedule.minute,
         sendWeekdays: schedule.weekdays,
@@ -238,6 +243,7 @@ export class TelegramService implements OnModuleInit {
         ttsBaseUrl,
         ttsApiTokenEncrypted,
         ttsModel,
+        ttsVoice,
         sendHour: schedule.hour,
         sendMinute: schedule.minute,
         sendWeekdays: schedule.weekdays,
@@ -308,6 +314,7 @@ export class TelegramService implements OnModuleInit {
     try {
       const audio = await this.llm.speakTts('سلام چطوری خوبی؟', userId, {
         model: speech.model,
+        voice: speech.voice,
         baseUrl: speech.baseUrl,
         apiKey: speech.apiKey,
       });
@@ -912,6 +919,15 @@ export class TelegramService implements OnModuleInit {
     return model;
   }
 
+  private resolveDigestTtsVoice(raw?: string | null): string {
+    const voice = (raw ?? '').trim();
+    if (!voice) return DEFAULT_DIGEST_TTS_VOICE;
+    if (voice.length > 40 || !/^[A-Za-z0-9_-]+$/.test(voice)) {
+      throw new BadRequestException('نام صدا نامعتبر است');
+    }
+    return voice;
+  }
+
   private async digestTtsModel(): Promise<string> {
     const row = await this.prisma.telegramBotConfig.findUnique({ where: { id: CONFIG_ID } });
     return this.resolveDigestTtsModel(row?.ttsModel);
@@ -941,14 +957,17 @@ export class TelegramService implements OnModuleInit {
   }
 
   /** نشانی، توکن و مدل گفتار از تنظیمات ربات. اگر نشانی یا توکن خالی باشد، اتصال مدل زبانی مدیر استفاده می‌شود. */
-  private async resolveSpeech(userId?: string): Promise<{ baseUrl: string; apiKey: string; model: string }> {
+  private async resolveSpeech(
+    userId?: string,
+  ): Promise<{ baseUrl: string; apiKey: string; model: string; voice: string }> {
     const row = await this.prisma.telegramBotConfig.findUnique({ where: { id: CONFIG_ID } });
     const model = this.resolveDigestTtsModel(row?.ttsModel);
+    const voice = this.resolveDigestTtsVoice(row?.ttsVoice);
     const savedBase = row?.ttsBaseUrl?.trim() ?? '';
     const savedKey = row?.ttsApiTokenEncrypted ? decryptSecret(this.encKey(), row.ttsApiTokenEncrypted) : '';
-    if (savedBase && savedKey) return { baseUrl: savedBase, apiKey: savedKey, model };
+    if (savedBase && savedKey) return { baseUrl: savedBase, apiKey: savedKey, model, voice };
     const access = await this.llm.speechAccess(userId);
-    return { baseUrl: access.baseUrl, apiKey: access.apiKey, model };
+    return { baseUrl: access.baseUrl, apiKey: access.apiKey, model, voice };
   }
 
   private async optionOpportunityLines(): Promise<string[]> {
@@ -997,6 +1016,7 @@ export class TelegramService implements OnModuleInit {
       const speech = await this.resolveSpeech(adminId ?? undefined);
       const audio = await this.llm.speakTts(script, adminId ?? undefined, {
         model: speech.model,
+        voice: speech.voice,
         baseUrl: speech.baseUrl,
         apiKey: speech.apiKey,
         instructions: DIGEST_TTS_INSTRUCTIONS,

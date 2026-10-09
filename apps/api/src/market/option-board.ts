@@ -250,8 +250,9 @@ export function redirectAnalysisSuggestion<
   T extends { action?: string; symbol?: string; assetType?: string; bodyFa?: string },
 >(item: T, board: OptionBoard): T {
   const action = item.action;
-  if (!item.symbol || !action || action === 'SKIP' || action === 'REMOVE' || action === 'DECREASE') return item;
-  const hit = board.replacements.find((row) => fold(row.symbol) === fold(item.symbol));
+  const symbol = item.symbol;
+  if (!symbol || !action || action === 'SKIP' || action === 'REMOVE' || action === 'DECREASE') return item;
+  const hit = board.replacements.find((row) => fold(row.symbol) === fold(symbol));
   if (!hit) return item;
   if (!hit.replacement) {
     return { ...item, action: 'SKIP', bodyFa: hit.noteFa } as T;

@@ -34,6 +34,10 @@ class SaveTelegramConfigDto {
   ttsModel?: string;
 
   @IsOptional()
+  @IsString()
+  ttsVoice?: string;
+
+  @IsOptional()
   @IsInt()
   @Min(0)
   @Max(23)

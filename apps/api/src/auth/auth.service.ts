@@ -19,9 +19,9 @@ export class AuthService {
 
   async login(email: string, password: string) {
     const user = await this.users.findByEmail(email);
-    if (!user) throw new UnauthorizedException('نام کاربری یا رمز عبور نادرست است');
+    if (!user) throw new UnauthorizedException('نام کاربری و کلمه عبور اشتباه است');
     const ok = await bcrypt.compare(password, user.passwordHash);
-    if (!ok) throw new UnauthorizedException('نام کاربری یا رمز عبور نادرست است');
+    if (!ok) throw new UnauthorizedException('نام کاربری و کلمه عبور اشتباه است');
     if (!user.isActive) throw new UnauthorizedException('حساب کاربری غیرفعال است');
     return this.tokenFor(user.id, user.email, user.role);
   }

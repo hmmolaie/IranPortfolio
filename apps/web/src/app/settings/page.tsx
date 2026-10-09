@@ -51,6 +51,7 @@ type SettingsTab =
   | 'llmErrors'
   | 'spotPrices'
   | 'worldApis'
+  | 'iranMarketApi'
   | 'refreshTimes'
   | 'telegram'
   | 'telegramAssistant'
@@ -70,6 +71,7 @@ const TABS: { id: SettingsTab; label: string; adminOnly?: boolean }[] = [
   { id: 'llmErrors', label: 'خطاهای مشاهده شده', adminOnly: true },
   { id: 'spotPrices', label: 'API قیمت لحظه‌ای دلار و طلا', adminOnly: true },
   { id: 'worldApis', label: 'API اقتصاد دنیا', adminOnly: true },
+  { id: 'iranMarketApi', label: 'API بورس ایران', adminOnly: true },
   { id: 'refreshTimes', label: 'ساعت به‌روزرسانی', adminOnly: true },
   { id: 'telegram', label: 'ربات تلگرام', adminOnly: true },
   { id: 'telegramAssistant', label: 'دستیار تلگرام', adminOnly: true },
@@ -211,6 +213,20 @@ export default function SettingsPage() {
     goldGramRial?: number | null;
   } | null>(null);
   const [worldApis, setWorldApis] = useState({ bitpinMarketsUrl: '', yahooQuoteUrl: '' });
+  const [brsForm, setBrsForm] = useState({ baseUrl: 'https://Api.BrsApi.ir', apiToken: '' });
+  const [brsFunctions, setBrsFunctions] = useState<
+    Array<{
+      id: string;
+      nameFa: string;
+      path: string;
+      paramsFa: string;
+      dailyQuota: string;
+      usedByApp: boolean;
+    }>
+  >([]);
+  const [brsHasToken, setBrsHasToken] = useState(false);
+  const [brsBusy, setBrsBusy] = useState(false);
+  const [brsFeedback, setBrsFeedback] = useState<{ ok: boolean; text: string } | null>(null);
   const [worldApiBusy, setWorldApiBusy] = useState(false);
   const [worldApiFeedback, setWorldApiFeedback] = useState<{ ok: boolean; text: string } | null>(null);
   const [refreshTimes, setRefreshTimes] = useState({
@@ -230,6 +246,7 @@ export default function SettingsPage() {
     ttsBaseUrl: '',
     ttsApiToken: '',
     ttsModel: 'gpt-4o-mini-tts',
+    ttsVoice: 'alloy',
     sendHour: 8,
     sendMinute: 30,
     sendWeekdays: [0, 1, 2, 3, 4, 5, 6],
@@ -385,6 +402,7 @@ export default function SettingsPage() {
         ttsBaseUrl?: string;
         hasTtsToken?: boolean;
         ttsModel?: string;
+        ttsVoice?: string;
         sendHour?: number;
         sendMinute?: number;
         sendWeekdays?: number[];
@@ -404,6 +422,7 @@ export default function SettingsPage() {
         ttsBaseUrl: c.ttsBaseUrl?.trim() || '',
         ttsApiToken: '',
         ttsModel: c.ttsModel?.trim() || 'gpt-4o-mini-tts',
+        ttsVoice: c.ttsVoice?.trim() || 'alloy',
         sendHour: c.sendHour ?? 8,
         sendMinute: c.sendMinute ?? 30,
         sendWeekdays: c.sendWeekdays?.length ? c.sendWeekdays : [0, 1, 2, 3, 4, 5, 6],
@@ -659,6 +678,9 @@ export default function SettingsPage() {
     if (tab === 'worldApis' && isAdmin) {
       loadWorldApis().catch(() => undefined);
     }
+    if (tab === 'iranMarketApi' && isAdmin) {
+      loadBrsApi().catch(() => undefined);
+    }
     if (tab === 'refreshTimes' && isAdmin) {
       loadRefreshTimes().catch(() => undefined);
     }
@@ -706,6 +728,66 @@ export default function SettingsPage() {
       toast.error(text);
     } finally {
       setRefreshTimeBusy(false);
+    }
+  }
+
+  async function loadBrsApi() {
+    const cfg = await api<{
+      baseUrl: string;
+      hasToken: boolean;
+      functions: Array<{
+        id: string;
+        nameFa: string;
+        path: string;
+        paramsFa: string;
+        dailyQuota: string;
+        usedByApp: boolean;
+      }>;
+    }>('/market/brs-api');
+    setBrsForm((prev) => ({ ...prev, baseUrl: cfg.baseUrl, apiToken: '' }));
+    setBrsHasToken(cfg.hasToken);
+    setBrsFunctions(cfg.functions);
+  }
+
+  async function saveBrsApi(e: FormEvent) {
+    e.preventDefault();
+    setBrsBusy(true);
+    setBrsFeedback(null);
+    try {
+      await api('/market/brs-api', {
+        method: 'PUT',
+        body: JSON.stringify({
+          baseUrl: brsForm.baseUrl.trim(),
+          ...(brsForm.apiToken.trim() ? { apiToken: brsForm.apiToken.trim() } : {}),
+        }),
+      });
+      setBrsForm((prev) => ({ ...prev, apiToken: '' }));
+      await loadBrsApi();
+      const text = 'تنظیمات API بورس ایران ذخیره شد.';
+      setBrsFeedback({ ok: true, text });
+      toast.success(text);
+    } catch (err) {
+      const text = (err as Error).message || 'ذخیره ناموفق بود.';
+      setBrsFeedback({ ok: false, text });
+      toast.error(text);
+    } finally {
+      setBrsBusy(false);
+    }
+  }
+
+  async function testBrsApi() {
+    setBrsBusy(true);
+    setBrsFeedback(null);
+    try {
+      const res = await api<{ messageFa: string }>('/market/brs-api/test', { method: 'POST' });
+      setBrsFeedback({ ok: true, text: res.messageFa });
+      toast.success(res.messageFa);
+    } catch (err) {
+      const text = (err as Error).message || 'تست اتصال ناموفق بود.';
+      setBrsFeedback({ ok: false, text });
+      toast.error(text);
+    } finally {
+      setBrsBusy(false);
     }
   }
 
@@ -867,6 +949,7 @@ export default function SettingsPage() {
           botUsername: tgForm.botUsername.trim().replace(/^@/, ''),
           ttsBaseUrl: tgForm.ttsBaseUrl.trim(),
           ttsModel: tgForm.ttsModel.trim(),
+          ttsVoice: tgForm.ttsVoice.trim(),
           ...(tgForm.ttsApiToken.trim() ? { ttsApiToken: tgForm.ttsApiToken.trim() } : {}),
           sendHour: tgForm.sendHour,
           sendMinute: tgForm.sendMinute,
@@ -2013,6 +2096,90 @@ export default function SettingsPage() {
         </form>
       )}
 
+      {tab === 'iranMarketApi' && isAdmin && (
+        <form onSubmit={saveBrsApi} className="card grid max-w-3xl gap-4">
+          <p className="text-sm leading-7 text-navy-800/75">
+            به‌روزرسانی نمادها، شاخص و اختیار معامله از این نشانی و توکن خوانده می‌شود. توکن در صفحه
+            نشان داده نمی‌شود.
+          </p>
+          <div>
+            <label className="label">نشانی پایه</label>
+            <input
+              className="input"
+              value={brsForm.baseUrl}
+              onChange={(e) => setBrsForm({ ...brsForm, baseUrl: e.target.value })}
+              placeholder="https://Api.BrsApi.ir"
+              dir="ltr"
+              spellCheck={false}
+              required
+            />
+          </div>
+          <div>
+            <label className="label">توکن</label>
+            <input
+              className="input"
+              type="password"
+              value={brsForm.apiToken}
+              onChange={(e) => setBrsForm({ ...brsForm, apiToken: e.target.value })}
+              placeholder={brsHasToken ? 'برای جایگزینی توکن جدید وارد کنید' : 'کلید وب‌سرویس'}
+              dir="ltr"
+              spellCheck={false}
+            />
+            <p className="mt-1 text-xs leading-6 text-navy-800/55">
+              توکن ذخیره شده: {brsHasToken ? 'بله' : 'خیر'}
+            </p>
+          </div>
+          <div className="flex flex-wrap gap-2">
+            <button type="submit" className="btn-primary w-fit" disabled={brsBusy}>
+              {brsBusy ? 'در حال انجام...' : 'ذخیره'}
+            </button>
+            <button type="button" className="btn-secondary w-fit" disabled={brsBusy} onClick={testBrsApi}>
+              تست اتصال
+            </button>
+          </div>
+          {brsFeedback && (
+            <div
+              className={clsx(
+                'rounded-lg px-3 py-3 text-sm leading-7',
+                brsFeedback.ok ? 'bg-emerald-50 text-emerald-900' : 'bg-red-50 text-red-800',
+              )}
+              role={brsFeedback.ok ? 'status' : 'alert'}
+            >
+              {brsFeedback.ok ? '✓ ' : '! '}
+              {brsFeedback.text}
+            </div>
+          )}
+          <div className="overflow-x-auto">
+            <table className="w-full min-w-[36rem] text-sm">
+              <thead>
+                <tr className="border-b border-navy-900/10 text-navy-800/60">
+                  <th className="px-2 py-2 text-right font-medium">کارکرد</th>
+                  <th className="px-2 py-2 text-right font-medium">مسیر</th>
+                  <th className="px-2 py-2 text-right font-medium">سقف روزانه</th>
+                </tr>
+              </thead>
+              <tbody>
+                {brsFunctions.map((row) => (
+                  <tr key={row.id} className="border-b border-navy-900/5 align-top">
+                    <td className="px-2 py-2">
+                      <div>{row.nameFa}</div>
+                      <div className="mt-1 text-xs leading-5 text-navy-800/55">{row.paramsFa}</div>
+                      {row.usedByApp && (
+                        <div className="mt-1 text-xs text-emerald-800">در به‌روزرسانی بازار استفاده می‌شود</div>
+                      )}
+                    </td>
+                    <td className="px-2 py-2 font-mono text-xs" dir="ltr">
+                      {row.path}
+                    </td>
+                    <td className="px-2 py-2">{row.dailyQuota}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        </form>
+      )}
+
       {tab === 'refreshTimes' && isAdmin && (
         <form onSubmit={saveRefreshTimes} className="card grid max-w-2xl gap-4">
           <p className="text-sm leading-7 text-navy-800/75">
@@ -2157,8 +2324,19 @@ export default function SettingsPage() {
               spellCheck={false}
             />
             <p className="mt-1 text-xs leading-6 text-navy-800/55">
-              روی نشانی سازگار با OpenAI همین مدل با صدای alloy و بدنه model و voice و input فرستاده می‌شود. مدل Gemini آنجا به gpt-4o-mini-tts عوض می‌شود.
+              مدل و صدا از همین‌جا خوانده می‌شوند. اگر نام مدل روی سرویس سازگار با OpenAI شناخته نشود، به gpt-4o-mini-tts عوض می‌شود.
             </p>
+          </div>
+          <div>
+            <label className="label">صدای گفتار</label>
+            <input
+              className="input"
+              value={tgForm.ttsVoice}
+              onChange={(e) => setTgForm({ ...tgForm, ttsVoice: e.target.value })}
+              placeholder="alloy"
+              dir="ltr"
+              spellCheck={false}
+            />
           </div>
           <div>
             <label className="label">ساعت ارسال (تهران)</label>

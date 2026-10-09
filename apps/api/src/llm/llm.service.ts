@@ -11,7 +11,6 @@ import {
   speechModelAcceptsInstructions,
   speechModelForBase,
   splitSpeechInput,
-  speechVoiceForModel,
 } from './tts-voice';
 import { LLM_PROMPT_DEFAULTS, isValidPromptPurpose } from './prompt-defaults';
 import {
@@ -673,11 +672,10 @@ export class LlmService {
     const apiKey = opts?.apiKey?.trim() || creds.apiKey;
     const input = text.replace(/\s+/g, ' ').trim().slice(0, 4096);
     if (!input) throw new Error('متن خالی برای گفتار');
-    const requestedModel =
-      opts?.model?.trim() || this.config.get<string>('TTS_MODEL') || 'gpt-4o-mini-tts';
+    const savedSpeech = await this.adminSpeechChoice();
+    const requestedModel = opts?.model?.trim() || savedSpeech.model;
     const model = speechModelForBase(baseUrl, requestedModel);
-    const requestedVoice = opts?.voice ?? this.config.get<string>('TTS_VOICE');
-    const voice = isGapGptBase(baseUrl) ? 'alloy' : speechVoiceForModel(model, requestedVoice);
+    const voice = opts?.voice?.trim() || savedSpeech.voice;
     if (model !== requestedModel) {
       this.logger.warn(`مدل گفتار ${requestedModel} با این نشانی سازگار نیست؛ ${model} استفاده شد`);
     }
@@ -800,10 +798,15 @@ export class LlmService {
 
   private async resolveTtsCredentials(userId?: string): Promise<LlmCreds> {
     const creds = await this.resolveCredentials(userId);
+    return { ...creds, fallbackModels: [] };
+  }
+
+  /** مدل و صدای گفتار فقط از تنظیمات ربات تلگرام. فایل env خوانده نمی‌شود. */
+  private async adminSpeechChoice(): Promise<{ model: string; voice: string }> {
+    const row = await this.prisma.telegramBotConfig.findUnique({ where: { id: 'default' } });
     return {
-      ...creds,
-      model: this.config.get<string>('TTS_MODEL') ?? 'gpt-4o-mini-tts',
-      fallbackModels: [],
+      model: row?.ttsModel?.trim() || 'gpt-4o-mini-tts',
+      voice: row?.ttsVoice?.trim() || 'alloy',
     };
   }
 

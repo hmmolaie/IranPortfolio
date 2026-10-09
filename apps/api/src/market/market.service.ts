@@ -22,6 +22,13 @@ import {
   type BoardSource,
   type OptionBoard,
 } from './option-board';
+import {
+  brsEndpoint,
+  readBrsApiAccess,
+  readBrsApiPublic,
+  redactBrsUrl,
+  saveBrsApiConfig as persistBrsApiConfig,
+} from './brs-api';
 
 const UA =
   'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/126.0.0.0 Safari/537.36';
@@ -720,6 +727,32 @@ export class MarketService implements OnModuleInit {
     return out;
   }
 
+  getBrsApiConfig() {
+    return readBrsApiPublic(this.prisma);
+  }
+
+  saveBrsApiConfig(data: { baseUrl?: string; apiToken?: string }) {
+    return persistBrsApiConfig(this.prisma, data);
+  }
+
+  async testBrsApi() {
+    const access = await readBrsApiAccess(this.prisma);
+    if (!access) {
+      throw new BadRequestException('ابتدا نشانی و توکن API بورس ایران را ذخیره کنید.');
+    }
+    const data = await this.fetchJson(
+      brsEndpoint(access.baseUrl, '/Tsetmc/AllSymbols.php', access.apiKey, { type: '1' }),
+    );
+    const count = Array.isArray(data) ? data.length : 0;
+    if (!count) {
+      throw new BadRequestException('اتصال برقرار شد ولی فهرست نمادها خالی بود.');
+    }
+    return {
+      ok: true,
+      messageFa: `اتصال برقرار است. ${count.toLocaleString('fa-IR')} نماد از مسیر همه نمادها خوانده شد.`,
+    };
+  }
+
   async ingestToday() {
     return this.ingestCatchUp();
   }
@@ -767,7 +800,7 @@ export class MarketService implements OnModuleInit {
         /* ignore */
       }
       throw new ServiceUnavailableException(
-        'هیچ داده‌ای از بازار دریافت نشد. سرور شما IP خارج ایران دارد؛ در .env مقدار BRS_API_KEY را از https://brsapi.ir تنظیم کنید و کانتینر api را دوباره بالا بیاورید.',
+        'هیچ داده‌ای از بازار دریافت نشد. در تنظیمات ادمین، بخش API بورس ایران، نشانی و توکن را ذخیره کنید.',
       );
     }
 
@@ -1150,12 +1183,12 @@ export class MarketService implements OnModuleInit {
   }
 
   private async fetchBrsApiIndexSnapshot(): Promise<Partial<Record<MarketIndexKey, IndexLiveSnap>>> {
-    const key = process.env.BRS_API_KEY?.trim();
-    if (!key) return {};
+    const access = await readBrsApiAccess(this.prisma);
+    if (!access) return {};
     const out: Partial<Record<MarketIndexKey, IndexLiveSnap>> = {};
     try {
       const data = await this.fetchJson(
-        `https://Api.BrsApi.ir/Tsetmc/Index.php?key=${encodeURIComponent(key)}&type=1`,
+        brsEndpoint(access.baseUrl, '/Tsetmc/Index.php', access.apiKey, { type: '1' }),
       );
       const row: IngestRow = Array.isArray(data) ? (data[0] as IngestRow) : (data as IngestRow);
       const total = this.num(row?.index ?? row?.Index);
@@ -1182,7 +1215,7 @@ export class MarketService implements OnModuleInit {
 
     try {
       const data = await this.fetchJson(
-        `https://Api.BrsApi.ir/Tsetmc/Index.php?key=${encodeURIComponent(key)}&type=3`,
+        brsEndpoint(access.baseUrl, '/Tsetmc/Index.php', access.apiKey, { type: '3' }),
       );
       const list: IngestRow[] = Array.isArray(data)
         ? data
@@ -1398,14 +1431,12 @@ export class MarketService implements OnModuleInit {
 
   /**
    * پروکسی عمومی TSETMC — مناسب سرور خارج ایران.
-   * کلید رایگان: https://brsapi.ir  → متغیر محیطی BRS_API_KEY
+   * نشانی و توکن از تنظیمات ادمین، بخش API بورس ایران.
    */
   private async fetchBrsApiAllSymbols(): Promise<IngestRow[]> {
-    const key = process.env.BRS_API_KEY?.trim();
-    if (!key) {
-      this.logger.warn(
-        'BRS_API_KEY تنظیم نشده؛ برای سرور خارج ایران این کلید لازم است (brsapi.ir).',
-      );
+    const access = await readBrsApiAccess(this.prisma);
+    if (!access) {
+      this.logger.warn('توکن API بورس ایران در تنظیمات ادمین ذخیره نشده است.');
       return [];
     }
 
@@ -1414,7 +1445,7 @@ export class MarketService implements OnModuleInit {
     const seen = new Set<string>();
 
     for (const type of types) {
-      const url = `https://Api.BrsApi.ir/Tsetmc/AllSymbols.php?key=${encodeURIComponent(key)}&type=${encodeURIComponent(type)}`;
+      const url = brsEndpoint(access.baseUrl, '/Tsetmc/AllSymbols.php', access.apiKey, { type });
       try {
         const data = await this.fetchJson(url);
         const list: unknown[] = Array.isArray(data)
@@ -1596,12 +1627,10 @@ export class MarketService implements OnModuleInit {
   }
 
   private async fetchBrsOptions(): Promise<Record<string, unknown>[]> {
-    const key = process.env.BRS_API_KEY?.trim();
-    if (!key) return [];
+    const access = await readBrsApiAccess(this.prisma);
+    if (!access) return [];
     try {
-      const data = await this.fetchJson(
-        `https://Api.BrsApi.ir/Tsetmc/Option.php?key=${encodeURIComponent(key)}`,
-      );
+      const data = await this.fetchJson(brsEndpoint(access.baseUrl, '/Tsetmc/Option.php', access.apiKey));
       const list: unknown[] = Array.isArray(data)
         ? data
         : Array.isArray(data?.data)
@@ -1722,15 +1751,15 @@ export class MarketService implements OnModuleInit {
       headers: FETCH_HEADERS,
       signal: AbortSignal.timeout(15_000),
     });
-    if (!res.ok) throw new Error(`${res.status} ${url}`);
+    if (!res.ok) throw new Error(`${res.status} ${redactBrsUrl(url)}`);
     const text = await res.text();
     if (/مسدود|دسترسی شما|request rejected|access denied/i.test(text)) {
-      throw new Error(`blocked: ${url}`);
+      throw new Error(`blocked: ${redactBrsUrl(url)}`);
     }
     try {
       return JSON.parse(text);
     } catch {
-      throw new Error(`non-json: ${url}`);
+      throw new Error(`non-json: ${redactBrsUrl(url)}`);
     }
   }
 
