@@ -2,10 +2,10 @@
 
 import Link from 'next/link';
 import { usePathname, useRouter } from 'next/navigation';
-import { getToken, clearSession, api, getUserRole, setUserRole, UserRole, touchSession, refreshSessionIfNeeded, sessionTimedOut } from '@/lib/api';
-import { useEffect, useState } from 'react';
+import { getToken, clearSession, api, getUserRole, setUserRole, UserRole, touchSession, refreshSessionIfNeeded, sessionTimedOut, formatNum, formatRial } from '@/lib/api';
+import { useCallback, useEffect, useState } from 'react';
 import clsx from 'clsx';
-import { ToastProvider } from '@/components/Toast';
+import { ToastProvider, useToast } from '@/components/Toast';
 import { InstallAppPrompt } from '@/components/InstallAppPrompt';
 
 const allLinks = [
@@ -19,6 +19,8 @@ const allLinks = [
   { href: '/news', label: 'اخبار اقتصادی ایران', adminOnly: false },
   { href: '/forex', label: 'آزمایش فارکس', adminOnly: true },
   { href: '/admin/users', label: 'مدیریت کاربران', adminOnly: true },
+  { href: '/admin/ai-cost', label: 'هزینه هوش مصنوعی', adminOnly: true },
+  { href: '/admin/ai-history', label: 'سوابق هوش مصنوعی', adminOnly: true },
   { href: '/admin/data-health', label: 'سلامت داده', adminOnly: true },
   { href: '/admin/support', label: 'پشتیبانی', adminOnly: true },
 ];
@@ -181,9 +183,12 @@ export function AppShell({ children }: { children: React.ReactNode }) {
         </aside>
         <div className="min-w-0">
           <header className="flex flex-wrap items-center justify-between gap-3 border-b border-navy-900/8 bg-white/70 px-6 py-4 backdrop-blur">
-            <p className="text-sm text-navy-800/70">
-              خروجی سایت مشاوره سرمایه‌گذاری رسمی نیست.
-            </p>
+            <div className="flex flex-wrap items-center gap-3">
+              <p className="text-sm text-navy-800/70">
+                خروجی سایت مشاوره سرمایه‌گذاری رسمی نیست.
+              </p>
+              <AiQuotaChip />
+            </div>
             <div className="flex items-center gap-3 text-sm">
               {userLabel && (
                 <span className="max-w-[10rem] truncate font-medium text-navy-900" title={userLabel}>
@@ -215,5 +220,56 @@ export function AppShell({ children }: { children: React.ReactNode }) {
         </div>
       </div>
     </ToastProvider>
+  );
+}
+
+type AiQuota = {
+  limitTokens: number;
+  unlimited: boolean;
+  totalTokens: number;
+  costRial: number;
+};
+
+type AiUsageHit = {
+  sectionFa?: string;
+  totalTokens?: number;
+  costRial?: number;
+};
+
+function AiQuotaChip() {
+  const toast = useToast();
+  const [quota, setQuota] = useState<AiQuota | null>(null);
+
+  const load = useCallback(() => {
+    api<AiQuota>('/ai-usage/me')
+      .then(setQuota)
+      .catch(() => setQuota(null));
+  }, []);
+
+  useEffect(() => {
+    load();
+    function onHit(event: Event) {
+      const hit = (event as CustomEvent<AiUsageHit>).detail;
+      const tokens = formatNum(hit?.totalTokens ?? 0);
+      const cost = formatRial(hit?.costRial ?? 0);
+      const section = hit?.sectionFa?.trim();
+      toast.info(section ? `${section}: ${tokens} توکن، ${cost}` : `${tokens} توکن، ${cost}`);
+      load();
+    }
+    window.addEventListener('ai-usage', onHit);
+    return () => window.removeEventListener('ai-usage', onHit);
+  }, [load, toast]);
+
+  if (!quota) return null;
+
+  const used = formatNum(quota.totalTokens);
+  const limit = quota.unlimited ? 'بدون سقف' : formatNum(quota.limitTokens);
+
+  return (
+    <span className="rounded-full bg-navy-900/5 px-3 py-1 text-xs text-navy-800">
+      سهمیه مصرف‌شده: {used} توکن از {limit}
+      <span className="mx-1 text-navy-800/40">·</span>
+      هزینه: {formatRial(quota.costRial)}
+    </span>
   );
 }

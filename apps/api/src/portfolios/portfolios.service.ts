@@ -7,6 +7,7 @@ import {
   SnapshotKind,
 } from '@prisma/client';
 import { PrismaService } from '../prisma/prisma.service';
+import { AiQuotaExceededException } from '../ai-usage/ai-usage.service';
 import { isLlmGatewayFailure, LlmService } from '../llm/llm.service';
 import { NewsService } from '../news/news.service';
 import { UsersService } from '../users/users.service';
@@ -21,6 +22,8 @@ import {
 } from '../trade-fees/trade-fees';
 import { daysAgoDateKey } from '../news/tehran-date';
 import { foldFa, tokenizeMarketQuestion } from '../market/tehran-chat';
+import { MarketService } from '../market/market.service';
+import { optionBoardForPrompt, redirectAnalysisSuggestion, redirectQueuedSymbol } from '../market/option-board';
 
 type PortfolioNewsRow = {
   batch: { newsDateKey: string };
@@ -107,6 +110,7 @@ export class PortfoliosService {
     private readonly worldMarkets: WorldMarketsService,
     private readonly wallet: WalletService,
     private readonly tradeFees: TradeFeesService,
+    private readonly market: MarketService,
   ) {}
 
   list(userId: string) {
@@ -324,6 +328,7 @@ export class PortfoliosService {
         : [];
 
     const fees = await this.tradeFees.read();
+    const optionBoard = await this.market.getOptionBoard().catch(() => null);
     const system =
       (await this.llm.getSystemPrompt(userId, 'portfolio_suggest_multi')) +
       `\n\n${feeInstructionFa(fees)}`;
@@ -381,15 +386,18 @@ export class PortfoliosService {
         })),
         lessons: lessons.map((l) => ({ title: l.titleFa, body: l.bodyFa })),
         tradeFees: fees,
+        optionBoard: optionBoard ? optionBoardForPrompt(optionBoard) : null,
         instruction: options?.initialCreate
           ? `این ایجاد اولیه سبد است. سرمایه کل ${portfolio.capitalRial} ریال و استراتژی ${portfolio.strategy} است.
 فقط weightPct بده (جمع ≈ ۱۰۰). جمع ارزش سبد نباید از ${portfolio.capitalRial} ریال بیشتر شود.
 سهامی پیشنهاد نکن که قیمت یک واحدش از سهم بودجه‌اش بیشتر باشد.
-حتماً lessons، fundHoldings (موجودی/خرید/فروش صندوق‌ها)، economicNews (حداکثر ۷ خبر اثرگذار بر اقتصاد ایران از شبکه اجتماعی)، investmentOpportunities (حداکثر ۳ فرصت)، worldMacroNews (اخبار کلان جهان و آمریکا با اثر بر نفت/طلا/دلار/فلزات/رمزارز؛ فقط آنجا که روی اقتصاد کلان یا بورس ایران اثر می‌گذارد) و fxHistory (دلار/طلا ~۳۰ روز) را در تصمیم و در reasonFa/strategySummaryFa منعکس کن.
+حتماً lessons، fundHoldings (موجودی/خرید/فروش صندوق‌ها)، economicNews (حداکثر ۷ خبر اثرگذار بر اقتصاد ایران از شبکه اجتماعی)، investmentOpportunities (حداکثر ۳ فرصت)، worldMacroNews (اثر اقتصاد جهان و آمریکا بر ایران)، fxHistory و optionBoard را در تصمیم و در reasonFa/strategySummaryFa منعکس کن.
+اگر نمادی در optionBoard صف خرید یا صف فروش است، خرید خود آن سهم را ننویس. جایگزین را از replacements یا worthwhileOptions بردار و assetType آن اختیار OPTION است.
 PHYSICAL_GOLD / PHYSICAL_USD در صورت مناسب بودن مجاز است.`
           : `چند استراتژی متفاوت پیشنهاد بده. سرمایه کل ${portfolio.capitalRial} ریال است.
 weightPct فقط درصد از همین سرمایه است (جمع هر استراتژی ≈ ۱۰۰). ارزش کل هر استراتژی مساوی همین سرمایه است و نباید بیشتر شود.
-حتماً lessons، fundHoldings، economicNews، investmentOpportunities، worldMacroNews (اثر اقتصاد جهان و آمریکا بر ایران) و fxHistory را لحاظ کن و در توضیحات ارجاع بده.`,
+حتماً lessons، fundHoldings، economicNews، investmentOpportunities، worldMacroNews (اثر اقتصاد جهان و آمریکا بر ایران)، fxHistory و optionBoard را لحاظ کن و در توضیحات ارجاع بده.
+اگر نمادی در optionBoard صف خرید یا صف فروش است، خرید خود آن سهم را ننویس. جایگزین را از replacements یا worthwhileOptions بردار و assetType آن اختیار OPTION است.`,
       },
       null,
       2,
@@ -415,12 +423,28 @@ weightPct فقط درصد از همین سرمایه است (جمع هر است�
         const strategies = out.strategies
           .map((strategy) => ({
             ...strategy,
-            items: filterStrategyItems(strategy.items ?? [], fees).map((item) => ({
-              symbol: item.symbol,
-              assetType: (item.assetType || AssetType.STOCK) as AssetType,
-              weightPct: Number(item.weightPct) || 0,
-              reasonFa: item.reasonFa ?? '',
-            })),
+            items: filterStrategyItems(strategy.items ?? [], fees).map((item) => {
+              const queued = optionBoard
+                ? redirectQueuedSymbol(
+                    {
+                      symbol: item.symbol,
+                      assetType: item.assetType || AssetType.STOCK,
+                      reasonFa: item.reasonFa ?? '',
+                    },
+                    optionBoard,
+                  )
+                : {
+                    symbol: item.symbol,
+                    assetType: item.assetType || AssetType.STOCK,
+                    reasonFa: item.reasonFa ?? '',
+                  };
+              return {
+                symbol: queued.symbol,
+                assetType: queued.assetType as AssetType,
+                weightPct: Number(item.weightPct) || 0,
+                reasonFa: queued.reasonFa ?? '',
+              };
+            }),
           }))
           .filter((strategy) => strategy.items.length > 0);
         if (strategies.length) return { strategies };
@@ -435,8 +459,8 @@ weightPct فقط درصد از همین سرمایه است (جمع هر است�
           ],
         };
       }
-    } catch {
-      /* fallback */
+    } catch (e) {
+      if (e instanceof AiQuotaExceededException) throw e;
     }
 
     const single = this.fallbackSuggest(universe, portfolio.strategy);
@@ -616,6 +640,7 @@ ${historyText}`,
         userId,
       );
     } catch (e) {
+      if (e instanceof AiQuotaExceededException) throw e;
       reply = `متأسفانه LLM در دسترس نیست. (${(e as Error).message.slice(0, 120)})`;
     }
 
@@ -862,7 +887,8 @@ ${historyText}`,
     let evalOut: EvalOut;
     try {
       evalOut = await this.llm.chatJson<EvalOut>('monthly_eval', system, prompt, userId);
-    } catch {
+    } catch (e) {
+      if (e instanceof AiQuotaExceededException) throw e;
       evalOut = {
         performancePct: 0,
         summaryFa: 'ارزیابی خودکار بدون LLM: قیمت‌ها را با داده‌های روز مقایسه کنید.',
@@ -1396,6 +1422,7 @@ ${historyText}`,
     });
 
     const fees = await this.tradeFees.read();
+    const optionBoard = await this.market.getOptionBoard().catch(() => null);
     let system = await this.llm.getSystemPrompt(userId, 'portfolio_analyze');
     system += `\n\n${feeInstructionFa(fees)}`;
     if (personal) {
@@ -1433,6 +1460,9 @@ summaryFa و نقاط قوت و ضعف گزارش وضعیت سبد هستند �
               reasonFa: clipText(item.reasonFa, 160),
             })),
             tradeFees: fees,
+            optionBoard: optionBoard ? optionBoardForPrompt(optionBoard) : null,
+            optionRuleFa:
+              'اگر نمادی صف خرید یا صف فروش است، خرید خود سهم را پیشنهاد نکن. جایگزین را از replacements یا worthwhileOptions بردار.',
           }
         : {
             portfolio: portfolioPayload,
@@ -1475,6 +1505,9 @@ summaryFa و نقاط قوت و ضعف گزارش وضعیت سبد هستند �
               body: clipText(lesson.bodyFa, 220),
             })),
             tradeFees: fees,
+            optionBoard: optionBoard ? optionBoardForPrompt(optionBoard) : null,
+            optionRuleFa:
+              'اگر نمادی صف خرید یا صف فروش است، خرید خود سهم را پیشنهاد نکن. جایگزین را از replacements یا worthwhileOptions بردار.',
           },
     );
     const slimPrompt = JSON.stringify({
@@ -1487,7 +1520,8 @@ summaryFa و نقاط قوت و ضعف گزارش وضعیت سبد هستند �
         unitPrice: item.unitPrice,
       })),
       tradeFees: fees,
-      noteFa: 'تلاش کوتاه بعد از قطع پاسخ مدل. فقط ترکیب و قیمت همین سبد را ارزیابی کن.',
+      optionBoard: optionBoard ? optionBoardForPrompt(optionBoard) : null,
+      noteFa: 'تلاش کوتاه بعد از قطع پاسخ مدل. فقط ترکیب و قیمت همین سبد را ارزیابی کن و نماد داخل صف خرید یا فروش را برای خرید پیشنهاد نکن.',
     });
 
     type AnalysisOut = {
@@ -1528,7 +1562,11 @@ summaryFa و نقاط قوت و ضعف گزارش وضعیت سبد هستند �
           userId,
         );
       }
-    } catch {
+    } catch (e) {
+      if (e instanceof AiQuotaExceededException) {
+        await this.wallet.refund(userId, charged, 'suggest');
+        throw e;
+      }
       await this.wallet.refund(userId, charged, 'suggest');
       analysis = {
         score: 55,
@@ -1555,6 +1593,7 @@ summaryFa و نقاط قوت و ضعف گزارش وضعیت سبد هستند �
       weaknessesFa: analysis.weaknessesFa ?? [],
       suggestions: (analysis.suggestions ?? [])
         .map((s) => this.normalizeAnalysisSuggestion(s))
+        .map((s) => (optionBoard ? redirectAnalysisSuggestion(s, optionBoard) : s))
         .filter((s) => suggestionClearsFees(s, fees)),
       analyzedAt: new Date().toISOString(),
     };

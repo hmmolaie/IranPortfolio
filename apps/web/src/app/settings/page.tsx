@@ -227,7 +227,9 @@ export default function SettingsPage() {
     botNameFa: 'سبدیار',
     botUsername: TELEGRAM_BOT_USERNAME,
     botToken: '',
-    ttsModel: 'gemini-2.5-pro-preview-tts',
+    ttsBaseUrl: '',
+    ttsApiToken: '',
+    ttsModel: 'gpt-4o-mini-tts',
     sendHour: 8,
     sendMinute: 30,
     sendWeekdays: [0, 1, 2, 3, 4, 5, 6],
@@ -235,6 +237,7 @@ export default function SettingsPage() {
   });
   const [tgMeta, setTgMeta] = useState({
     hasToken: false,
+    hasTtsToken: false,
     linkedCount: 0,
     lastDigest: null as null | {
       dateKey: string;
@@ -379,6 +382,8 @@ export default function SettingsPage() {
         botNameFa?: string;
         botUsername?: string;
         enabled?: boolean;
+        ttsBaseUrl?: string;
+        hasTtsToken?: boolean;
         ttsModel?: string;
         sendHour?: number;
         sendMinute?: number;
@@ -396,7 +401,9 @@ export default function SettingsPage() {
         botNameFa: c.botNameFa?.trim() || 'سبدیار',
         botUsername: c.botUsername?.trim() || TELEGRAM_BOT_USERNAME,
         botToken: '',
-        ttsModel: c.ttsModel?.trim() || 'gemini-2.5-pro-preview-tts',
+        ttsBaseUrl: c.ttsBaseUrl?.trim() || '',
+        ttsApiToken: '',
+        ttsModel: c.ttsModel?.trim() || 'gpt-4o-mini-tts',
         sendHour: c.sendHour ?? 8,
         sendMinute: c.sendMinute ?? 30,
         sendWeekdays: c.sendWeekdays?.length ? c.sendWeekdays : [0, 1, 2, 3, 4, 5, 6],
@@ -404,6 +411,7 @@ export default function SettingsPage() {
       });
       setTgMeta({
         hasToken: Boolean(c.hasToken),
+        hasTtsToken: Boolean(c.hasTtsToken),
         linkedCount: c.linkedCount ?? 0,
         lastDigest: c.lastDigest ?? null,
       });
@@ -857,7 +865,9 @@ export default function SettingsPage() {
         body: JSON.stringify({
           botNameFa: tgForm.botNameFa.trim(),
           botUsername: tgForm.botUsername.trim().replace(/^@/, ''),
+          ttsBaseUrl: tgForm.ttsBaseUrl.trim(),
           ttsModel: tgForm.ttsModel.trim(),
+          ...(tgForm.ttsApiToken.trim() ? { ttsApiToken: tgForm.ttsApiToken.trim() } : {}),
           sendHour: tgForm.sendHour,
           sendMinute: tgForm.sendMinute,
           sendWeekdays: tgForm.sendWeekdays,
@@ -865,7 +875,7 @@ export default function SettingsPage() {
           ...(tgForm.botToken.trim() ? { botToken: tgForm.botToken.trim() } : {}),
         }),
       });
-      setTgForm((p) => ({ ...p, botToken: '' }));
+      setTgForm((p) => ({ ...p, botToken: '', ttsApiToken: '' }));
       await loadTelegramConfig();
       await loadTelegramMe();
       const text = 'تنظیمات ربات تلگرام ذخیره شد.';
@@ -912,6 +922,25 @@ export default function SettingsPage() {
       toast.success(text);
     } catch (err) {
       const text = adminApiErrorText(err) || 'ارسال پیام آزمایشی ناموفق بود.';
+      setTgFeedback({ ok: false, text });
+      toast.error(text);
+    } finally {
+      setTgBusy(false);
+    }
+  }
+
+  async function sendTelegramTestVoice() {
+    setTgBusy(true);
+    setTgFeedback(null);
+    try {
+      const res = await api<{ ok: boolean; messageFa?: string }>('/telegram/test-voice', {
+        method: 'POST',
+      });
+      const text = res.messageFa ?? 'فایل صوتی آزمایشی فرستاده شد.';
+      setTgFeedback({ ok: true, text });
+      toast.success(text);
+    } catch (err) {
+      const text = adminApiErrorText(err) || 'ساخت فایل صوتی ناموفق بود.';
       setTgFeedback({ ok: false, text });
       toast.error(text);
     } finally {
@@ -2092,17 +2121,43 @@ export default function SettingsPage() {
             />
           </div>
           <div>
+            <label className="label">نشانی پایه گفتار</label>
+            <input
+              className="input"
+              value={tgForm.ttsBaseUrl}
+              onChange={(e) => setTgForm({ ...tgForm, ttsBaseUrl: e.target.value })}
+              placeholder="https://api.gapgpt.app/v1"
+              dir="ltr"
+              spellCheck={false}
+            />
+          </div>
+          <div>
+            <label className="label">توکن گفتار</label>
+            <input
+              className="input"
+              type="password"
+              value={tgForm.ttsApiToken}
+              onChange={(e) => setTgForm({ ...tgForm, ttsApiToken: e.target.value })}
+              placeholder={tgMeta.hasTtsToken ? 'برای جایگزینی توکن جدید وارد کنید' : 'کلید سرویس گفتار'}
+              dir="ltr"
+              spellCheck={false}
+            />
+            <p className="mt-1 text-xs leading-6 text-navy-800/55">
+              اگر نشانی یا توکن خالی باشد، اتصال مدل زبانی همین مدیر استفاده می‌شود. این توکن، توکن ربات تلگرام نیست.
+            </p>
+          </div>
+          <div>
             <label className="label">مدل متن به صدا</label>
             <input
               className="input"
               value={tgForm.ttsModel}
               onChange={(e) => setTgForm({ ...tgForm, ttsModel: e.target.value })}
-              placeholder="gemini-2.5-pro-preview-tts"
+              placeholder="gpt-4o-mini-tts"
               dir="ltr"
               spellCheck={false}
             />
             <p className="mt-1 text-xs leading-6 text-navy-800/55">
-              همین نام برای ساخت فایل صوتی اخبار روزانه استفاده می‌شود. اگر نشانی مدل زبانی گپ‌جی‌پی‌تی باشد، مدل Gemini فرستاده نمی‌شود و به‌جای آن مدل سازگار همان سرویس با صدای زنانه می‌رود.
+              روی نشانی سازگار با OpenAI همین مدل با صدای alloy و بدنه model و voice و input فرستاده می‌شود. مدل Gemini آنجا به gpt-4o-mini-tts عوض می‌شود.
             </p>
           </div>
           <div>
@@ -2160,7 +2215,8 @@ export default function SettingsPage() {
             ارسال خودکار در روزها و ساعت انتخاب‌شده فعال باشد
           </label>
           <div className="rounded-lg border border-navy-100 bg-white px-3 py-3 text-sm text-navy-800/80">
-            <div>توکن ذخیره شده: {tgMeta.hasToken ? 'بله' : 'خیر'}</div>
+            <div>توکن ربات ذخیره شده: {tgMeta.hasToken ? 'بله' : 'خیر'}</div>
+            <div className="mt-1">توکن گفتار ذخیره شده: {tgMeta.hasTtsToken ? 'بله' : 'خیر'}</div>
             <div className="mt-1">
               کاربران وصل‌شده:{' '}
               {tgMeta.linkedCount.toLocaleString('fa-IR')}
@@ -2197,6 +2253,14 @@ export default function SettingsPage() {
               onClick={sendTelegramTestMessage}
             >
               تست پیام به موبایل من
+            </button>
+            <button
+              type="button"
+              className="btn-secondary w-fit"
+              disabled={tgBusy || !tgMeta.hasToken}
+              onClick={sendTelegramTestVoice}
+            >
+              تست فایل صوتی به موبایل من
             </button>
             <button
               type="button"

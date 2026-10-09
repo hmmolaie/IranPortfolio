@@ -23,6 +23,8 @@ export const GEMINI_FEMALE_VOICES = new Set([
 ]);
 
 export const DEFAULT_OPENAI_FEMALE_VOICE = 'nova';
+/** صدای نمونهٔ مستند مسیر audio/speech روی سرویس سازگار با OpenAI */
+export const DEFAULT_OPENAI_SPEECH_VOICE = 'alloy';
 export const DEFAULT_GEMINI_FEMALE_VOICE = 'aoede';
 
 /** مدل‌های گفتار سازگار با OpenAI که پروکسی‌هایی مثل GapGPT روی audio/speech می‌شناسند */
@@ -48,8 +50,8 @@ export function isGapGptBase(baseUrl: string): boolean {
 export function speechModelForBase(baseUrl: string, model: string): string {
   const name = model.trim();
   if (!isGapGptBase(baseUrl)) return name || 'gpt-4o-mini-tts';
-  if (OPENAI_SPEECH_MODELS.has(name)) return name;
-  return 'tts-1';
+  if (name && OPENAI_SPEECH_MODELS.has(name)) return name;
+  return 'gpt-4o-mini-tts';
 }
 
 /** tts-1 و tts-1-hd فیلد instructions را ندارند و با آن خطا یا معطلی می‌دهند */
@@ -99,5 +101,6 @@ export function speechVoiceForModel(model: string, requested?: string | null): s
   if (isGeminiSpeechModel(model)) {
     return GEMINI_FEMALE_VOICES.has(voice) ? voice : DEFAULT_GEMINI_FEMALE_VOICE;
   }
-  return OPENAI_FEMALE_VOICES.has(voice) ? voice : DEFAULT_OPENAI_FEMALE_VOICE;
+  if (voice === DEFAULT_OPENAI_SPEECH_VOICE || OPENAI_FEMALE_VOICES.has(voice)) return voice;
+  return DEFAULT_OPENAI_SPEECH_VOICE;
 }

@@ -231,6 +231,26 @@ async function readApiError(res: Response): Promise<ApiError> {
   }
 }
 
+function notifyAiUsage(res: Response, data: unknown) {
+  if (typeof window === 'undefined') return;
+  const header = res.headers.get('x-ai-usage');
+  if (header) {
+    try {
+      const usage = JSON.parse(header) as unknown;
+      if (usage && typeof usage === 'object') {
+        window.dispatchEvent(new CustomEvent('ai-usage', { detail: usage }));
+      }
+    } catch {
+      /* هدر نامعتبر نادیده گرفته می‌شود */
+    }
+    return;
+  }
+  if (!data || typeof data !== 'object' || Array.isArray(data)) return;
+  const usage = (data as { aiUsage?: unknown }).aiUsage;
+  if (!usage || typeof usage !== 'object') return;
+  window.dispatchEvent(new CustomEvent('ai-usage', { detail: usage }));
+}
+
 export function adminApiErrorText(err: unknown): string {
   if (err instanceof ApiError) return err.detail.trim() || err.message;
   return err instanceof Error ? err.message : 'خطای نامشخص';
@@ -265,7 +285,9 @@ export async function api<T>(
     throw await readApiError(res);
   }
   if (res.status === 204) return undefined as T;
-  return res.json() as Promise<T>;
+  const data = (await res.json()) as T;
+  notifyAiUsage(res, data);
+  return data;
 }
 
 export function formatRial(n: number) {

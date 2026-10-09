@@ -49,6 +49,11 @@ export class MarketController {
     });
   }
 
+  @Get('option-board')
+  optionBoard() {
+    return this.market.getOptionBoard();
+  }
+
   @Get('indices')
   indices(@Query('days') days?: string) {
     return this.market.getMarketIndices(days ? Number(days) : 60);

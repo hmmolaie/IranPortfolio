@@ -23,6 +23,14 @@ class SaveTelegramConfigDto {
 
   @IsOptional()
   @IsString()
+  ttsBaseUrl?: string;
+
+  @IsOptional()
+  @IsString()
+  ttsApiToken?: string;
+
+  @IsOptional()
+  @IsString()
   ttsModel?: string;
 
   @IsOptional()
@@ -98,6 +106,12 @@ export class TelegramController {
   @UseGuards(AdminGuard)
   testMessage(@Req() req: { user: { userId: string } }) {
     return this.telegram.sendTestToAdmin(req.user.userId);
+  }
+
+  @Post('test-voice')
+  @UseGuards(AdminGuard)
+  testVoice(@Req() req: { user: { userId: string } }) {
+    return this.telegram.sendTestVoiceToAdmin(req.user.userId);
   }
 
   @Post('send-today')

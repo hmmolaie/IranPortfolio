@@ -32,6 +32,7 @@ export function fallbackDigestVoiceScript(opts: {
   summaryFa?: string | null;
   macros: DigestVoiceItem[];
   opportunities: DigestVoiceItem[];
+  optionLines?: string[];
 }): string {
   const lines: string[] = [`سلام. گزارش ${opts.dateLabel}.`];
 
@@ -57,8 +58,13 @@ export function fallbackDigestVoiceScript(opts: {
         .join('. ');
       lines.push(extra ? `فرصت ${n}: ${item.titleFa}. ${extra}` : `فرصت ${n}: ${item.titleFa}.`);
     });
-  } else {
+  } else if (!opts.optionLines?.length) {
     lines.push('فرصت سرمایه‌گذاری دیده نشد.');
+  }
+
+  if (opts.optionLines?.length) {
+    lines.push('از قیمت امروز بازار تهران این‌ها دیده شد.');
+    for (const line of opts.optionLines.slice(0, 4)) lines.push(line);
   }
 
   lines.push('این گزارش مشاورهٔ قطعی سرمایه‌گذاری نیست.');

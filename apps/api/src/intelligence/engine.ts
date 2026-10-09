@@ -36,11 +36,11 @@ export const LEVEL_FA: Record<Level, string> = {
 
 export const METHODOLOGY_FA = {
   regime:
-    'رژیم فقط وقتی دست‌کم دو نشانه از دادهٔ موجود هم‌جهت باشند انتخاب می‌شود. اگر نشانه کم باشد، رژیم خنثی می‌ماند.',
+    'ریسک فقط وقتی دست‌کم دو نشانه از دادهٔ موجود هم‌جهت باشند انتخاب می‌شود. اگر نشانه کم باشد، ریسک خنثی می‌ماند.',
   confidence:
     'اطمینان از تعداد نشانه‌های واقعی است و از ۸۵ درصد بالاتر نمی‌رود، چون پهنای بازار و ارزش‌گذاری در این محاسبه نیست.',
   target:
-    'وزن هدف از تحمل ریسک اعلام‌شده شروع می‌شود. فقط اگر رژیم با اطمینان کافی باشد، چند واحد به طلا، نقد یا سهام جابه‌جا می‌شود و دوباره به ۱۰۰ می‌رسد.',
+    'وزن هدف از تحمل ریسک اعلام‌شده شروع می‌شود. فقط اگر ریسک با اطمینان کافی باشد، چند واحد به طلا، نقد یا سهام جابه‌جا می‌شود و دوباره به ۱۰۰ می‌رسد.',
   risk: 'ریسک از تمرکز وزن‌ها، سهم سهام، سهم دلار و سهم نقد در همین سبد است، نه از پیش‌بینی بازده.',
   health: 'سلامت میانگین جزءهایی است که داده دارند. جزء بدون داده در میانگین نمی‌آید.',
   scenario:
@@ -187,8 +187,8 @@ export function classifyRegime(facts: MarketFacts): {
 
   const confidence = enough ? round2(Math.min(0.85, 0.35 + drivers.length * 0.1)) : null;
   const summaryFa = enough
-    ? `رژیم ${REGIME_LABEL_FA[regime]} از ${drivers.length.toLocaleString('fa-IR')} نشانهٔ موجود.`
-    : 'داده برای تشخیص رژیم بازار کافی نیست؛ رژیم خنثی مانده است.';
+    ? `ریسک ${REGIME_LABEL_FA[regime]} از ${drivers.length.toLocaleString('fa-IR')} نشانهٔ موجود.`
+    : 'داده برای تشخیص ریسک بازار کافی نیست؛ ریسک خنثی مانده است.';
   return { regime, confidence, drivers, summaryFa, enough };
 }
 
@@ -221,7 +221,7 @@ export function buildPlan(input: {
   const target = renormalize(base);
   const reason = tilt
     ? input.drivers.map((d) => d.labelFa).join('؛ ')
-    : 'رژیم با اطمینان کافی تشخیص داده نشد. هدف فقط از تحمل ریسک اعلام‌شده آمده است.';
+    : 'ریسک با اطمینان کافی تشخیص داده نشد. هدف فقط از تحمل ریسک اعلام‌شده آمده است.';
   const lines = CLASS_KEYS.map((asset) => {
     const currentPct = round1(input.weights[asset] || 0);
     const targetPct = target[asset];
@@ -409,8 +409,8 @@ export function buildAlerts(input: {
   if (input.enoughRegime && input.regime !== 'NEUTRAL') {
     alerts.push({
       code: 'regime',
-      titleFa: 'رژیم بازار',
-      bodyFa: `رژیم فعلی ${REGIME_LABEL_FA[input.regime]} است.`,
+      titleFa: 'ریسک بازار',
+      bodyFa: `ریسک فعلی ${REGIME_LABEL_FA[input.regime]} است.`,
     });
   }
   const top = Math.max(0, ...CLASS_KEYS.map((k) => input.weights[k] || 0));

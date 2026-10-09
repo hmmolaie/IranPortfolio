@@ -118,7 +118,7 @@ export default function DashboardPage() {
       {role === 'USER' && home && (
         <section className="grid gap-4 sm:grid-cols-3">
           <div className="card">
-            <div className="text-sm text-navy-800/60">رژیم بازار</div>
+            <div className="text-sm text-navy-800/60">ریسک بازار</div>
             <div className="mt-2 text-xl font-semibold">{home.regime.labelFa}</div>
             <p className="mt-2 text-sm leading-6 text-navy-800/70">{home.regime.summaryFa}</p>
           </div>

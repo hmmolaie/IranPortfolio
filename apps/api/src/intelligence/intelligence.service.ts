@@ -31,7 +31,7 @@ export class IntelligenceService {
 
   async regimeBriefFa(): Promise<string> {
     const regime = await this.currentRegime(true);
-    const lines = [`رژیم بازار: ${REGIME_LABEL_FA[regime.regime as RegimeCode] ?? regime.regime}`];
+    const lines = [`ریسک بازار: ${REGIME_LABEL_FA[regime.regime as RegimeCode] ?? regime.regime}`];
     if (!regime.enough) lines.push(regime.summaryFa);
     else {
       for (const d of regime.drivers.slice(0, 4)) lines.push(`- ${d.labelFa}`);
@@ -74,7 +74,7 @@ export class IntelligenceService {
     else {
       for (const line of moves) {
         lines.push(
-          `${line.labelFa}: ${line.currentPct.toLocaleString('fa-IR')}٪ → ${line.targetPct.toLocaleString('fa-IR')}٪`,
+          `${line.labelFa}: ${line.currentPct.toLocaleString('fa-IR')}٪ ← ${line.targetPct.toLocaleString('fa-IR')}٪`,
         );
       }
       if (moves[0]?.reasonFa) lines.push(moves[0].reasonFa);

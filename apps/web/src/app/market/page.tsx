@@ -13,6 +13,10 @@ type Quote = {
   symbol: string;
   nameFa: string;
   assetType: string;
+  queueFa?: string | null;
+  optionSideFa?: string | null;
+  underlyingSymbol?: string | null;
+  strike?: number | null;
   last: {
     lastPrice?: number | null;
     closePrice?: number | null;
@@ -47,6 +51,42 @@ type MarketIndex = {
   lastValue: number | null;
   changePct: number | null;
   history: Array<{ tradeDate: string; value: number }>;
+};
+
+type OptionIdea = {
+  instrumentId: string;
+  symbol: string;
+  sideFa: string;
+  underlyingSymbol: string;
+  underlyingPrice: number;
+  strike: number;
+  premium: number;
+  premiumPctOfSpot: number;
+  reasonFa: string;
+};
+
+type QueueRow = {
+  instrumentId: string;
+  symbol: string;
+  nameFa: string;
+  queueFa: string;
+  lastPrice: number | null;
+};
+
+type QueueReplacement = {
+  symbol: string;
+  queue: 'buy' | 'sell';
+  noteFa: string;
+  instrumentId: string;
+  replacement: { instrumentId: string; symbol: string; sideFa: string } | null;
+};
+
+type OptionBoard = {
+  disclaimerFa: string;
+  buyQueues: QueueRow[];
+  sellQueues: QueueRow[];
+  worthwhileOptions: OptionIdea[];
+  replacements: QueueReplacement[];
 };
 
 const PAGE_SIZE = 20;
@@ -148,6 +188,13 @@ export default function MarketPage() {
   const [loading, setLoading] = useState(false);
   const [isAdmin, setIsAdmin] = useState(false);
   const [updatedAt, setUpdatedAt] = useState<string | null>(null);
+  const [board, setBoard] = useState<OptionBoard | null>(null);
+
+  function loadBoard() {
+    return api<OptionBoard>('/market/option-board')
+      .then(setBoard)
+      .catch(() => setBoard(null));
+  }
 
   async function load(nextPage = page) {
     const params = new URLSearchParams();
@@ -186,6 +233,7 @@ export default function MarketPage() {
       .catch(() => undefined);
     load(1).catch(() => undefined);
     loadIndices().catch(() => undefined);
+    loadBoard();
   }, [router]);
 
   async function applyFilter() {
@@ -212,7 +260,7 @@ export default function MarketPage() {
       setMsg(
         `به‌روزرسانی انجام شد: ${res.upserted.toLocaleString('fa-IR')} ردیف${days}${src}`,
       );
-      await Promise.all([load(1), loadIndices()]);
+      await Promise.all([load(1), loadIndices(), loadBoard()]);
     } catch (e) {
       setMsg((e as Error).message);
     } finally {
@@ -270,6 +318,63 @@ export default function MarketPage() {
 
       <TehranMarketChat />
 
+      {board && (
+        <div className="space-y-3">
+          <p className="text-sm text-navy-800/60">{board.disclaimerFa}</p>
+          <div className="grid gap-3 lg:grid-cols-3">
+            <BoardList
+              title="صف خرید"
+              empty="صف خریدی در قیمت امروز دیده نشد."
+              rows={board.buyQueues.map((row) => ({
+                id: row.instrumentId,
+                title: row.symbol,
+                detail: `${row.queueFa} · ${formatNum(row.lastPrice)}`,
+              }))}
+              onOpen={(id) => router.push(`/market/${id}`)}
+            />
+            <BoardList
+              title="صف فروش"
+              empty="صف فروشی در قیمت امروز دیده نشد."
+              rows={board.sellQueues.map((row) => ({
+                id: row.instrumentId,
+                title: row.symbol,
+                detail: `${row.queueFa} · ${formatNum(row.lastPrice)}`,
+              }))}
+              onOpen={(id) => router.push(`/market/${id}`)}
+            />
+            <BoardList
+              title="اختیار نزدیک به قیمت سهم"
+              empty="اختیار ارزنده‌ای نسبت به قیمت سهم پیدا نشد. بعد از به‌روزرسانی بازار دوباره دیده می‌شود."
+              rows={board.worthwhileOptions.map((row) => ({
+                id: row.instrumentId,
+                title: row.symbol,
+                detail: `${row.sideFa} · سهم ${row.underlyingSymbol} · ${formatNum(row.premiumPctOfSpot)}٪ قیمت سهم`,
+              }))}
+              onOpen={(id) => router.push(`/market/${id}`)}
+            />
+          </div>
+          {board.replacements.length > 0 && (
+            <div className="card space-y-2">
+              <h2 className="font-bold">جایگزین خرید نمادهای داخل صف</h2>
+              {board.replacements.slice(0, 6).map((row) => (
+                <p key={`${row.queue}-${row.symbol}`} className="text-sm leading-7 text-navy-800/80">
+                  {row.noteFa}
+                  {row.replacement && (
+                    <button
+                      type="button"
+                      className="ms-2 text-navy-900 underline"
+                      onClick={() => router.push(`/market/${row.replacement?.instrumentId}`)}
+                    >
+                      {row.replacement.symbol}
+                    </button>
+                  )}
+                </p>
+              ))}
+            </div>
+          )}
+        </div>
+      )}
+
       <div className="card flex flex-wrap gap-3">
         <input
           className="input max-w-xs"
@@ -321,7 +426,10 @@ export default function MarketPage() {
                   {row.symbol}
                 </td>
                 <td className="px-4 py-2.5">{row.nameFa}</td>
-                <td className="px-4 py-2.5">{ASSET_FA[row.assetType] ?? row.assetType}</td>
+                <td className="px-4 py-2.5">
+                  {row.optionSideFa || ASSET_FA[row.assetType] || row.assetType}
+                  {row.queueFa ? ` · ${row.queueFa}` : ''}
+                </td>
                 <td className="px-4 py-2.5">{formatNum(row.last?.lastPrice)}</td>
                 <td className="px-4 py-2.5">{formatNum(row.last?.closePrice)}</td>
                 <td className="px-4 py-2.5">{formatNum(row.last?.eps)}</td>
@@ -363,5 +471,30 @@ export default function MarketPage() {
         </div>
       )}
     </div>
+  );
+}
+
+function BoardList({
+  title,
+  empty,
+  rows,
+  onOpen,
+}: {
+  title: string;
+  empty: string;
+  rows: Array<{ id: string; title: string; detail: string }>;
+  onOpen: (id: string) => void;
+}) {
+  return (
+    <section className="card space-y-2">
+      <h2 className="font-bold">{title}</h2>
+      {rows.length === 0 && <p className="text-sm text-navy-800/55">{empty}</p>}
+      {rows.slice(0, 6).map((row) => (
+        <button key={row.id} type="button" className="block w-full text-start" onClick={() => onOpen(row.id)}>
+          <div className="text-sm font-medium text-navy-900">{row.title}</div>
+          <div className="text-xs text-navy-800/60">{row.detail}</div>
+        </button>
+      ))}
+    </section>
   );
 }

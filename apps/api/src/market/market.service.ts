@@ -13,6 +13,15 @@ import {
 } from './tehran-chat';
 import { isRefreshSlot, readRefreshSchedule } from '../content-refresh/refresh-schedule';
 import { tehranTimeParts } from '../news/tehran-date';
+import {
+  buildOptionBoard,
+  describeQuote,
+  marketNumber,
+  optionBoardForPrompt,
+  parseOptionMeta,
+  type BoardSource,
+  type OptionBoard,
+} from './option-board';
 
 const UA =
   'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/126.0.0.0 Safari/537.36';
@@ -260,14 +269,43 @@ export class MarketService implements OnModuleInit {
       }),
     ]);
 
-    const items = instruments.map((i) => ({
-      id: i.id,
-      symbol: i.symbol,
-      nameFa: i.nameFa,
-      assetType: i.assetType,
-      insCode: i.insCode,
-      last: i.priceBars[0] ?? null,
-    }));
+    const items = instruments.map((i) => {
+      const bar = i.priceBars[0];
+      const source: BoardSource = {
+        id: i.id,
+        symbol: i.symbol,
+        nameFa: i.nameFa,
+        assetType: i.assetType,
+        lastPrice: bar?.lastPrice ?? null,
+        closePrice: bar?.closePrice ?? null,
+        volume: bar?.volume ?? null,
+        raw: bar?.raw ?? null,
+        meta: i.meta,
+      };
+      const extra = describeQuote(source);
+      return {
+        id: i.id,
+        symbol: i.symbol,
+        nameFa: i.nameFa,
+        assetType: i.assetType,
+        insCode: i.insCode,
+        queue: extra.queue,
+        queueFa: extra.queueFa,
+        optionSideFa: extra.optionSideFa,
+        underlyingSymbol: extra.underlyingSymbol,
+        strike: extra.strike,
+        last: bar
+          ? {
+              lastPrice: bar.lastPrice,
+              closePrice: bar.closePrice,
+              eps: bar.eps,
+              pe: bar.pe,
+              volume: bar.volume,
+              tradeDate: bar.tradeDate,
+            }
+          : null,
+      };
+    });
 
     const stamps = [lastInstrument._max.updatedAt, lastBar._max.createdAt].filter(
       (d): d is Date => d instanceof Date,
@@ -285,6 +323,40 @@ export class MarketService implements OnModuleInit {
       totalPages: Math.max(1, Math.ceil(total / take)),
       updatedAt,
     };
+  }
+
+  async getOptionBoard() {
+    const rows = await this.prisma.instrument.findMany({
+      where: {
+        isActive: true,
+        assetType: { in: [AssetType.STOCK, AssetType.GOLD_ETF, AssetType.FUND, AssetType.OPTION] },
+      },
+      select: {
+        id: true,
+        symbol: true,
+        nameFa: true,
+        assetType: true,
+        meta: true,
+        priceBars: {
+          orderBy: { tradeDate: 'desc' },
+          take: 1,
+          select: { lastPrice: true, closePrice: true, volume: true, raw: true },
+        },
+      },
+    });
+    return buildOptionBoard(
+      rows.map((row) => ({
+        id: row.id,
+        symbol: row.symbol,
+        nameFa: row.nameFa,
+        assetType: row.assetType,
+        lastPrice: row.priceBars[0]?.lastPrice ?? null,
+        closePrice: row.priceBars[0]?.closePrice ?? null,
+        volume: row.priceBars[0]?.volume ?? null,
+        raw: row.priceBars[0]?.raw ?? null,
+        meta: row.meta,
+      })),
+    );
   }
 
   async getInstrument(id: string) {
@@ -427,6 +499,7 @@ export class MarketService implements OnModuleInit {
           instruments,
           fundHoldings,
           indices: indexDigest,
+          optionBoard: optionBoardForPrompt(await this.getOptionBoard().catch(() => emptyOptionBoard())),
           noteFa:
             'fundHoldings فقط گزارش‌های صندوق ذخیره‌شده است. اگر خالی است یعنی در دیتابیس خرید/موجودی ثبت نشده.',
         },
@@ -452,7 +525,7 @@ export class MarketService implements OnModuleInit {
       ? await this.prisma.instrument.findMany({
           where: {
             isActive: true,
-            assetType: { in: [AssetType.STOCK, AssetType.INDEX, AssetType.FUND, AssetType.GOLD_ETF] },
+            assetType: { in: [AssetType.STOCK, AssetType.INDEX, AssetType.FUND, AssetType.GOLD_ETF, AssetType.OPTION] },
             OR: or,
           },
           take: 24,
@@ -1460,26 +1533,29 @@ export class MarketService implements OnModuleInit {
 
   private async ingestOptions(tradeDate: Date) {
     try {
-      const data = await this.fetchJson(
-        'https://webgw.tse.ir/InstrumentProvider/api/v1/MarketWatch/MarketWatchOption/fa',
-      );
-      const items: unknown[] = data?.Items ?? data?.items ?? [];
-      for (const item of items as Record<string, unknown>[]) {
-        const symbol = String(item.namad ?? item.lVal18AFC ?? item.instrumentName ?? item.symbol ?? '').trim();
+      const items = await this.fetchOptionContracts();
+      this.logger.log(`اختیار معامله: ${items.length} قرارداد`);
+      for (const item of items) {
+        const symbol = String(
+          item.l18 ?? item.namad ?? item.lVal18AFC ?? item.instrumentName ?? item.symbol ?? '',
+        ).trim();
         const nameFa = String(
-          item.name ?? item.lVal30 ?? item.companyNamePersian ?? symbol,
+          item.l30 ?? item.name ?? item.lVal30 ?? item.companyNamePersian ?? symbol,
         ).trim();
         if (!symbol) continue;
-        const lastPrice = this.num(item.akharinGheymat ?? item.pl ?? item.lastPrice);
+        const meta = parseOptionMeta(item, symbol, nameFa);
+        const lastPrice = marketNumber(item.pl ?? item.lastPrice ?? item.akharinGheymat ?? item.pDrCotVal);
+        const closePrice = marketNumber(item.pc ?? item.closingPrice ?? item.closePrice) ?? lastPrice;
+        const volume = marketNumber(item.tvol ?? item.tradeVolume ?? item.qTotTran5J ?? item.volume);
         const instrument = await this.prisma.instrument.upsert({
           where: { symbol_assetType: { symbol, assetType: AssetType.OPTION } },
           create: {
             symbol,
-            nameFa,
+            nameFa: nameFa || symbol,
             assetType: AssetType.OPTION,
-            meta: item as Prisma.InputJsonValue,
+            meta: meta as Prisma.InputJsonValue,
           },
-          update: { nameFa, meta: item as Prisma.InputJsonValue, isActive: true },
+          update: { nameFa: nameFa || symbol, meta: meta as Prisma.InputJsonValue, isActive: true },
         });
         await this.prisma.priceBar.upsert({
           where: { instrumentId_tradeDate: { instrumentId: instrument.id, tradeDate } },
@@ -1487,18 +1563,56 @@ export class MarketService implements OnModuleInit {
             instrumentId: instrument.id,
             tradeDate,
             lastPrice,
-            closePrice: lastPrice,
+            closePrice,
+            volume,
             raw: item as Prisma.InputJsonValue,
           },
           update: {
             lastPrice,
-            closePrice: lastPrice,
+            closePrice,
+            volume,
             raw: item as Prisma.InputJsonValue,
           },
         });
       }
     } catch (e) {
       this.logger.warn(`دریافت اختیار معامله ناموفق: ${(e as Error).message}`);
+    }
+  }
+
+  private async fetchOptionContracts(): Promise<Record<string, unknown>[]> {
+    const fromBrs = await this.fetchBrsOptions();
+    if (fromBrs.length) return fromBrs;
+    try {
+      const data = await this.fetchJson(
+        'https://webgw.tse.ir/InstrumentProvider/api/v1/MarketWatch/MarketWatchOption/fa',
+      );
+      const items: unknown[] = data?.Items ?? data?.items ?? [];
+      return Array.isArray(items) ? (items as Record<string, unknown>[]) : [];
+    } catch (e) {
+      this.logger.warn(`دیده‌بان اختیار ناموفق: ${(e as Error).message}`);
+      return [];
+    }
+  }
+
+  private async fetchBrsOptions(): Promise<Record<string, unknown>[]> {
+    const key = process.env.BRS_API_KEY?.trim();
+    if (!key) return [];
+    try {
+      const data = await this.fetchJson(
+        `https://Api.BrsApi.ir/Tsetmc/Option.php?key=${encodeURIComponent(key)}`,
+      );
+      const list: unknown[] = Array.isArray(data)
+        ? data
+        : Array.isArray(data?.data)
+          ? data.data
+          : Array.isArray(data?.option)
+            ? data.option
+            : [];
+      return list.filter((item): item is Record<string, unknown> => Boolean(item) && typeof item === 'object');
+    } catch (e) {
+      this.logger.warn(`اختیار BrsApi ناموفق: ${(e as Error).message}`);
+      return [];
     }
   }
 
@@ -1632,4 +1746,14 @@ export class MarketService implements OnModuleInit {
     const n = Number(s);
     return Number.isFinite(n) ? n : null;
   }
+}
+
+function emptyOptionBoard(): OptionBoard {
+  return {
+    disclaimerFa: '',
+    buyQueues: [],
+    sellQueues: [],
+    worthwhileOptions: [],
+    replacements: [],
+  };
 }

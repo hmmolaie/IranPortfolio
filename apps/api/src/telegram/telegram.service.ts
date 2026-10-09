@@ -13,9 +13,10 @@ import { UsersService } from '../users/users.service';
 import { LlmService } from '../llm/llm.service';
 import { WalletService } from '../wallet/wallet.service';
 import { IntelligenceService } from '../intelligence/intelligence.service';
+import { MarketService } from '../market/market.service';
+import { optionBoardTelegramLines } from '../market/option-board';
 import { renderPortfolioPiePng } from './pie-chart-png';
 import { fallbackDigestVoiceScript, trimSpokenScript } from './digest-voice';
-import { speechVoiceForModel } from '../llm/tts-voice';
 import {
   DEFAULT_TELEGRAM_BOT_NAME_FA,
   DEFAULT_TELEGRAM_BOT_URL,
@@ -53,7 +54,7 @@ type TelegramUpdate = {
 };
 
 const CONFIG_ID = 'default';
-const DEFAULT_DIGEST_TTS_MODEL = 'gemini-2.5-pro-preview-tts';
+const DEFAULT_DIGEST_TTS_MODEL = 'gpt-4o-mini-tts';
 const TG_API = 'https://api.telegram.org';
 const DIGEST_TTS_INSTRUCTIONS =
   'Speak as an Iranian woman news presenter. Fluent contemporary Iranian Persian, not Dari. Warm, clear, natural pace. Past-tense reporting. Do not rush; keep the whole briefing under two minutes.';
@@ -83,6 +84,7 @@ export class TelegramService implements OnModuleInit {
     private readonly llm: LlmService,
     private readonly wallet: WalletService,
     private readonly intelligence: IntelligenceService,
+    private readonly market: MarketService,
   ) {}
 
   onModuleInit() {
@@ -139,6 +141,8 @@ export class TelegramService implements OnModuleInit {
       botUsername,
       deepLink: this.botDeepLink(),
       enabled: row?.enabled ?? true,
+      ttsBaseUrl: row?.ttsBaseUrl?.trim() ?? '',
+      hasTtsToken: Boolean(row?.ttsApiTokenEncrypted),
       ttsModel: this.resolveDigestTtsModel(row?.ttsModel),
       ...this.scheduleFrom(row),
       hasToken: Boolean(row?.botTokenEncrypted),
@@ -174,6 +178,8 @@ export class TelegramService implements OnModuleInit {
     botUsername?: string;
     botToken?: string;
     enabled?: boolean;
+    ttsBaseUrl?: string;
+    ttsApiToken?: string;
     ttsModel?: string;
     sendHour?: number;
     sendMinute?: number;
@@ -198,6 +204,14 @@ export class TelegramService implements OnModuleInit {
       botTokenEncrypted = encryptSecret(this.encKey(), token);
     }
     const enabled = data.enabled ?? current?.enabled ?? true;
+    const ttsBaseUrl = (data.ttsBaseUrl ?? current?.ttsBaseUrl ?? '').trim().replace(/\/+$/, '');
+    if (ttsBaseUrl && !/^https?:\/\//i.test(ttsBaseUrl)) {
+      throw new BadRequestException('نشانی پایهٔ گفتار باید با http شروع شود');
+    }
+    let ttsApiTokenEncrypted = current?.ttsApiTokenEncrypted ?? null;
+    if (data.ttsApiToken?.trim()) {
+      ttsApiTokenEncrypted = encryptSecret(this.encKey(), data.ttsApiToken.trim());
+    }
     const ttsModel = this.resolveDigestTtsModel(data.ttsModel ?? current?.ttsModel);
     const schedule = this.resolveSchedule(data, current);
 
@@ -209,6 +223,8 @@ export class TelegramService implements OnModuleInit {
         botUsername,
         botTokenEncrypted,
         enabled,
+        ttsBaseUrl,
+        ttsApiTokenEncrypted,
         ttsModel,
         sendHour: schedule.hour,
         sendMinute: schedule.minute,
@@ -219,6 +235,8 @@ export class TelegramService implements OnModuleInit {
         botUsername,
         botTokenEncrypted,
         enabled,
+        ttsBaseUrl,
+        ttsApiTokenEncrypted,
         ttsModel,
         sendHour: schedule.hour,
         sendMinute: schedule.minute,
@@ -279,6 +297,32 @@ export class TelegramService implements OnModuleInit {
       throw new ServiceUnavailableException(`ارسال به تلگرام ناموفق بود: ${detail}`);
     }
     return { ok: true, messageFa: `پیام آزمایشی فقط به شماره ${mobile} فرستاده شد.` };
+  }
+
+  /** یک فایل صوتی کوتاه فقط برای تلگرام همین مدیر. بقیهٔ کاربران این فایل را نمی‌گیرند. */
+  async sendTestVoiceToAdmin(userId: string) {
+    const token = await this.readToken();
+    if (!token) throw new BadRequestException('ابتدا توکن ربات را ذخیره کنید');
+    const chat = await this.adminChat(userId);
+    const speech = await this.resolveSpeech(userId);
+    try {
+      const audio = await this.llm.speakTts('سلام چطوری خوبی؟', userId, {
+        model: speech.model,
+        baseUrl: speech.baseUrl,
+        apiKey: speech.apiKey,
+      });
+      await this.sendAudio(token, chat.chatId, audio, {
+        filename: 'voice-test.mp3',
+        caption: 'فایل آزمایشی صوت. فقط برای همین مدیر فرستاده شد.',
+        title: 'تست صوت',
+      });
+    } catch (e) {
+      const detail = e instanceof Error ? e.message : String(e);
+      this.logger.warn(`تست صوت ادمین ناموفق: ${detail.slice(0, 500)}`);
+      await this.notifyAdminError('خطای تست فایل صوتی', detail);
+      throw new ServiceUnavailableException(detail);
+    }
+    return { ok: true, messageFa: `فایل صوتی آزمایشی فقط به شماره ${chat.mobile} فرستاده شد.` };
   }
 
   async unlink(userId: string) {
@@ -448,8 +492,11 @@ export class TelegramService implements OnModuleInit {
       }
 
       const regimeBrief = await this.intelligence.regimeBriefFa().catch(() => '');
-      const newsText = [this.formatNewsSection(cfg.botNameFa, batch), regimeBrief].filter(Boolean).join('\n\n');
-      const newsVoice = await this.sharedNewsVoice(dateKey, cfg.botNameFa, batch);
+      const optionLines = await this.optionOpportunityLines();
+      const newsText = [await this.formatNewsSection(cfg.botNameFa, batch, optionLines), regimeBrief]
+        .filter(Boolean)
+        .join('\n\n');
+      const newsVoice = await this.sharedNewsVoice(dateKey, cfg.botNameFa, batch, optionLines);
       let sentCount = 0;
       let failedCount = 0;
       for (const r of recipients) {
@@ -755,7 +802,11 @@ export class TelegramService implements OnModuleInit {
     return escapeHtml(tehranDateWithWeekdayFa());
   }
 
-  private formatNewsSection(botNameFa: string | null, batch: NewsBatchRow | null | undefined): string {
+  private formatNewsSection(
+    botNameFa: string | null,
+    batch: NewsBatchRow | null | undefined,
+    optionLines: string[] = [],
+  ): string {
     const brand = escapeHtml((botNameFa ?? '').trim() || 'سبدیار');
     const lines: string[] = [`<b>${brand}</b>`, this.digestDateLabel(), ''];
 
@@ -778,7 +829,7 @@ export class TelegramService implements OnModuleInit {
       lines.push('خبر اثرگذاری بر اقتصاد ایران دیده نشد.', '');
     }
 
-    if (opportunities.length) {
+    if (opportunities.length || optionLines.length) {
       lines.push('<b>فرصت‌های سرمایه‌گذاری که دیده شد</b>');
       for (const [idx, item] of opportunities.slice(0, 3).entries()) {
         lines.push(`${toFaDigit(idx + 1)}) <b>${escapeHtml(replaceSocialNetworkBrandFa(item.titleFa))}</b>`);
@@ -788,6 +839,11 @@ export class TelegramService implements OnModuleInit {
         }
         if (item.officialSourceFa) lines.push(`منبع رسمی: ${escapeHtml(item.officialSourceFa)}`);
         lines.push('');
+      }
+      if (optionLines.length) {
+        lines.push('<b>صف و اختیار از قیمت امروز</b>');
+        for (const line of optionLines) lines.push(escapeHtml(line), '');
+        lines.push('این مشاهده از قیمت روز است و توصیهٔ قطعی نیست.', '');
       }
     } else {
       lines.push('فرصت سرمایه‌گذاری دیده نشد.', '');
@@ -861,8 +917,48 @@ export class TelegramService implements OnModuleInit {
     return this.resolveDigestTtsModel(row?.ttsModel);
   }
 
-  private femaleTtsVoice(model: string): string {
-    return speechVoiceForModel(model, this.config.get<string>('TTS_VOICE'));
+  private async adminChat(userId: string): Promise<{ chatId: string; mobile: string }> {
+    const user = await this.prisma.user.findUnique({
+      where: { id: userId },
+      select: {
+        role: true,
+        profile: { select: { mobilePhone: true, telegramChatId: true } },
+      },
+    });
+    if (!user || user.role !== UserRole.ADMIN) throw new ForbiddenException();
+    const mobile = user.profile?.mobilePhone?.trim();
+    if (!mobile) {
+      throw new BadRequestException('ابتدا در پروفایل، شماره موبایل خود را ذخیره کنید.');
+    }
+    const shared = user.profile?.telegramChatId?.trim() ? null : await this.chatForMobile(mobile);
+    const chatId = user.profile?.telegramChatId?.trim() || shared?.telegramChatId?.trim();
+    if (!chatId) {
+      throw new BadRequestException(
+        'ربات با این شماره وصل نشده است. ربات را استارت کنید و همان شماره موبایل را در تلگرام به اشتراک بگذارید.',
+      );
+    }
+    return { chatId, mobile };
+  }
+
+  /** نشانی، توکن و مدل گفتار از تنظیمات ربات. اگر نشانی یا توکن خالی باشد، اتصال مدل زبانی مدیر استفاده می‌شود. */
+  private async resolveSpeech(userId?: string): Promise<{ baseUrl: string; apiKey: string; model: string }> {
+    const row = await this.prisma.telegramBotConfig.findUnique({ where: { id: CONFIG_ID } });
+    const model = this.resolveDigestTtsModel(row?.ttsModel);
+    const savedBase = row?.ttsBaseUrl?.trim() ?? '';
+    const savedKey = row?.ttsApiTokenEncrypted ? decryptSecret(this.encKey(), row.ttsApiTokenEncrypted) : '';
+    if (savedBase && savedKey) return { baseUrl: savedBase, apiKey: savedKey, model };
+    const access = await this.llm.speechAccess(userId);
+    return { baseUrl: access.baseUrl, apiKey: access.apiKey, model };
+  }
+
+  private async optionOpportunityLines(): Promise<string[]> {
+    try {
+      const board = await this.market.getOptionBoard();
+      return optionBoardTelegramLines(board);
+    } catch (e) {
+      this.logger.warn(`خواندن صف و اختیار برای تلگرام ناموفق: ${(e as Error).message.slice(0, 160)}`);
+      return [];
+    }
   }
 
   /**
@@ -873,6 +969,7 @@ export class TelegramService implements OnModuleInit {
     dateKey: string,
     botNameFa: string | null,
     batch: NewsBatchRow | null | undefined,
+    optionLines: string[] = [],
   ): Promise<Buffer | null> {
     const cached = await this.prisma.telegramSharedDigest.findUnique({ where: { dateKey } });
     if (cached?.voiceAudio?.length) {
@@ -882,7 +979,7 @@ export class TelegramService implements OnModuleInit {
     let script = cached?.voiceScript?.trim() ?? '';
     let persisted = Boolean(script);
     if (!script) {
-      const built = await this.buildSharedVoiceScript(botNameFa, batch);
+      const built = await this.buildSharedVoiceScript(botNameFa, batch, optionLines);
       script = built.script;
       if (!script) return null;
       if (built.fromModel) {
@@ -897,10 +994,11 @@ export class TelegramService implements OnModuleInit {
 
     const adminId = await this.users.getAdminUserId();
     try {
-      const model = await this.digestTtsModel();
+      const speech = await this.resolveSpeech(adminId ?? undefined);
       const audio = await this.llm.speakTts(script, adminId ?? undefined, {
-        model,
-        voice: this.femaleTtsVoice(model),
+        model: speech.model,
+        baseUrl: speech.baseUrl,
+        apiKey: speech.apiKey,
         instructions: DIGEST_TTS_INSTRUCTIONS,
       });
       if (audio?.length) {
@@ -955,6 +1053,7 @@ export class TelegramService implements OnModuleInit {
   private async buildSharedVoiceScript(
     botNameFa: string | null,
     batch: NewsBatchRow | null | undefined,
+    optionLines: string[] = [],
   ): Promise<{ script: string; fromModel: boolean }> {
     const items = batch?.items ?? [];
     const opportunities = items.filter((i) => i.category === 'opportunity' || i.isRetailActionable);
@@ -965,6 +1064,7 @@ export class TelegramService implements OnModuleInit {
       summaryFa: batch?.summaryFa,
       macros,
       opportunities,
+      optionLines,
     });
 
     const adminId = await this.users.getAdminUserId();
@@ -991,6 +1091,7 @@ export class TelegramService implements OnModuleInit {
               participateHowFa: i.participateHowFa,
               deadlineFa: i.deadlineFa,
             })),
+            optionNotesFa: optionLines,
           },
           null,
           2,

@@ -127,7 +127,7 @@ export function IntelligencePanel({ portfolioId }: { portfolioId: string }) {
         <p className="text-sm leading-7 text-navy-800/70">{data.disclaimerFa}</p>
         <div className="grid gap-3 sm:grid-cols-3">
           <div>
-            <div className="text-xs text-navy-800/55">رژیم بازار</div>
+            <div className="text-xs text-navy-800/55">ریسک بازار</div>
             <div className="mt-1 text-xl font-semibold">{data.regime.labelFa}</div>
             <p className="mt-1 text-sm text-navy-800/70">{data.regime.summaryFa}</p>
           </div>
@@ -153,7 +153,7 @@ export function IntelligencePanel({ portfolioId }: { portfolioId: string }) {
         )}
         {data.regime.confidence != null && (
           <p className="text-sm text-navy-800/60">
-            اطمینان رژیم: {Math.round(data.regime.confidence * 100).toLocaleString('fa-IR')} درصد
+            اطمینان ریسک: {Math.round(data.regime.confidence * 100).toLocaleString('fa-IR')} درصد
           </p>
         )}
       </div>

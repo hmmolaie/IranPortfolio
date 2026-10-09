@@ -81,6 +81,8 @@ model User {
   walletPayments WalletPayment[]
   walletNotices WalletNotice[]
   intelligenceLogs IntelligenceLog[]
+  aiQuota        AiUserQuota?
+  aiUsageLogs    AiUsageLog[]
 }
 
 enum WalletTxKind {
@@ -149,6 +151,55 @@ model WalletNotice {
   user User @relation(fields: [userId], references: [id], onDelete: Cascade)
 
   @@unique([userId, feature, dateKey])
+}
+
+/** نرخ هزینهٔ توکن و سهمیهٔ پیش‌فرض هوش مصنوعی */
+model AiUsageConfig {
+  id                  String   @id @default("default")
+  /// ریال به ازای هر ۱۰۰۰ توکن ورودی
+  promptRialPer1k     Float    @default(0)
+  /// ریال به ازای هر ۱۰۰۰ توکن خروجی
+  completionRialPer1k Float    @default(0)
+  /// ۰ یعنی بدون سقف، مگر برای کاربر عدد جدا گذاشته شود
+  defaultQuotaTokens  Int      @default(0)
+  /// مصرف و سهمیه فقط بعد از این لحظه شمرده می‌شود؛ سوابق متنی می‌مانند
+  resetAt             DateTime?
+  updatedAt           DateTime @updatedAt
+}
+
+/** سقف توکن هر کاربر. ۰ یعنی بدون سقف. */
+model AiUserQuota {
+  userId      String   @id
+  limitTokens Int      @default(0)
+  updatedAt   DateTime @updatedAt
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+}
+
+/** هر فراخوانی موفق مدل زبانی، بعد از آخرین ریست */
+model AiUsageLog {
+  id               String   @id @default(cuid())
+  userId           String?
+  purpose          String
+  section          String
+  model            String?
+  promptTokens     Int      @default(0)
+  completionTokens Int      @default(0)
+  totalTokens      Int      @default(0)
+  costRial         Int      @default(0)
+  estimated        Boolean  @default(false)
+  /// پرامپت کامل فرستاده‌شده به مدل
+  prompt           String   @default("")
+  /// جواب کامل مدل
+  response         String   @default("")
+  dateKey          String
+  createdAt        DateTime @default(now())
+
+  user User? @relation(fields: [userId], references: [id], onDelete: SetNull)
+
+  @@index([userId, createdAt])
+  @@index([section, dateKey])
+  @@index([dateKey])
 }
 
 /** کلید عبور دستگاه (اثر انگشت / چهره / PIN گوشی) برای ورود WebAuthn */
@@ -582,8 +633,12 @@ model TelegramBotConfig {
   botNameFa         String?
   botUsername       String?
   botTokenEncrypted String?
+  /// نشانی پایهٔ گفتار. خالی یعنی اتصال مدل زبانی مدیر
+  ttsBaseUrl        String   @default("")
+  /// توکن گفتار، جدا از توکن ربات. خالی یعنی همان کلید مدل زبانی مدیر
+  ttsApiTokenEncrypted String?
   /// مدل متن‌به‌صدا برای فایل صوتی اخبار روزانه
-  ttsModel          String   @default("gemini-2.5-pro-preview-tts")
+  ttsModel          String   @default("gpt-4o-mini-tts")
   /// ساعت ارسال به وقت تهران
   sendHour          Int      @default(8)
   sendMinute        Int      @default(30)

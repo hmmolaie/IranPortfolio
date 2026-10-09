@@ -3,6 +3,7 @@ import { Injectable, Logger, BadRequestException } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import { UserRole } from '@prisma/client';
 import { PrismaService } from '../prisma/prisma.service';
+import { AiUsageService, TokenUse } from '../ai-usage/ai-usage.service';
 import { transcribeBytes } from '../telegram-assistant/youtube-subs/gapgpt';
 import {
   audioSpeechUrl,
@@ -104,6 +105,7 @@ export class LlmService {
   constructor(
     private readonly prisma: PrismaService,
     private readonly config: ConfigService,
+    private readonly aiUsage: AiUsageService,
   ) {}
 
   private key(): Buffer {
@@ -305,7 +307,7 @@ export class LlmService {
   private async callChatCompletions(
     creds: LlmCreds,
     body: Record<string, unknown>,
-  ): Promise<string> {
+  ): Promise<{ content: string; usage: TokenUse }> {
     const res = await fetch(`${creds.baseUrl}/chat/completions`, {
       method: 'POST',
       headers: this.requestHeaders(creds),
@@ -334,18 +336,20 @@ export class LlmService {
     }
 
     const raw = json.choices?.[0]?.message?.content;
-    if (typeof raw === 'string') return raw;
-    if (Array.isArray(raw)) {
-      return raw.map((p) => (typeof p === 'string' ? p : p.text ?? '')).join('');
-    }
-    return '';
+    const content =
+      typeof raw === 'string'
+        ? raw
+        : Array.isArray(raw)
+          ? raw.map((p) => (typeof p === 'string' ? p : p.text ?? '')).join('')
+          : '';
+    return { content, usage: readTokenUse(json, JSON.stringify(body).length, content.length) };
   }
 
   /** تلاش روی چند مدل + retry برای ۴۲۹ */
   private async callWithModelFallback(
     creds: LlmCreds,
     makeBody: (model: string) => Record<string, unknown>,
-  ): Promise<{ content: string; model: string }> {
+  ): Promise<{ content: string; model: string; usage: TokenUse }> {
     const models = [creds.model, ...creds.fallbackModels].filter(
       (m, i, arr) => m && arr.indexOf(m) === i,
     );
@@ -355,8 +359,8 @@ export class LlmService {
     for (const model of models) {
       for (let attempt = 1; attempt <= maxAttemptsPerModel; attempt++) {
         try {
-          const content = await this.callChatCompletions(creds, makeBody(model));
-          return { content, model };
+          const result = await this.callChatCompletions(creds, makeBody(model));
+          return { content: result.content, model, usage: result.usage };
         } catch (e) {
           lastErr = e;
           const rateLimited = e instanceof LlmHttpError && e.isRateLimited;
@@ -476,7 +480,7 @@ export class LlmService {
   private async postResponses(
     creds: LlmCreds,
     body: Record<string, unknown>,
-  ): Promise<{ content: string; citations: string[] }> {
+  ): Promise<{ content: string; citations: string[]; usage: TokenUse }> {
     const res = await fetch(`${creds.baseUrl}/responses`, {
       method: 'POST',
       headers: this.requestHeaders(creds),
@@ -501,7 +505,11 @@ export class LlmService {
     if (!content.trim()) {
       throw new Error('پاسخ خالی از جستجوی زندهٔ مدل');
     }
-    return { content, citations: this.extractCitations(json) };
+    return {
+      content,
+      citations: this.extractCitations(json),
+      usage: readTokenUse(json, JSON.stringify(body).length, content.length),
+    };
   }
 
   private async callResponsesForJson(
@@ -510,7 +518,7 @@ export class LlmService {
     userPrompt: string,
     search: LlmLiveSearch,
     preferGrok?: boolean,
-  ): Promise<{ content: string; model: string; citations: string[] }> {
+  ): Promise<{ content: string; model: string; citations: string[]; usage: TokenUse }> {
     const models = preferGrok
       ? preferGrokFirst(uniqueStrings([creds.model, ...creds.fallbackModels]))
       : uniqueStrings([creds.model, ...creds.fallbackModels]);
@@ -557,7 +565,7 @@ export class LlmService {
     creds: LlmCreds,
     systemPrompt: string,
     userPrompt: string,
-  ): Promise<{ content: string; model: string }> {
+  ): Promise<{ content: string; model: string; usage: TokenUse }> {
     const messages = [
       { role: 'system', content: systemPrompt },
       { role: 'user', content: userPrompt },
@@ -591,6 +599,7 @@ export class LlmService {
     userId?: string,
     options?: LlmChatOptions,
   ): Promise<T> {
+    await this.aiUsage.assertAllowed(userId, purpose);
     try {
       return await this.chatJsonInner<T>(purpose, systemPrompt, userPrompt, userId, options);
     } catch (e) {
@@ -613,6 +622,7 @@ export class LlmService {
     let usedModel = creds.model;
     let content: string;
     let citations: string[] = [];
+    let usage: TokenUse = { promptTokens: 0, completionTokens: 0, totalTokens: 0, estimated: true };
 
     if (search) {
       try {
@@ -620,6 +630,7 @@ export class LlmService {
         content = r.content;
         usedModel = r.model;
         citations = r.citations;
+        usage = r.usage;
       } catch (e) {
         this.logger.warn(
           `جستجوی زندهٔ ${SOCIAL_NETWORK_LABEL_FA} ناموفق؛ ادامه بدون ابزار جستجو: ${(e as Error).message.slice(0, 180)}`,
@@ -627,21 +638,19 @@ export class LlmService {
         const r = await this.callChatJsonCompletions(creds, system, userPrompt);
         content = r.content;
         usedModel = r.model;
+        usage = r.usage;
       }
     } else {
       const r = await this.callChatJsonCompletions(creds, system, userPrompt);
       content = r.content;
       usedModel = r.model;
+      usage = r.usage;
     }
 
-    await this.prisma.aiTrace.create({
-      data: {
-        userId,
-        purpose,
-        prompt: `${system}\n---\n${userPrompt}`,
-        response: citations.length ? `${content}\n---\n${citations.join('\n')}` : content,
-        model: usedModel,
-      },
+    const responseText = citations.length ? `${content}\n---\n${citations.join('\n')}` : content;
+    await this.aiUsage.record(userId, purpose, usedModel, usage, {
+      prompt: `${system}\n---\n${userPrompt}`,
+      response: responseText,
     });
 
     const parsed = this.extractJsonObject(content) as T;
@@ -657,33 +666,44 @@ export class LlmService {
   async speakTts(
     text: string,
     userId?: string,
-    opts?: { model?: string; voice?: string; instructions?: string },
+    opts?: { model?: string; voice?: string; instructions?: string; baseUrl?: string; apiKey?: string },
   ): Promise<Buffer> {
     const creds = await this.resolveTtsCredentials(userId);
+    const baseUrl = opts?.baseUrl?.trim() || creds.baseUrl;
+    const apiKey = opts?.apiKey?.trim() || creds.apiKey;
     const input = text.replace(/\s+/g, ' ').trim().slice(0, 4096);
     if (!input) throw new Error('متن خالی برای گفتار');
     const requestedModel =
       opts?.model?.trim() || this.config.get<string>('TTS_MODEL') || 'gpt-4o-mini-tts';
-    const model = speechModelForBase(creds.baseUrl, requestedModel);
+    const model = speechModelForBase(baseUrl, requestedModel);
     const requestedVoice = opts?.voice ?? this.config.get<string>('TTS_VOICE');
-    const voice = speechVoiceForModel(model, requestedVoice);
+    const voice = isGapGptBase(baseUrl) ? 'alloy' : speechVoiceForModel(model, requestedVoice);
     if (model !== requestedModel) {
       this.logger.warn(`مدل گفتار ${requestedModel} با این نشانی سازگار نیست؛ ${model} استفاده شد`);
     }
-    if (requestedVoice && voice !== requestedVoice.trim().toLowerCase()) {
-      this.logger.warn(`صدای ${requestedVoice} با مدل ${model} سازگار نیست؛ ${voice} استفاده شد`);
-    }
-    const instructions = speechModelAcceptsInstructions(model)
-      ? (opts?.instructions ?? 'Speak in fluent, clear Persian (Farsi). Natural pace.')
-      : undefined;
-    const url = audioSpeechUrl(creds.baseUrl);
-    const maxChunk = isGapGptBase(creds.baseUrl) ? 400 : 4096;
+    const instructions =
+      !isGapGptBase(baseUrl) && speechModelAcceptsInstructions(model)
+        ? (opts?.instructions ?? 'Speak in fluent, clear Persian (Farsi). Natural pace.')
+        : undefined;
+    const url = audioSpeechUrl(baseUrl);
+    const maxChunk = 4096;
     const chunks = splitSpeechInput(input, maxChunk);
     const pieces: Buffer[] = [];
     for (const chunk of chunks) {
-      pieces.push(await this.requestSpeech(url, creds.apiKey, model, voice, chunk, instructions));
+      pieces.push(await this.requestSpeech(url, apiKey, model, voice, chunk, instructions));
     }
-    return Buffer.concat(pieces);
+    const audio = Buffer.concat(pieces);
+    const promptTokens = Math.max(1, Math.ceil(input.length / 4));
+    await this.aiUsage.record(userId, 'tts', model, {
+      promptTokens,
+      completionTokens: 0,
+      totalTokens: promptTokens,
+      estimated: true,
+    }, {
+      prompt: input,
+      response: `صوت ساخته شد. ${pieces.length.toLocaleString('en-US')} قطعه، ${audio.length.toLocaleString('en-US')} بایت.`,
+    });
+    return audio;
   }
 
   private async requestSpeech(
@@ -694,25 +714,15 @@ export class LlmService {
     input: string,
     instructions?: string,
   ): Promise<Buffer> {
-    const attempts = [{ model, voice, instructions }];
-    if (model !== 'tts-1') {
-      attempts.push({ model: 'tts-1', voice: 'nova', instructions: undefined });
-    } else {
-      attempts.push({ model, voice, instructions });
+    try {
+      return await this.postSpeech(url, apiKey, model, voice, input, instructions);
+    } catch (e) {
+      const rateLimited = e instanceof Error && /خطای TTS: 429/.test(e.message);
+      if (!rateLimited) throw e instanceof Error ? e : new Error(String(e));
+      this.logger.warn(`گفتار ${model} با محدودیت نرخ؛ یک بار دیگر همان مدل.`);
+      await sleep(2000);
+      return this.postSpeech(url, apiKey, model, voice, input, instructions);
     }
-    let last: unknown;
-    for (let i = 0; i < attempts.length; i += 1) {
-      const attempt = attempts[i];
-      try {
-        return await this.postSpeech(url, apiKey, attempt.model, attempt.voice, input, attempt.instructions);
-      } catch (e) {
-        last = e;
-        const retry = isSpeechTimeout(e) || (e instanceof Error && /خطای TTS: 5\d\d/.test(e.message));
-        if (!retry || i === attempts.length - 1) break;
-        this.logger.warn(`گفتار ${attempt.model} ناموفق؛ تلاش بعدی. ${e instanceof Error ? e.message.slice(0, 180) : ''}`);
-      }
-    }
-    throw last instanceof Error ? last : new Error(String(last));
   }
 
   private async postSpeech(
@@ -754,6 +764,11 @@ export class LlmService {
     return audio;
   }
 
+  async speechAccess(userId?: string): Promise<{ baseUrl: string; apiKey: string }> {
+    const creds = await this.resolveTtsCredentials(userId);
+    return { baseUrl: creds.baseUrl, apiKey: creds.apiKey };
+  }
+
   /** نشانی و کلید رونویسی. مدل همیشه در کلاینت whisper-1 ثابت است. */
   async transcriptionAccess(userId?: string): Promise<{ baseUrl: string; apiKey: string }> {
     const base = this.config.get<string>('GAPGPT_BASE_URL')?.trim();
@@ -766,10 +781,21 @@ export class LlmService {
   async transcribeAudio(audio: Buffer, filename: string, userId?: string): Promise<string> {
     const access = await this.transcriptionAccess(userId);
     const pieces = await transcribeBytes(audio, filename || 'audio.m4a', access.baseUrl, access.apiKey);
-    return pieces
+    const text = pieces
       .map((p) => p.text)
       .join(' ')
       .trim();
+    const tokens = Math.max(1, Math.ceil(text.length / 4));
+    await this.aiUsage.record(userId, 'transcription', 'whisper-1', {
+      promptTokens: tokens,
+      completionTokens: 0,
+      totalTokens: tokens,
+      estimated: true,
+    }, {
+      prompt: `فایل صوتی: ${filename || 'audio'}\nحجم: ${audio.length.toLocaleString('en-US')} بایت`,
+      response: text,
+    });
+    return text;
   }
 
   private async resolveTtsCredentials(userId?: string): Promise<LlmCreds> {
@@ -782,9 +808,10 @@ export class LlmService {
   }
 
   async chatText(purpose: string, systemPrompt: string, userPrompt: string, userId?: string) {
+    await this.aiUsage.assertAllowed(userId, purpose);
     const creds = await this.resolveCredentials(userId);
     try {
-      const { content, model } = await this.callWithModelFallback(creds, (m) => ({
+      const { content, model, usage } = await this.callWithModelFallback(creds, (m) => ({
         model: m,
         temperature: 0.4,
         messages: [
@@ -792,14 +819,9 @@ export class LlmService {
           { role: 'user', content: userPrompt },
         ],
       }));
-      await this.prisma.aiTrace.create({
-        data: {
-          userId,
-          purpose,
-          prompt: `${systemPrompt}\n---\n${userPrompt}`,
-          response: content,
-          model,
-        },
+      await this.aiUsage.record(userId, purpose, model, usage, {
+        prompt: `${systemPrompt}\n---\n${userPrompt}`,
+        response: content,
       });
       return content;
     } catch (e) {
@@ -893,7 +915,7 @@ export class LlmService {
         creds = await this.resolveCredentials(userId);
       }
 
-      const { content, model } = await this.callWithModelFallback(creds, (m) => ({
+      const { content, model, usage } = await this.callWithModelFallback(creds, (m) => ({
         model: m,
         temperature: 0,
         max_tokens: 40,
@@ -910,6 +932,10 @@ export class LlmService {
       }));
 
       const reply = (content || '').trim().slice(0, 200);
+      await this.aiUsage.record(userId, 'llm_test', model, usage, {
+        prompt: 'You are a connectivity test. Reply with exactly: OK\n---\nping',
+        response: content || '',
+      });
       const latencyMs = Date.now() - started;
       return {
         ok: true,
@@ -941,6 +967,37 @@ function isSpeechTimeout(error: unknown): boolean {
 
 function errorText(error: unknown): string {
   return error instanceof Error ? error.message : String(error);
+}
+
+function readTokenUse(json: unknown, promptChars: number, completionChars: number): TokenUse {
+  const usage =
+    json && typeof json === 'object' && 'usage' in json
+      ? (json as { usage?: Record<string, unknown> }).usage
+      : undefined;
+  const prompt = finite(usage?.prompt_tokens ?? usage?.input_tokens);
+  const completion = finite(usage?.completion_tokens ?? usage?.output_tokens);
+  const total = finite(usage?.total_tokens) || prompt + completion;
+  if (total > 0) {
+    return {
+      promptTokens: prompt,
+      completionTokens: completion || Math.max(0, total - prompt),
+      totalTokens: total,
+      estimated: false,
+    };
+  }
+  const promptTokens = Math.max(1, Math.ceil(promptChars / 4));
+  const completionTokens = Math.max(0, Math.ceil(completionChars / 4));
+  return {
+    promptTokens,
+    completionTokens,
+    totalTokens: promptTokens + completionTokens,
+    estimated: true,
+  };
+}
+
+function finite(value: unknown): number {
+  const n = Number(value);
+  return Number.isFinite(n) && n > 0 ? Math.round(n) : 0;
 }
 
 function speechEndpointLabel(url: string): string {
