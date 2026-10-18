@@ -330,19 +330,51 @@ export type UnderlyingOptionQuote = {
   reasonFa: string;
 };
 
+export function optionTradePrice(source: {
+  lastPrice?: number | null;
+  closePrice?: number | null;
+  raw?: unknown;
+}): { last: number | null; close: number | null } {
+  const raw = asRecord(source.raw);
+  const positive = (value: unknown) => {
+    const n = marketNumber(value);
+    return n != null && n > 0 ? n : null;
+  };
+  const last =
+    positive(source.lastPrice) ??
+    positive(raw.pl) ??
+    positive(raw.pd1) ??
+    positive(raw.po1) ??
+    positive(raw.pf) ??
+    positive(raw.py) ??
+    positive(raw.pDrCotVal) ??
+    positive(raw.lastPrice);
+  const close = positive(source.closePrice) ?? positive(raw.pc) ?? positive(raw.py) ?? last;
+  return { last, close };
+}
+
 export function quotesForUnderlying(
   underlyingSymbol: string,
   underlyingPrice: number | null,
   rows: BoardSource[],
+  underlyingInsCode?: string | null,
 ): UnderlyingOptionQuote[] {
   const target = fold(underlyingSymbol);
   const out: UnderlyingOptionQuote[] = [];
   for (const row of rows) {
     if (row.assetType !== 'OPTION') continue;
-    const parsed = parseOptionMeta({ ...asRecord(row.raw), ...asRecord(row.meta) }, row.symbol, row.nameFa);
-    if (!parsed.side || !parsed.underlyingSymbol || fold(parsed.underlyingSymbol) !== target) continue;
+    const raw = asRecord(row.raw);
+    const meta = asRecord(row.meta);
+    const parsed = parseOptionMeta({ ...raw, ...meta }, row.symbol, row.nameFa);
+    const baseId = text(raw.base_id ?? meta.base_id ?? meta.baseId);
+    const nameFa = fold(row.nameFa);
+    const sameUnderlying =
+      Boolean(parsed.underlyingSymbol && fold(parsed.underlyingSymbol) === target) ||
+      Boolean(underlyingInsCode && baseId && baseId === underlyingInsCode) ||
+      (target.length >= 2 && nameFa.includes(`${target}-`));
+    if (!parsed.side || !sameUnderlying) continue;
     if (parsed.strike == null || parsed.strike <= 0) continue;
-    const premium = row.lastPrice ?? row.closePrice;
+    const premium = optionTradePrice(row).last ?? optionTradePrice(row).close;
     const spot =
       underlyingPrice != null && underlyingPrice > 0
         ? underlyingPrice

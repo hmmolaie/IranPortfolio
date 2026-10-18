@@ -18,6 +18,7 @@ import {
   describeQuote,
   marketNumber,
   optionBoardForPrompt,
+  optionTradePrice,
   parseOptionMeta,
   quotesForUnderlying,
   type BoardSource,
@@ -242,7 +243,11 @@ export class MarketService implements OnModuleInit {
     const day = this.latestTradingDEven();
     if (!day || this.ingestInFlight) return;
     const count = await this.prisma.priceBar.count({
-      where: { tradeDate: dEvenToDate(day), instrument: { assetType: AssetType.OPTION } },
+      where: {
+        tradeDate: dEvenToDate(day),
+        instrument: { assetType: AssetType.OPTION },
+        OR: [{ lastPrice: { gt: 0 } }, { closePrice: { gt: 0 } }],
+      },
     });
     if (count > 0) return;
     this.logger.log('میلهٔ سهام هست ولی اختیار معامله برای این روز نیست');
@@ -378,26 +383,23 @@ export class MarketService implements OnModuleInit {
     if (!eligible) {
       return { symbol: inst.symbol, spot, disclaimerFa: '', options: [] };
     }
-    const options = await this.prisma.instrument.findMany({
-      where: { isActive: true, assetType: AssetType.OPTION },
-      select: {
-        id: true,
-        symbol: true,
-        nameFa: true,
-        assetType: true,
-        meta: true,
-        priceBars: {
-          orderBy: { tradeDate: 'desc' },
-          take: 1,
-          select: { lastPrice: true, closePrice: true, volume: true, raw: true },
+    const read = async () => {
+      const options = await this.prisma.instrument.findMany({
+        where: { isActive: true, assetType: AssetType.OPTION },
+        select: {
+          id: true,
+          symbol: true,
+          nameFa: true,
+          assetType: true,
+          meta: true,
+          priceBars: {
+            orderBy: { tradeDate: 'desc' },
+            take: 1,
+            select: { lastPrice: true, closePrice: true, volume: true, raw: true },
+          },
         },
-      },
-    });
-    return {
-      symbol: inst.symbol,
-      spot,
-      disclaimerFa: 'مقایسه از قیمت ذخیره‌شدهٔ سهم و اختیار است و توصیهٔ قطعی معامله نیست.',
-      options: quotesForUnderlying(
+      });
+      return quotesForUnderlying(
         inst.symbol,
         spot,
         options.map((row) => ({
@@ -411,7 +413,35 @@ export class MarketService implements OnModuleInit {
           raw: row.priceBars[0]?.raw ?? null,
           meta: row.meta,
         })),
-      ),
+        inst.insCode,
+      );
+    };
+    let quotes = await read();
+    if (!quotes.length && !this.ingestInFlight) {
+      const priced = await this.prisma.priceBar.count({
+        where: {
+          instrument: { assetType: AssetType.OPTION },
+          OR: [{ lastPrice: { gt: 0 } }, { closePrice: { gt: 0 } }],
+        },
+      });
+      if (!priced) {
+        this.ingestInFlight = true;
+        try {
+          await this.ingestOptions(todayDateOnly());
+          quotes = await read();
+        } catch (e) {
+          this.logger.warn(`خواندن اختیار برای ${inst.symbol}: ${(e as Error).message}`);
+          await this.recordMarketError(e);
+        } finally {
+          this.ingestInFlight = false;
+        }
+      }
+    }
+    return {
+      symbol: inst.symbol,
+      spot,
+      disclaimerFa: 'مقایسه از قیمت ذخیره‌شدهٔ سهم و اختیار است و توصیهٔ قطعی معامله نیست.',
+      options: quotes,
     };
   }
 
@@ -990,7 +1020,13 @@ export class MarketService implements OnModuleInit {
       const pe = this.num(row.pe ?? row.sectorPE ?? row.pE);
       const volume = this.num(row.qTotTran5J ?? row.volume ?? row.tradeVolume);
 
-      const instrument = await this.saveInstrument({ symbol, nameFa, assetType, insCode });
+      let instrument;
+      try {
+        instrument = await this.saveInstrument({ symbol, nameFa, assetType, insCode });
+      } catch (e) {
+        this.logger.warn(`ردیف نماد ${symbol}: ${(e as Error).message}`);
+        continue;
+      }
 
       await this.prisma.priceBar.upsert({
         where: {
@@ -1735,8 +1771,9 @@ export class MarketService implements OnModuleInit {
       if (!symbol) continue;
       try {
         const meta = parseOptionMeta(item, symbol, nameFa);
-        const lastPrice = marketNumber(item.pl ?? item.lastPrice ?? item.akharinGheymat ?? item.pDrCotVal);
-        const closePrice = marketNumber(item.pc ?? item.closingPrice ?? item.closePrice) ?? lastPrice;
+        const prices = optionTradePrice({ raw: item });
+        const lastPrice = prices.last;
+        const closePrice = prices.close;
         const volume = marketNumber(item.tvol ?? item.tradeVolume ?? item.qTotTran5J ?? item.volume);
         const instrument = await this.prisma.instrument.upsert({
           where: { symbol_assetType: { symbol, assetType: AssetType.OPTION } },
@@ -1791,14 +1828,19 @@ export class MarketService implements OnModuleInit {
   }
 
   private optionRows(data: unknown): Record<string, unknown>[] {
-    const list: unknown[] = Array.isArray(data)
-      ? data
-      : data && typeof data === 'object'
-        ? (['data', 'option', 'Option', 'options', 'result', 'items']
-            .map((key) => (data as Record<string, unknown>)[key])
-            .find((value) => Array.isArray(value)) as unknown[] | undefined) ?? []
-        : [];
-    return list.filter((item): item is Record<string, unknown> => Boolean(item) && typeof item === 'object');
+    const asRows = (list: unknown[]) =>
+      list.filter((item): item is Record<string, unknown> => Boolean(item) && typeof item === 'object' && !Array.isArray(item));
+    if (Array.isArray(data)) return asRows(data);
+    if (!data || typeof data !== 'object') return [];
+    const obj = data as Record<string, unknown>;
+    for (const key of ['data', 'option', 'Option', 'options', 'result', 'items']) {
+      if (Array.isArray(obj[key])) return asRows(obj[key] as unknown[]);
+    }
+    const values = Object.values(obj).filter((item) => item && typeof item === 'object' && !Array.isArray(item));
+    const contracts = values.filter(
+      (item) => 'l18' in (item as Record<string, unknown>) || 'base_l18' in (item as Record<string, unknown>),
+    );
+    return asRows(contracts);
   }
 
   private async fetchBrsOptions(): Promise<Record<string, unknown>[]> {
