@@ -19,6 +19,7 @@ import {
   marketNumber,
   optionBoardForPrompt,
   parseOptionMeta,
+  quotesForUnderlying,
   type BoardSource,
   type OptionBoard,
 } from './option-board';
@@ -197,7 +198,11 @@ export class MarketService implements OnModuleInit {
       true,
     );
     if (!slot) return;
-    if (slot === 'retry' && (await this.hasBarsForLatestTradingDay())) return;
+    if (slot === 'retry' && (await this.hasBarsForLatestTradingDay())) {
+      await this.ingestOptionsIfMissing();
+      await this.ensureLatestIndexValues(true);
+      return;
+    }
     const label = `${String(schedule.marketHour).padStart(2, '0')}:${String(schedule.marketMinute).padStart(2, '0')}`;
     this.logger.log(`بروزرسانی زمان‌بندی‌شده بازار از TSETMC (${label} تهران)`);
     this.beginIngest(false);
@@ -207,20 +212,55 @@ export class MarketService implements OnModuleInit {
     const schedule = await readRefreshSchedule(this.prisma);
     const now = tehranTimeParts();
     if (now.hour * 60 + now.minute < schedule.marketHour * 60 + schedule.marketMinute) return;
-    if (await this.hasBarsForLatestTradingDay()) return;
+    if (await this.hasBarsForLatestTradingDay()) {
+      await this.ingestOptionsIfMissing();
+      await this.ensureLatestIndexValues(true);
+      return;
+    }
     this.logger.log('پس از راه‌اندازی: به‌روزرسانی بازار چون ساعت گذشته و دادهٔ روز نیست');
     this.beginIngest(false);
   }
 
-  private async hasBarsForLatestTradingDay(): Promise<boolean> {
+  private latestTradingDEven(): string | null {
     const today = toDEven();
     for (let back = 0; back <= MAX_LOOKBACK_CALENDAR_DAYS; back++) {
       const day = shiftDEven(today, back);
-      if (isTehranWeekend(day)) continue;
-      const count = await this.prisma.priceBar.count({ where: { tradeDate: dEvenToDate(day) } });
-      return count > 0;
+      if (!isTehranWeekend(day)) return day;
     }
-    return false;
+    return null;
+  }
+
+  private async hasBarsForLatestTradingDay(): Promise<boolean> {
+    const day = this.latestTradingDEven();
+    if (!day) return false;
+    const count = await this.prisma.priceBar.count({ where: { tradeDate: dEvenToDate(day) } });
+    return count > 0;
+  }
+
+  /** میلهٔ سهام مانع تکرار کل اینجست است؛ اختیار اگر برای همان روز نباشد جدا خوانده می‌شود */
+  private async ingestOptionsIfMissing() {
+    const day = this.latestTradingDEven();
+    if (!day || this.ingestInFlight) return;
+    const count = await this.prisma.priceBar.count({
+      where: { tradeDate: dEvenToDate(day), instrument: { assetType: AssetType.OPTION } },
+    });
+    if (count > 0) return;
+    this.logger.log('میلهٔ سهام هست ولی اختیار معامله برای این روز نیست');
+    this.ingestInFlight = true;
+    void this.finishOptionsOnly(day);
+  }
+
+  private async finishOptionsOnly(dEven: string) {
+    try {
+      const saved = await this.ingestOptions(dEvenToDate(dEven));
+      this.logger.log(`اختیار معامله ذخیره شد: ${saved}`);
+    } catch (e) {
+      const message = e instanceof Error ? e.message : String(e);
+      this.logger.error(`اینجست اختیار ناموفق: ${message}`);
+      await this.recordMarketError(e);
+    } finally {
+      this.ingestInFlight = false;
+    }
   }
 
   async listLatest(params: {
@@ -321,6 +361,57 @@ export class MarketService implements OnModuleInit {
       pageSize: take,
       totalPages: Math.max(1, Math.ceil(total / take)),
       updatedAt,
+    };
+  }
+
+  async getUnderlyingOptions(id: string) {
+    const inst = await this.prisma.instrument.findUnique({
+      where: { id },
+      include: { priceBars: { orderBy: { tradeDate: 'desc' }, take: 1 } },
+    });
+    if (!inst) return null;
+    const spot = inst.priceBars[0]?.lastPrice ?? inst.priceBars[0]?.closePrice ?? null;
+    const eligible =
+      inst.assetType === AssetType.STOCK ||
+      inst.assetType === AssetType.GOLD_ETF ||
+      inst.assetType === AssetType.FUND;
+    if (!eligible) {
+      return { symbol: inst.symbol, spot, disclaimerFa: '', options: [] };
+    }
+    const options = await this.prisma.instrument.findMany({
+      where: { isActive: true, assetType: AssetType.OPTION },
+      select: {
+        id: true,
+        symbol: true,
+        nameFa: true,
+        assetType: true,
+        meta: true,
+        priceBars: {
+          orderBy: { tradeDate: 'desc' },
+          take: 1,
+          select: { lastPrice: true, closePrice: true, volume: true, raw: true },
+        },
+      },
+    });
+    return {
+      symbol: inst.symbol,
+      spot,
+      disclaimerFa: 'مقایسه از قیمت ذخیره‌شدهٔ سهم و اختیار است و توصیهٔ قطعی معامله نیست.',
+      options: quotesForUnderlying(
+        inst.symbol,
+        spot,
+        options.map((row) => ({
+          id: row.id,
+          symbol: row.symbol,
+          nameFa: row.nameFa,
+          assetType: row.assetType,
+          lastPrice: row.priceBars[0]?.lastPrice ?? null,
+          closePrice: row.priceBars[0]?.closePrice ?? null,
+          volume: row.priceBars[0]?.volume ?? null,
+          raw: row.priceBars[0]?.raw ?? null,
+          meta: row.meta,
+        })),
+      ),
     };
   }
 
@@ -880,7 +971,8 @@ export class MarketService implements OnModuleInit {
     this.logger.log(`منبع ${dEven}: ${source} — ${rows.length} ردیف خام`);
 
     if (!rows.length) {
-      return { tradeDate: dEven, upserted: 0, source };
+      const optionCount = runExtras ? await this.saveOptions(tradeDate) : 0;
+      return { tradeDate: dEven, upserted: optionCount, source };
     }
 
     let upserted = 0;
@@ -898,17 +990,7 @@ export class MarketService implements OnModuleInit {
       const pe = this.num(row.pe ?? row.sectorPE ?? row.pE);
       const volume = this.num(row.qTotTran5J ?? row.volume ?? row.tradeVolume);
 
-      const instrument = insCode
-        ? await this.prisma.instrument.upsert({
-            where: { insCode },
-            create: { insCode, symbol, nameFa, assetType },
-            update: { symbol, nameFa, assetType, isActive: true },
-          })
-        : await this.prisma.instrument.upsert({
-            where: { symbol_assetType: { symbol, assetType } },
-            create: { symbol, nameFa, assetType },
-            update: { nameFa, isActive: true },
-          });
+      const instrument = await this.saveInstrument({ symbol, nameFa, assetType, insCode });
 
       await this.prisma.priceBar.upsert({
         where: {
@@ -938,7 +1020,7 @@ export class MarketService implements OnModuleInit {
 
     if (runExtras) {
       await this.ensureDepositInstrument(tradeDate);
-      await this.ingestOptions(tradeDate);
+      upserted += await this.saveOptions(tradeDate);
       if (source.startsWith('cdn.') || source.startsWith('webgw.') || source.startsWith('brsapi.')) {
         await this.enrichEpsPe(80);
       }
@@ -949,16 +1031,12 @@ export class MarketService implements OnModuleInit {
 
   async getMarketIndices(historyDays = 60) {
     const take = Math.min(Math.max(historyDays, 5), 365);
-    let out = await this.readMarketIndices(take);
-    const pointMissing = out.some((i) => i.unit === 'point' && i.lastValue == null);
-    if (pointMissing) {
-      try {
-        await this.ensureLatestIndexValues();
-        out = await this.readMarketIndices(take);
-      } catch (e) {
-        this.logger.warn(`تکمیل شاخص برای نمایش: ${(e as Error).message}`);
-      }
+    try {
+      await this.ensureLatestIndexValues();
+    } catch (e) {
+      this.logger.warn(`تکمیل شاخص برای نمایش: ${(e as Error).message}`);
     }
+    let out = await this.readMarketIndices(take);
     const usdMissingHistory = out.some((i) => i.unit === 'usd' && i.history.length === 0);
     try {
       await this.syncUsdIndexBars(usdMissingHistory ? 'all' : 'latest');
@@ -1095,11 +1173,23 @@ export class MarketService implements OnModuleInit {
     return { upserted };
   }
 
-  private async ensureLatestIndexValues() {
+  private indexSnapshotAt = 0;
+
+  /** force برای زمان‌بندی است. باز شدن صفحه حداکثر هر ۱۵ دقیقه یک‌بار API شاخص را می‌زند. */
+  private async ensureLatestIndexValues(force = false) {
+    if (!force && Date.now() - this.indexSnapshotAt < 15 * 60 * 1000) return 0;
     if (this.indexSnapshotInFlight) return this.indexSnapshotInFlight;
-    this.indexSnapshotInFlight = this.persistLiveIndexSnapshot().finally(() => {
-      this.indexSnapshotInFlight = null;
-    });
+    this.indexSnapshotInFlight = this.persistLiveIndexSnapshot()
+      .then(async (count) => {
+        this.indexSnapshotAt = count > 0 ? Date.now() : Date.now() - 12 * 60 * 1000;
+        if (force && count === 0) {
+          await this.recordMarketError(new Error('عدد شاخص کل و هم‌وزن از API بورس ایران خوانده نشد.'));
+        }
+        return count;
+      })
+      .finally(() => {
+        this.indexSnapshotInFlight = null;
+      });
     return this.indexSnapshotInFlight;
   }
 
@@ -1107,10 +1197,15 @@ export class MarketService implements OnModuleInit {
     const snaps: Partial<Record<MarketIndexKey, IndexLiveSnap>> = {
       ...(await this.fetchBrsApiIndexSnapshot()),
     };
-    if (!snaps.total || !snaps.equalWeight) {
+    if (!snaps.total && !snaps.equalWeight && !(await readBrsApiAccess(this.prisma))) {
       const tse = await this.fetchTsetmcLiveIndexSnapshot();
-      if (!snaps.total && tse.total) snaps.total = tse.total;
-      if (!snaps.equalWeight && tse.equalWeight) snaps.equalWeight = tse.equalWeight;
+      if (tse.total) snaps.total = tse.total;
+      if (tse.equalWeight) snaps.equalWeight = tse.equalWeight;
+    }
+    if (snaps.total || snaps.equalWeight) {
+      this.logger.log(
+        `شاخص لحظه‌ای: کل ${snaps.total?.lastValue ?? '—'} ، هم‌وزن ${snaps.equalWeight?.lastValue ?? '—'}`,
+      );
     }
       const tradeDate = todayDateOnly();
     let upserted = 0;
@@ -1613,18 +1708,32 @@ export class MarketService implements OnModuleInit {
     }
   }
 
-  private async ingestOptions(tradeDate: Date) {
+  /** خطای اختیار، اینجست سهام را قطع نمی‌کند و در خطاهای مشاهده‌شده می‌ماند */
+  private async saveOptions(tradeDate: Date): Promise<number> {
     try {
-      const items = await this.fetchOptionContracts();
-      this.logger.log(`اختیار معامله: ${items.length} قرارداد`);
-      for (const item of items) {
-        const symbol = String(
-          item.l18 ?? item.namad ?? item.lVal18AFC ?? item.instrumentName ?? item.symbol ?? '',
-        ).trim();
-        const nameFa = String(
-          item.l30 ?? item.name ?? item.lVal30 ?? item.companyNamePersian ?? symbol,
-        ).trim();
-        if (!symbol) continue;
+      return await this.ingestOptions(tradeDate);
+    } catch (e) {
+      this.logger.warn(`دریافت اختیار معامله ناموفق: ${(e as Error).message}`);
+      await this.recordMarketError(e);
+      return 0;
+    }
+  }
+
+  private async ingestOptions(tradeDate: Date): Promise<number> {
+    const items = await this.fetchOptionContracts();
+    if (!items.length) {
+      throw new Error('فهرست اختیار معامله خالی بود. در تنظیمات، API بورس ایران را بررسی کنید.');
+    }
+    let saved = 0;
+    for (const item of items) {
+      const symbol = String(
+        item.l18 ?? item.namad ?? item.lVal18AFC ?? item.instrumentName ?? item.symbol ?? '',
+      ).trim();
+      const nameFa = String(
+        item.l30 ?? item.name ?? item.lVal30 ?? item.companyNamePersian ?? symbol,
+      ).trim();
+      if (!symbol) continue;
+      try {
         const meta = parseOptionMeta(item, symbol, nameFa);
         const lastPrice = marketNumber(item.pl ?? item.lastPrice ?? item.akharinGheymat ?? item.pDrCotVal);
         const closePrice = marketNumber(item.pc ?? item.closingPrice ?? item.closePrice) ?? lastPrice;
@@ -1656,10 +1765,14 @@ export class MarketService implements OnModuleInit {
             raw: item as Prisma.InputJsonValue,
           },
         });
+        saved += 1;
+      } catch (e) {
+        this.logger.warn(`ردیف اختیار ${symbol}: ${(e as Error).message}`);
       }
-    } catch (e) {
-      this.logger.warn(`دریافت اختیار معامله ناموفق: ${(e as Error).message}`);
     }
+    if (!saved) throw new Error('هیچ قرارداد اختیاری ذخیره نشد.');
+    this.logger.log(`اختیار معامله: ${saved} قرارداد`);
+    return saved;
   }
 
   private async fetchOptionContracts(): Promise<Record<string, unknown>[]> {
@@ -1677,19 +1790,32 @@ export class MarketService implements OnModuleInit {
     }
   }
 
+  private optionRows(data: unknown): Record<string, unknown>[] {
+    const list: unknown[] = Array.isArray(data)
+      ? data
+      : data && typeof data === 'object'
+        ? (['data', 'option', 'Option', 'options', 'result', 'items']
+            .map((key) => (data as Record<string, unknown>)[key])
+            .find((value) => Array.isArray(value)) as unknown[] | undefined) ?? []
+        : [];
+    return list.filter((item): item is Record<string, unknown> => Boolean(item) && typeof item === 'object');
+  }
+
   private async fetchBrsOptions(): Promise<Record<string, unknown>[]> {
     const access = await readBrsApiAccess(this.prisma);
     if (!access) return [];
     try {
       const data = await this.fetchJson(brsEndpoint(access.baseUrl, '/Tsetmc/Option.php', access.apiKey));
-      const list: unknown[] = Array.isArray(data)
-        ? data
-        : Array.isArray(data?.data)
-          ? data.data
-          : Array.isArray(data?.option)
-            ? data.option
-            : [];
-      return list.filter((item): item is Record<string, unknown> => Boolean(item) && typeof item === 'object');
+      const list = this.optionRows(data);
+      if (!list.length && data && typeof data === 'object') {
+        const note = String(
+          (data as { message_error?: unknown; message?: unknown }).message_error ??
+            (data as { message?: unknown }).message ??
+            '',
+        ).trim();
+        if (note) this.logger.warn(`اختیار BrsApi: ${note}`);
+      }
+      return list;
     } catch (e) {
       this.logger.warn(`اختیار BrsApi ناموفق: ${(e as Error).message}`);
       return [];
@@ -1797,6 +1923,61 @@ export class MarketService implements OnModuleInit {
     }
   }
 
+  /**
+   * شناسهٔ داخلی نماد گاهی از سقف عدد امن جاوااسکریپت بزرگ‌تر است.
+   * اگر همان عدد بماند، چند نماد یک شناسه می‌گیرند و قید یکتای نماد می‌شکند.
+   */
+  private async saveInstrument(input: {
+    symbol: string;
+    nameFa: string;
+    assetType: AssetType;
+    insCode?: string;
+  }) {
+    const { symbol, nameFa, assetType, insCode } = input;
+    const existing = await this.prisma.instrument.findUnique({
+      where: { symbol_assetType: { symbol, assetType } },
+    });
+    let insCodeToSet: string | undefined;
+    if (insCode) {
+      const owner = await this.prisma.instrument.findUnique({ where: { insCode } });
+      if (!owner || (existing != null && owner.id === existing.id)) insCodeToSet = insCode;
+    }
+    if (existing) {
+      return this.prisma.instrument.update({
+        where: { id: existing.id },
+        data: {
+          nameFa,
+          isActive: true,
+          ...(insCodeToSet ? { insCode: insCodeToSet } : {}),
+        },
+      });
+    }
+    try {
+      return await this.prisma.instrument.create({
+        data: {
+          symbol,
+          nameFa,
+          assetType,
+          ...(insCodeToSet ? { insCode: insCodeToSet } : {}),
+        },
+      });
+    } catch (e) {
+      if (!this.isUniqueConflict(e)) throw e;
+      const again = await this.prisma.instrument.findUnique({
+        where: { symbol_assetType: { symbol, assetType } },
+      });
+      if (!again) throw e;
+      return this.prisma.instrument.update({
+        where: { id: again.id },
+        data: { nameFa, isActive: true },
+      });
+    }
+  }
+
+  private isUniqueConflict(e: unknown): boolean {
+    return Boolean(e && typeof e === 'object' && 'code' in e && (e as { code?: string }).code === 'P2002');
+  }
+
   private async fetchJson(url: string) {
     const res = await fetch(url, {
       headers: FETCH_HEADERS,
@@ -1808,7 +1989,7 @@ export class MarketService implements OnModuleInit {
       throw new Error(`blocked: ${redactBrsUrl(url)}`);
     }
     try {
-      return JSON.parse(text);
+      return JSON.parse(text.replace(/([:\[,]\s*)(-?\d{16,})(?=\s*[,}\]])/g, '$1"$2"'));
     } catch {
       throw new Error(`non-json: ${redactBrsUrl(url)}`);
     }

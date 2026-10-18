@@ -90,6 +90,13 @@ export class MarketController {
     return this.market.hideChat(req.user.userId);
   }
 
+  @Get('instruments/:id/options')
+  async underlyingOptions(@Param('id') id: string) {
+    const data = await this.market.getUnderlyingOptions(id);
+    if (!data) throw new NotFoundException('نماد یافت نشد');
+    return data;
+  }
+
   @Get('instruments/:id/history')
   history(@Param('id') id: string, @Query('limit') limit?: string) {
     return this.market.getPriceHistory(id, limit ? Number(limit) : 90);

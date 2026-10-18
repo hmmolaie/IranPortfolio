@@ -27,6 +27,27 @@ type Instrument = {
   last: Bar | null;
 };
 
+type UnderlyingOption = {
+  id: string;
+  symbol: string;
+  sideFa: string;
+  strike: number;
+  premium: number | null;
+  daysLeft: number | null;
+  premiumPctOfSpot: number | null;
+  intrinsic: number | null;
+  worthwhile: boolean;
+  verdictFa: string;
+  reasonFa: string;
+};
+
+type UnderlyingOptions = {
+  symbol: string;
+  spot: number | null;
+  disclaimerFa: string;
+  options: UnderlyingOption[];
+};
+
 type QuoteKind = 'rial' | 'point' | 'usd';
 
 const UNIT_FA: Record<QuoteKind, string> = {
@@ -287,6 +308,7 @@ export default function MarketInstrumentPage() {
   const [inst, setInst] = useState<Instrument | null>(null);
   const [history, setHistory] = useState<Bar[]>([]);
   const [range, setRange] = useState<RangeKey>('1M');
+  const [optionPack, setOptionPack] = useState<UnderlyingOptions | null>(null);
 
   useEffect(() => {
     if (!getToken()) {
@@ -302,6 +324,9 @@ export default function MarketInstrumentPage() {
         setHistory(h);
       })
       .catch(() => router.replace('/market'));
+    api<UnderlyingOptions>(`/market/instruments/${id}/options`)
+      .then(setOptionPack)
+      .catch(() => setOptionPack(null));
   }, [id, router]);
 
   const visible = useMemo(() => filterBars(history, range), [history, range]);
@@ -436,6 +461,65 @@ export default function MarketInstrumentPage() {
           <StatRow label="پایانی قبل" value={formatValue(stats.prev)} />
         </div>
       </div>
+
+      {optionPack && optionPack.disclaimerFa && (
+        <section className="space-y-3">
+          <h2 className="text-base font-semibold text-navy-900">اختیار معامله این سهم</h2>
+          <p className="text-sm text-navy-800/60">{optionPack.disclaimerFa}</p>
+          {optionPack.options.length === 0 ? (
+            <p className="text-sm text-navy-800/55">اختیار معامله‌ای برای این سهم در دادهٔ ذخیره‌شده نیست.</p>
+          ) : (
+            <div className="overflow-x-auto">
+              <table className="min-w-full text-sm">
+                <thead>
+                  <tr className="border-b border-navy-900/10 text-navy-800/55">
+                    <th className="px-2 py-2 text-start font-medium">نماد</th>
+                    <th className="px-2 py-2 text-start font-medium">نوع</th>
+                    <th className="px-2 py-2 text-start font-medium">اعمال</th>
+                    <th className="px-2 py-2 text-start font-medium">قیمت اختیار</th>
+                    <th className="px-2 py-2 text-start font-medium">نسبت به سهم</th>
+                    <th className="px-2 py-2 text-start font-medium">ارزش ذاتی</th>
+                    <th className="px-2 py-2 text-start font-medium">روز مانده</th>
+                    <th className="px-2 py-2 text-start font-medium">نتیجه</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {optionPack.options.map((row) => (
+                    <tr
+                      key={row.id}
+                      className="cursor-pointer border-b border-navy-900/5 hover:bg-gold-400/10"
+                      onClick={() => router.push(`/market/${row.id}`)}
+                    >
+                      <td className="px-2 py-2 font-medium text-navy-900">{row.symbol}</td>
+                      <td className="px-2 py-2">{row.sideFa}</td>
+                      <td className="px-2 py-2">{formatNum(row.strike)}</td>
+                      <td className="px-2 py-2">{formatNum(row.premium)}</td>
+                      <td className="px-2 py-2">
+                        {row.premiumPctOfSpot == null ? '—' : `${row.premiumPctOfSpot.toLocaleString('fa-IR')}٪`}
+                      </td>
+                      <td className="px-2 py-2">{formatNum(row.intrinsic)}</td>
+                      <td className="px-2 py-2">
+                        {row.daysLeft == null ? '—' : Math.round(row.daysLeft).toLocaleString('fa-IR')}
+                      </td>
+                      <td className="px-2 py-2">
+                        <div
+                          className={clsx(
+                            'font-medium',
+                            row.worthwhile ? 'text-emerald-700' : row.verdictFa === 'گران' ? 'text-red-700' : 'text-navy-800/70',
+                          )}
+                        >
+                          {row.verdictFa}
+                        </div>
+                        <div className="text-xs leading-5 text-navy-800/55">{row.reasonFa}</div>
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          )}
+        </section>
+      )}
 
       <section>
         <h2 className="text-base font-semibold text-navy-900">خلاصه معاملات بازه</h2>

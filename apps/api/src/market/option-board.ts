@@ -314,6 +314,68 @@ export function describeQuote(row: BoardSource): {
   };
 }
 
+export type UnderlyingOptionQuote = {
+  id: string;
+  symbol: string;
+  nameFa: string;
+  side: OptionSide;
+  sideFa: string;
+  strike: number;
+  premium: number | null;
+  daysLeft: number | null;
+  premiumPctOfSpot: number | null;
+  intrinsic: number | null;
+  worthwhile: boolean;
+  verdictFa: string;
+  reasonFa: string;
+};
+
+export function quotesForUnderlying(
+  underlyingSymbol: string,
+  underlyingPrice: number | null,
+  rows: BoardSource[],
+): UnderlyingOptionQuote[] {
+  const target = fold(underlyingSymbol);
+  const out: UnderlyingOptionQuote[] = [];
+  for (const row of rows) {
+    if (row.assetType !== 'OPTION') continue;
+    const parsed = parseOptionMeta({ ...asRecord(row.raw), ...asRecord(row.meta) }, row.symbol, row.nameFa);
+    if (!parsed.side || !parsed.underlyingSymbol || fold(parsed.underlyingSymbol) !== target) continue;
+    if (parsed.strike == null || parsed.strike <= 0) continue;
+    const premium = row.lastPrice ?? row.closePrice;
+    const spot =
+      underlyingPrice != null && underlyingPrice > 0
+        ? underlyingPrice
+        : parsed.underlyingPrice != null && parsed.underlyingPrice > 0
+          ? parsed.underlyingPrice
+          : null;
+    const judged = judgeOption({
+      side: parsed.side,
+      strike: parsed.strike,
+      premium,
+      spot,
+      daysLeft: parsed.daysLeft,
+    });
+    out.push({
+      id: row.id,
+      symbol: row.symbol,
+      nameFa: row.nameFa,
+      side: parsed.side,
+      sideFa: parsed.sideFa ?? (parsed.side === 'CALL' ? 'اختیار خرید' : 'اختیار فروش'),
+      strike: parsed.strike,
+      premium: premium != null && premium > 0 ? premium : null,
+      daysLeft: parsed.daysLeft,
+      premiumPctOfSpot: judged.premiumPctOfSpot,
+      intrinsic: judged.intrinsic,
+      worthwhile: judged.worthwhile,
+      verdictFa: judged.verdictFa,
+      reasonFa: judged.reasonFa,
+    });
+  }
+  out.sort((a, b) => (a.side === b.side ? a.strike - b.strike : a.side === 'CALL' ? -1 : 1));
+  return out;
+}
+
 function assessOption(input: {
   instrumentId: string;
   symbol: string;
@@ -325,33 +387,98 @@ function assessOption(input: {
   premium: number;
   daysLeft: number | null;
 }): OptionIdea | null {
-  const { underlyingPrice, strike, premium, side, daysLeft } = input;
-  const distance = Math.abs(strike - underlyingPrice) / underlyingPrice;
-  const premiumPct = (premium / underlyingPrice) * 100;
-  if (distance > 0.12 || premiumPct > 15 || premiumPct < 0.15) return null;
-  if (daysLeft != null && (daysLeft < 7 || daysLeft > 120)) return null;
-  const intrinsic = side === 'CALL' ? Math.max(0, underlyingPrice - strike) : Math.max(0, strike - underlyingPrice);
-  if (intrinsic > 0 && premium / intrinsic > 1.45) return null;
-  if (intrinsic === 0 && (premiumPct > 5 || distance > 0.08)) return null;
-  const premiumPctOfSpot = Math.round(premiumPct * 10) / 10;
-  const reasonFa =
-    intrinsic > 0
-      ? `قیمت این ${side === 'CALL' ? 'اختیار خرید' : 'اختیار فروش'} نزدیک ارزش ذاتی نسبت به قیمت سهم است و فاصلهٔ قیمت اعمال تا سهم کم است.`
-      : `قیمت اعمال نزدیک قیمت سهم است و قیمت اختیار بخش کوچکی از قیمت سهم است.`;
+  const judged = judgeOption({
+    side: input.side,
+    strike: input.strike,
+    premium: input.premium,
+    spot: input.underlyingPrice,
+    daysLeft: input.daysLeft,
+  });
+  if (!judged.worthwhile || judged.premiumPctOfSpot == null || judged.intrinsic == null) return null;
   return {
     instrumentId: input.instrumentId,
     symbol: input.symbol,
     nameFa: input.nameFa,
-    side,
-    sideFa: side === 'CALL' ? 'اختیار خرید' : 'اختیار فروش',
+    side: input.side,
+    sideFa: input.side === 'CALL' ? 'اختیار خرید' : 'اختیار فروش',
     underlyingSymbol: input.underlyingSymbol,
-    underlyingPrice,
-    strike,
-    premium,
+    underlyingPrice: input.underlyingPrice,
+    strike: input.strike,
+    premium: input.premium,
+    premiumPctOfSpot: judged.premiumPctOfSpot,
+    intrinsic: judged.intrinsic,
+    daysLeft: input.daysLeft,
+    reasonFa: judged.reasonFa,
+  };
+}
+
+function judgeOption(input: {
+  side: OptionSide;
+  strike: number;
+  premium: number | null;
+  spot: number | null;
+  daysLeft: number | null;
+}): {
+  worthwhile: boolean;
+  verdictFa: string;
+  reasonFa: string;
+  premiumPctOfSpot: number | null;
+  intrinsic: number | null;
+} {
+  const { side, strike, premium, spot, daysLeft } = input;
+  const sideFa = side === 'CALL' ? 'اختیار خرید' : 'اختیار فروش';
+  if (premium == null || !(premium > 0) || spot == null || !(spot > 0)) {
+    return {
+      worthwhile: false,
+      verdictFa: 'بدون قیمت',
+      reasonFa: 'قیمت اختیار یا قیمت سهم برای مقایسه کافی نیست.',
+      premiumPctOfSpot: null,
+      intrinsic: null,
+    };
+  }
+  const distance = Math.abs(strike - spot) / spot;
+  const premiumPct = (premium / spot) * 100;
+  const intrinsic = side === 'CALL' ? Math.max(0, spot - strike) : Math.max(0, strike - spot);
+  const premiumPctOfSpot = Math.round(premiumPct * 10) / 10;
+  const base = { premiumPctOfSpot, intrinsic, worthwhile: false as boolean };
+  if (daysLeft != null && daysLeft < 0) {
+    return { ...base, verdictFa: 'سررسید گذشته', reasonFa: 'روز باقی‌ماندهٔ این قرارداد تمام شده است.' };
+  }
+  if (distance > 0.12) {
+    return {
+      ...base,
+      verdictFa: 'دور از سهم',
+      reasonFa: `فاصلهٔ قیمت اعمال تا سهم حدود ${(Math.round(distance * 1000) / 10).toLocaleString('en-US')} درصد است.`,
+    };
+  }
+  if (premiumPct > 15) {
+    return { ...base, verdictFa: 'گران', reasonFa: `قیمت این ${sideFa} بیش از ۱۵ درصد قیمت سهم است.` };
+  }
+  if (premiumPct < 0.15) {
+    return { ...base, verdictFa: 'نامتعارف', reasonFa: 'قیمت اختیار نسبت به سهم خیلی کوچک است.' };
+  }
+  if (daysLeft != null && daysLeft > 120) {
+    return { ...base, verdictFa: 'سررسید دور', reasonFa: 'تا سررسید بیش از ۱۲۰ روز مانده است.' };
+  }
+  if (intrinsic > 0 && premium / intrinsic > 1.45) {
+    return { ...base, verdictFa: 'گران', reasonFa: `قیمت این ${sideFa} از ارزش ذاتی نسبت به قیمت سهم بالاتر است.` };
+  }
+  if (intrinsic === 0 && (premiumPct > 5 || distance > 0.08)) {
+    return {
+      ...base,
+      verdictFa: 'گران',
+      reasonFa: `این ${sideFa} هنوز وارد سود نشده و قیمتش نسبت به نزدیکی به سهم بالاست.`,
+    };
+  }
+  return {
+    worthwhile: true,
+    verdictFa: 'ارزنده',
     premiumPctOfSpot,
     intrinsic,
-    daysLeft,
-    reasonFa,
+    reasonFa:
+      intrinsic > 0
+        ? `قیمت این ${sideFa} نزدیک ارزش ذاتی نسبت به قیمت سهم است و فاصلهٔ قیمت اعمال تا سهم کم است.`
+        : `قیمت اعمال نزدیک قیمت سهم است و قیمت اختیار بخش کوچکی از قیمت سهم است.`,
   };
 }
 
