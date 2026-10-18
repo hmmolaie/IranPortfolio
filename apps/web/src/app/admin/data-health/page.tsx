@@ -8,13 +8,15 @@ type Source = {
   nameFa: string;
   count: number;
   last: string | null;
-  status: 'ok' | 'warn' | 'empty';
+  status: 'ok' | 'warn' | 'empty' | 'error';
+  errorFa?: string | null;
 };
 
 const STATUS_FA = {
   ok: 'به‌روز',
   warn: 'کهنه',
   empty: 'خالی',
+  error: 'خطا',
 };
 
 export default function DataHealthPage() {
@@ -56,8 +58,10 @@ export default function DataHealthPage() {
           <tbody>
             {rows.map((row) => (
               <tr key={row.nameFa} className="border-t border-navy-900/10">
-                <td className="py-2">{row.nameFa}</td>
-                <td className="py-2">{STATUS_FA[row.status]}</td>
+                <td className={row.status === 'error' ? 'py-2 font-medium text-red-700' : 'py-2'}>{row.nameFa}</td>
+                <td className={row.status === 'error' ? 'py-2 text-red-700' : 'py-2'}>
+                  {row.status === 'error' ? row.errorFa || STATUS_FA.error : STATUS_FA[row.status]}
+                </td>
                 <td className="py-2">{row.count.toLocaleString('fa-IR')}</td>
                 <td className="py-2" dir="ltr">
                   {row.last ?? '—'}

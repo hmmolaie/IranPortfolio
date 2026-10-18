@@ -31,7 +31,12 @@ export class BackupController {
 
   @Post()
   create() {
-    return this.backup.create();
+    return this.backup.startCreate();
+  }
+
+  @Get('job')
+  job() {
+    return this.backup.jobStatus();
   }
 
   @Get('download/:name')

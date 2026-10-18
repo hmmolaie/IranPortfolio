@@ -720,6 +720,15 @@ model ContentRefreshSchedule {
   updatedAt       DateTime @updatedAt
 }
 
+/** آخرین نتیجهٔ به‌روزرسانی بازار. خطا یعنی منبع سهام نباید به‌روز دیده شود. */
+model MarketIngestStatus {
+  id         String    @id @default("latest")
+  ok         Boolean   @default(true)
+  message    String    @default("")
+  finishedAt DateTime?
+  updatedAt  DateTime  @updatedAt
+}
+
 /** نشانی و توکن BrsApi برای بورس ایران. توکن رمزنگاری‌شده است. */
 model IranMarketApiConfig {
   id                 String   @id @default("default")

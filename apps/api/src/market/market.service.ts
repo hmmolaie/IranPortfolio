@@ -200,11 +200,7 @@ export class MarketService implements OnModuleInit {
     if (slot === 'retry' && (await this.hasBarsForLatestTradingDay())) return;
     const label = `${String(schedule.marketHour).padStart(2, '0')}:${String(schedule.marketMinute).padStart(2, '0')}`;
     this.logger.log(`بروزرسانی زمان‌بندی‌شده بازار از TSETMC (${label} تهران)`);
-    try {
-      await this.ingestCatchUp();
-    } catch (e) {
-      this.logger.error(`کرون اینجست بازار ناموفق: ${(e as Error).message}`);
-    }
+    this.beginIngest(false);
   }
 
   private async catchUpMarketIfDue() {
@@ -213,11 +209,7 @@ export class MarketService implements OnModuleInit {
     if (now.hour * 60 + now.minute < schedule.marketHour * 60 + schedule.marketMinute) return;
     if (await this.hasBarsForLatestTradingDay()) return;
     this.logger.log('پس از راه‌اندازی: به‌روزرسانی بازار چون ساعت گذشته و دادهٔ روز نیست');
-    try {
-      await this.ingestCatchUp();
-    } catch (e) {
-      this.logger.error(`به‌روزرسانی بازار پس از راه‌اندازی ناموفق: ${(e as Error).message}`);
-    }
+    this.beginIngest(false);
   }
 
   private async hasBarsForLatestTradingDay(): Promise<boolean> {
@@ -757,15 +749,74 @@ export class MarketService implements OnModuleInit {
     return this.ingestCatchUp();
   }
 
-  async ingestCatchUp() {
+  ingestCatchUp() {
+    return this.beginIngest(true);
+  }
+
+  /**
+   * پاسخ دکمه زود برمی‌گردد تا پروکسی اتصال را نبندد.
+   * خودِ کار در پس‌زمینه تمام می‌شود و خطایش در خطاهای مشاهده‌شده می‌ماند.
+   */
+  private beginIngest(manual: boolean) {
     if (this.ingestInFlight) {
-      throw new ServiceUnavailableException('به‌روزرسانی بازار از قبل در حال انجام است. لطفاً صبر کنید.');
+      if (manual) {
+        throw new ServiceUnavailableException('به‌روزرسانی بازار از قبل در حال انجام است. لطفاً صبر کنید.');
+      }
+      return { started: false, messageFa: 'به‌روزرسانی بازار از قبل در حال انجام است.' };
     }
     this.ingestInFlight = true;
+    void this.finishIngest();
+    return {
+      started: true,
+      messageFa: 'به‌روزرسانی بازار شروع شد. اگر خطا بدهد، در خطاهای مشاهده‌شده و سلامت داده می‌ماند.',
+    };
+  }
+
+  private async finishIngest() {
     try {
-      return await this.runIngestCatchUp();
+      const result = await this.runIngestCatchUp();
+      await this.prisma.marketIngestStatus.upsert({
+        where: { id: 'latest' },
+        create: { id: 'latest', ok: true, message: '', finishedAt: new Date() },
+        update: { ok: true, message: '', finishedAt: new Date() },
+      });
+      this.logger.log(`اینجست بازار تمام شد: ${result.upserted} ردیف`);
+    } catch (e) {
+      const message = e instanceof Error ? e.message : String(e);
+      this.logger.error(`اینجست بازار ناموفق: ${message}`);
+      await this.recordMarketError(e);
+      await this.prisma.marketIngestStatus
+        .upsert({
+          where: { id: 'latest' },
+          create: { id: 'latest', ok: false, message: message.slice(0, 500), finishedAt: new Date() },
+          update: { ok: false, message: message.slice(0, 500), finishedAt: new Date() },
+        })
+        .catch((logErr) => {
+          this.logger.warn(`ثبت وضعیت خطای بازار ناموفق: ${(logErr as Error).message}`);
+        });
     } finally {
       this.ingestInFlight = false;
+    }
+  }
+
+  private async recordMarketError(err: unknown) {
+    const message = (err instanceof Error ? err.message : String(err)).slice(0, 4000);
+    const stack = err instanceof Error && err.stack ? `\n${err.stack}` : '';
+    const statusCode =
+      err && typeof err === 'object' && 'getStatus' in err && typeof err.getStatus === 'function'
+        ? (err as { getStatus: () => number }).getStatus()
+        : null;
+    try {
+      await this.prisma.llmErrorLog.create({
+        data: {
+          purpose: 'market_ingest',
+          statusCode,
+          message,
+          detail: `به‌روزرسانی بازار سهام\n${message}${stack}`.slice(0, 20000),
+        },
+      });
+    } catch (logErr) {
+      this.logger.warn(`ثبت خطای بازار در خطاهای مشاهده‌شده ناموفق: ${(logErr as Error).message}`);
     }
   }
 
@@ -1749,7 +1800,7 @@ export class MarketService implements OnModuleInit {
   private async fetchJson(url: string) {
     const res = await fetch(url, {
       headers: FETCH_HEADERS,
-      signal: AbortSignal.timeout(15_000),
+      signal: AbortSignal.timeout(45_000),
     });
     if (!res.ok) throw new Error(`${res.status} ${redactBrsUrl(url)}`);
     const text = await res.text();

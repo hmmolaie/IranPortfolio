@@ -36,8 +36,10 @@ type QuotesPage = {
 };
 
 type IngestResult = {
-  upserted: number;
-  tradeDate: string;
+  started?: boolean;
+  messageFa?: string;
+  upserted?: number;
+  tradeDate?: string;
   source?: string;
   dayCount?: number;
   days?: Array<{ tradeDate: string; upserted: number }>;
@@ -252,17 +254,26 @@ export default function MarketPage() {
     setMsg('');
     try {
       const res = await api<IngestResult>('/market/ingest', { method: 'POST' });
-      const src = res.source ? ` (منبع: ${res.source})` : '';
-      const days =
-        res.dayCount && res.dayCount > 1
-          ? ` — ${res.dayCount.toLocaleString('fa-IR')} روز به‌روزرسانی شد`
-          : '';
-      setMsg(
-        `به‌روزرسانی انجام شد: ${res.upserted.toLocaleString('fa-IR')} ردیف${days}${src}`,
-      );
-      await Promise.all([load(1), loadIndices(), loadBoard()]);
+      if (res.started || res.messageFa) {
+        setMsg(res.messageFa || 'به‌روزرسانی بازار شروع شد.');
+      } else {
+        const src = res.source ? ` (منبع: ${res.source})` : '';
+        const days =
+          res.dayCount && res.dayCount > 1
+            ? ` — ${res.dayCount.toLocaleString('fa-IR')} روز به‌روزرسانی شد`
+            : '';
+        setMsg(
+          `به‌روزرسانی انجام شد: ${(res.upserted ?? 0).toLocaleString('fa-IR')} ردیف${days}${src}`,
+        );
+        await Promise.all([load(1), loadIndices(), loadBoard()]);
+      }
     } catch (e) {
-      setMsg((e as Error).message);
+      const raw = e instanceof Error ? e.message : 'به‌روزرسانی بازار ناموفق بود.';
+      setMsg(
+        /failed to fetch|networkerror|load failed/i.test(raw)
+          ? 'ارتباط با سرور هنگام به‌روزرسانی قطع شد. متن خطا در بخش خطاهای مشاهده‌شدهٔ تنظیمات ادمین می‌ماند.'
+          : raw,
+      );
     } finally {
       setLoading(false);
     }
@@ -274,8 +285,8 @@ export default function MarketPage() {
     <div className="space-y-6">
       {loading && (
         <WaitingOverlay
-          title="در حال دریافت از TSETMC"
-          description="قیمت‌ها، EPS، P/E و شاخص‌های کل و هم‌وزن در حال به‌روزرسانی است. این کار ممکن است چند دقیقه طول بکشد."
+          title="در حال شروع به‌روزرسانی بازار"
+          description="درخواست ثبت می‌شود و دریافت نمادها در پس‌زمینه ادامه پیدا می‌کند."
           steps={[
             'اتصال به منبع داده بازار...',
             'دریافت فهرست نمادها...',

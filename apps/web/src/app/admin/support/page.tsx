@@ -16,15 +16,38 @@ function formatBytes(bytes: number): string {
   return `${(bytes / (1024 * 1024)).toLocaleString('fa-IR', { maximumFractionDigits: 1 })} مگابایت`;
 }
 
+function visibleError(err: unknown): string {
+  const message = err instanceof Error ? err.message : String(err);
+  if (/failed to fetch|networkerror|load failed/i.test(message)) {
+    return 'ارتباط با سرور قطع شد و پاسخ نرسید. اگر ساخت یا دانلود پشتیبان طولانی شده، پروکسی اتصال را بسته است. دوباره تلاش کنید.';
+  }
+  return message.trim() || 'عملیات پشتیبان ناموفق بود';
+}
+
+async function readErrorText(res: Response): Promise<string> {
+  const text = (await res.text().catch(() => '')).trim();
+  if (!text) return `پاسخ سرور خطای ${res.status} بود`;
+  try {
+    const parsed = JSON.parse(text) as { message?: unknown };
+    if (Array.isArray(parsed.message)) return parsed.message.map(String).join('، ');
+    if (typeof parsed.message === 'string' && parsed.message.trim()) return parsed.message.trim();
+  } catch {
+    /* متن خام */
+  }
+  return text.slice(0, 2000);
+}
+
 async function downloadBackup(name: string) {
   const token = getToken();
-  const res = await fetch(apiUrl(`/admin/backup/download/${encodeURIComponent(name)}`), {
-    headers: token ? { Authorization: `Bearer ${token}` } : {},
-  });
-  if (!res.ok) {
-    const text = await res.text();
-    throw new Error(text.slice(0, 180) || 'دانلود ناموفق بود');
+  let res: Response;
+  try {
+    res = await fetch(apiUrl(`/admin/backup/download/${encodeURIComponent(name)}`), {
+      headers: token ? { Authorization: `Bearer ${token}` } : {},
+    });
+  } catch (err) {
+    throw new Error(visibleError(err));
   }
+  if (!res.ok) throw new Error(await readErrorText(res));
   const blob = await res.blob();
   const url = URL.createObjectURL(blob);
   const link = document.createElement('a');
@@ -32,6 +55,20 @@ async function downloadBackup(name: string) {
   link.download = name;
   link.click();
   URL.revokeObjectURL(url);
+}
+
+async function waitForBackup(): Promise<string> {
+  const started = Date.now();
+  for (;;) {
+    const job = await api<{ status: string; name?: string; messageFa?: string }>('/admin/backup/job');
+    if (job.status === 'ready' && job.name) return job.name;
+    if (job.status === 'error') throw new Error(job.messageFa || 'ساخت نسخه پشتیبان ناموفق بود');
+    if (job.status === 'idle') throw new Error('ساخت نسخه پشتیبان شروع نشد.');
+    if (Date.now() - started > 15 * 60 * 1000) {
+      throw new Error('ساخت نسخه پشتیبان بیش از ۱۵ دقیقه طول کشید و تمام نشد.');
+    }
+    await new Promise((resolve) => setTimeout(resolve, 2000));
+  }
 }
 
 export default function SupportPage() {
@@ -57,7 +94,7 @@ export default function SupportPage() {
       router.replace('/dashboard');
       return;
     }
-    load().catch((e) => setError((e as Error).message));
+    load().catch((e) => setError(visibleError(e)));
   }, [router]);
 
   async function createBackup() {
@@ -65,12 +102,14 @@ export default function SupportPage() {
     setError('');
     setNotice('');
     try {
-      const created = await api<BackupItem>('/admin/backup', { method: 'POST' });
-      await downloadBackup(created.name);
+      await api('/admin/backup', { method: 'POST' });
+      setNotice('در حال ساخت نسخه پشتیبان. تا پایان کار این صفحه را نبندید.');
+      const name = await waitForBackup();
+      await downloadBackup(name);
       await load();
       setNotice('نسخه پشتیبان ساخته و دانلود شد.');
     } catch (e) {
-      setError((e as Error).message);
+      setError(visibleError(e));
     } finally {
       setBusy(false);
     }
@@ -93,7 +132,7 @@ export default function SupportPage() {
       setConfirm('');
       setFile(null);
     } catch (err) {
-      setError((err as Error).message);
+      setError(visibleError(err));
     } finally {
       setBusy(false);
     }
@@ -108,13 +147,17 @@ export default function SupportPage() {
         </p>
       </div>
 
-      {error && <p className="text-sm text-red-700">{error}</p>}
+      {error && (
+        <p className="whitespace-pre-wrap rounded-lg bg-red-50 px-3 py-3 text-sm leading-7 text-red-800" role="alert">
+          {error}
+        </p>
+      )}
       {notice && <p className="text-sm text-emerald-800">{notice}</p>}
 
       <section className="card space-y-4">
         <h2 className="text-lg font-semibold">نسخه پشتیبان</h2>
         <button type="button" className="btn-primary w-fit" disabled={busy} onClick={() => void createBackup()}>
-          {busy ? 'در حال کار...' : 'تهیه و دانلود'}
+          {busy ? 'در حال ساخت و دانلود...' : 'تهیه و دانلود'}
         </button>
         <div className="overflow-x-auto">
           <table className="min-w-full text-sm">
@@ -143,7 +186,7 @@ export default function SupportPage() {
                       disabled={busy}
                       onClick={() => {
                         setError('');
-                        downloadBackup(item.name).catch((e) => setError((e as Error).message));
+                        downloadBackup(item.name).catch((e) => setError(visibleError(e)));
                       }}
                     >
                       دانلود

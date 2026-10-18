@@ -1,6 +1,7 @@
 import {
   BadRequestException,
   ConflictException,
+  HttpException,
   Injectable,
   NotFoundException,
 } from '@nestjs/common';
@@ -18,9 +19,16 @@ const MAX_UPLOAD_BYTES = 512 * 1024 * 1024;
 
 type PgTarget = { env: NodeJS.ProcessEnv; database: string };
 
+type BackupJob = {
+  status: 'idle' | 'running' | 'ready' | 'error';
+  name?: string;
+  messageFa?: string;
+};
+
 @Injectable()
 export class BackupService {
   private busy = false;
+  private job: BackupJob = { status: 'idle' };
 
   constructor(
     private readonly config: ConfigService,
@@ -45,22 +53,42 @@ export class BackupService {
     return { items: rows };
   }
 
-  async create() {
-    return this.exclusive(async () => {
-      const dir = this.dir();
-      await mkdir(dir, { recursive: true });
-      const name = `piiip-${this.stamp()}.dump`;
-      const file = join(dir, name);
-      const { env } = this.pg();
-      const result = await this.run('pg_dump', ['-Fc', '--no-owner', '--no-acl', '-f', file], env);
-      if (result.code !== 0) {
-        await unlink(file).catch(() => undefined);
-        throw new BadRequestException(this.toolError('ساخت نسخه پشتیبان', result));
-      }
-      await this.prune(dir);
-      const info = await stat(file);
-      return { name, bytes: info.size, createdAt: info.mtime.toISOString() };
-    });
+  jobStatus(): BackupJob {
+    return this.job;
+  }
+
+  /** پاسخ زود برمی‌گردد تا پروکسی اتصال را وسط pg_dump نبندد. */
+  startCreate(): BackupJob {
+    if (this.busy) throw new ConflictException('یک عملیات پشتیبان دیگر هنوز تمام نشده است');
+    this.busy = true;
+    this.job = { status: 'running' };
+    void this.writeDump()
+      .then((item) => {
+        this.job = { status: 'ready', name: item.name };
+      })
+      .catch((err) => {
+        this.job = { status: 'error', messageFa: exceptionText(err) };
+      })
+      .finally(() => {
+        this.busy = false;
+      });
+    return { status: 'running' };
+  }
+
+  private async writeDump() {
+    const dir = this.dir();
+    await mkdir(dir, { recursive: true });
+    const name = `piiip-${this.stamp()}.dump`;
+    const file = join(dir, name);
+    const { env } = this.pg();
+    const result = await this.run('pg_dump', ['-Fc', '--no-owner', '--no-acl', '-f', file], env);
+    if (result.code !== 0) {
+      await unlink(file).catch(() => undefined);
+      throw new BadRequestException(this.toolError('ساخت نسخه پشتیبان', result));
+    }
+    await this.prune(dir);
+    const info = await stat(file);
+    return { name, bytes: info.size, createdAt: info.mtime.toISOString() };
   }
 
   async open(name: string) {
@@ -205,7 +233,7 @@ export class BackupService {
     if (/ENOENT|not found/i.test(result.stderr)) {
       return 'ابزار پشتیبان پایگاه روی این سرور نصب نیست';
     }
-    const detail = result.stderr.replace(/\s+/g, ' ').trim().slice(0, 280);
+    const detail = result.stderr.replace(/\s+/g, ' ').trim().slice(0, 1200);
     return detail ? `${action} ناموفق بود. ${detail}` : `${action} ناموفق بود`;
   }
 
@@ -227,4 +255,17 @@ export class BackupService {
       child.on('close', (code) => resolve({ code: code ?? 1, stderr }));
     });
   }
+}
+
+function exceptionText(err: unknown): string {
+  if (err instanceof HttpException) {
+    const body = err.getResponse();
+    if (typeof body === 'string' && body.trim()) return body.trim();
+    if (body && typeof body === 'object' && 'message' in body) {
+      const message = (body as { message: unknown }).message;
+      if (Array.isArray(message)) return message.map(String).join('، ');
+      if (typeof message === 'string' && message.trim()) return message.trim();
+    }
+  }
+  return err instanceof Error ? err.message : String(err);
 }

@@ -2661,7 +2661,7 @@ export default function SettingsPage() {
         <section className="card space-y-4">
           <h2 className="text-lg font-semibold">خطاهای مشاهده شده</h2>
           <p className="text-sm leading-7 text-navy-800/70">
-            وقتی مدل زبانی خطا بدهد، متن فنی کامل اینجا می‌ماند. تست اتصال کوتاه است و این فهرست خطاهای کارهای سنگین‌تر مثل آنالیز سبد را نشان می‌دهد.
+            خطای مدل زبانی و خطای به‌روزرسانی بازار، چه با دکمه و چه خودکار، با متن فنی اینجا می‌ماند.
           </p>
           <button
             type="button"
@@ -2676,7 +2676,7 @@ export default function SettingsPage() {
               <article key={row.id} className="rounded-lg border border-navy-900/10 bg-white px-3 py-3">
                 <p className="text-sm text-navy-900">
                   {formatShamsiDateTime(row.createdAt)}
-                  {row.purpose ? ` · ${row.purpose}` : ''}
+                  {row.purpose ? ` · ${row.purpose === 'market_ingest' ? 'به‌روزرسانی بازار' : row.purpose}` : ''}
                   {row.statusCode != null ? ` · ${row.statusCode}` : ''}
                 </p>
                 <pre

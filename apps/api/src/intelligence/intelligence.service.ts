@@ -222,27 +222,37 @@ export class IntelligenceService {
 
   async dataHealth() {
     const today = tehranDateKey();
-    const [prices, spots, macros, news, funds, world] = await Promise.all([
+    const [prices, spots, macros, news, funds, world, marketIngest] = await Promise.all([
       this.prisma.priceBar.aggregate({ _count: true, _max: { tradeDate: true } }),
       this.prisma.spotPriceDaily.aggregate({ _count: true, _max: { dateKey: true } }),
       this.prisma.macroSnapshot.aggregate({ _count: true, _max: { asOfDate: true } }),
       this.prisma.economicNewsBatch.aggregate({ _count: true, _max: { newsDateKey: true } }),
       this.prisma.fundReport.aggregate({ _count: true, _max: { createdAt: true } }),
       this.prisma.worldMarketRefresh.aggregate({ _count: true, _max: { dateKey: true } }),
+      this.prisma.marketIngestStatus.findUnique({ where: { id: 'latest' } }),
     ]);
     const row = (
       nameFa: string,
       count: number,
       last: string | null,
-    ): { nameFa: string; count: number; last: string | null; status: 'ok' | 'warn' | 'empty' } => {
-      if (!count || !last) return { nameFa, count, last, status: 'empty' };
+    ): { nameFa: string; count: number; last: string | null; status: 'ok' | 'warn' | 'empty' | 'error'; errorFa: string | null } => {
+      if (!count || !last) return { nameFa, count, last, status: 'empty', errorFa: null };
       const age = last.slice(0, 10) === today || last.slice(0, 10) >= shiftDate(today, -3);
-      return { nameFa, count, last, status: age ? 'ok' : 'warn' };
+      return { nameFa, count, last, status: age ? 'ok' : 'warn', errorFa: null };
     };
+    const stock = row(
+      'بازار سهام',
+      prices._count,
+      prices._max.tradeDate ? prices._max.tradeDate.toISOString().slice(0, 10) : null,
+    );
+    if (marketIngest && !marketIngest.ok) {
+      stock.status = 'error';
+      stock.errorFa = marketIngest.message.trim() || 'به‌روزرسانی بازار ناموفق بود.';
+    }
     return {
       asOf: today,
       sources: [
-        row('بازار سهام', prices._count, prices._max.tradeDate ? prices._max.tradeDate.toISOString().slice(0, 10) : null),
+        stock,
         row('دلار و طلا', spots._count, spots._max.dateKey ?? null),
         row('کلان ایران', macros._count, macros._max.asOfDate ? macros._max.asOfDate.toISOString().slice(0, 10) : null),
         row('اخبار', news._count, news._max.newsDateKey ?? null),
