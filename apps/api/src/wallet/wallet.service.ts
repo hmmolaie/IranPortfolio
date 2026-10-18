@@ -128,7 +128,7 @@ export class WalletService {
     return { ok: true, balanceRial };
   }
 
-  async startCharge(userId: string, amountRial: number) {
+  async startCharge(userId: string, amountRial: number, referralCode?: string) {
     if (!Number.isInteger(amountRial) || amountRial < MIN_CHARGE_RIAL || amountRial > MAX_CHARGE_RIAL) {
       throw new BadRequestException('مبلغ شارژ باید بین ۱۰٬۰۰۰ و ۵۰۰٬۰۰۰٬۰۰۰ ریال باشد.');
     }
@@ -142,13 +142,18 @@ export class WalletService {
     }
     const user = await this.prisma.user.findUnique({ where: { id: userId }, select: { email: true } });
     if (!user) throw new NotFoundException('کاربر پیدا نشد');
+    const offer = await this.referralOffer(referralCode);
+    const paidRial = Math.round((amountRial * (100 - offer.discountPct)) / 100);
+    if (paidRial < MIN_CHARGE_RIAL) {
+      throw new BadRequestException('بعد از تخفیف، مبلغ پرداخت از حداقل درگاه کمتر می‌شود.');
+    }
     const merchantId = decryptSecret(this.encKey(), cfg.merchantIdEncrypted);
     const callback = `${origin}/api/wallet/callback`;
     const body = await this.zarinpal(cfg.sandbox, 'request', {
       merchant_id: merchantId,
-      amount: amountRial,
+      amount: paidRial,
       callback_url: callback,
-      description: 'شارژ کیف پول سبدیار',
+      description: offer.discountPct > 0 ? `شارژ کیف پول با ${offer.discountPct} درصد تخفیف` : 'شارژ کیف پول سبدیار',
       metadata: { email: user.email },
     });
     const authority = body.data?.authority?.trim();
@@ -157,10 +162,33 @@ export class WalletService {
       throw new BadRequestException('اتصال به درگاه زرین‌پال ناموفق بود.');
     }
     await this.prisma.walletPayment.create({
-      data: { userId, amountRial, authority, status: WalletPaymentStatus.PENDING },
+      data: {
+        userId,
+        amountRial,
+        paidRial,
+        resellerId: offer.resellerId,
+        referralCode: offer.code,
+        discountPct: offer.discountPct,
+        authority,
+        status: WalletPaymentStatus.PENDING,
+      },
     });
     const host = cfg.sandbox ? 'https://sandbox.zarinpal.com' : 'https://www.zarinpal.com';
-    return { url: `${host}/pg/StartPay/${authority}` };
+    return { url: `${host}/pg/StartPay/${authority}`, paidRial, creditRial: amountRial, discountPct: offer.discountPct };
+  }
+
+  private async referralOffer(raw?: string): Promise<{ resellerId: string | null; code: string | null; discountPct: number }> {
+    const code = raw?.trim().toUpperCase() ?? '';
+    if (!code) return { resellerId: null, code: null, discountPct: 0 };
+    const reseller = await this.prisma.user.findUnique({
+      where: { referralCode: code },
+      select: { id: true, role: true, isActive: true, referralActive: true, discountPct: true },
+    });
+    if (!reseller || reseller.role !== 'RESELLER' || !reseller.isActive || !reseller.referralActive) {
+      throw new BadRequestException('کد معرف معتبر یا فعال نیست');
+    }
+    const discountPct = Math.min(90, Math.max(0, reseller.discountPct));
+    return { resellerId: reseller.id, code, discountPct };
   }
 
   async handleCallback(authorityRaw: string | undefined, statusRaw: string | undefined): Promise<string> {
@@ -184,9 +212,10 @@ export class WalletService {
     const merchantId = decryptSecret(this.encKey(), cfg.merchantIdEncrypted);
     let refId = '';
     try {
+      const paidRial = payment.paidRial > 0 ? payment.paidRial : payment.amountRial;
       const body = await this.zarinpal(cfg.sandbox, 'verify', {
         merchant_id: merchantId,
-        amount: payment.amountRial,
+        amount: paidRial,
         authority,
       });
       const code = body.data?.code;
@@ -221,7 +250,12 @@ export class WalletService {
             amountRial: payment.amountRial,
             kind: WalletTxKind.GATEWAY,
             balanceAfterRial: user.walletBalanceRial,
-            note: refId ? `زرین‌پال ${refId}` : null,
+            note: [
+              refId ? `زرین‌پال ${refId}` : '',
+              payment.discountPct > 0 ? `تخفیف ${payment.discountPct}٪ با کد ${payment.referralCode ?? ''}` : '',
+            ]
+              .filter(Boolean)
+              .join(' — ') || null,
           },
         });
       });

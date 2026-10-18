@@ -5,7 +5,7 @@ const SKIP_PROMPT_KEY = 'sabadyar_webauthn_skip';
 
 export type AuthSession = {
   accessToken: string;
-  user: { id?: string; email?: string; role: 'ADMIN' | 'USER' };
+  user: { id?: string; email?: string; role: 'ADMIN' | 'USER' | 'RESELLER' };
 };
 
 export type WebAuthnCredentialRow = {

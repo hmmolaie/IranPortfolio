@@ -8,16 +8,17 @@ import clsx from 'clsx';
 import { ToastProvider, useToast } from '@/components/Toast';
 import { InstallAppPrompt } from '@/components/InstallAppPrompt';
 
-const allLinks = [
-  { href: '/dashboard', label: 'داشبورد', adminOnly: false },
-  { href: '/market', label: 'بازار سهام تهران', adminOnly: false },
-  { href: '/portfolios', label: 'سبدها', adminOnly: false },
+const allLinks: Array<{ href: string; label: string; adminOnly?: boolean; resellerOnly?: boolean }> = [
+  { href: '/dashboard', label: 'داشبورد' },
+  { href: '/market', label: 'بازار سهام تهران' },
+  { href: '/portfolios', label: 'سبدها' },
   { href: '/funds', label: 'صندوق‌ها', adminOnly: true },
   { href: '/lessons', label: 'درس‌آموخته‌ها', adminOnly: true },
   { href: '/macro', label: 'اقتصاد ایران', adminOnly: true },
   { href: '/world', label: 'اقتصاد دنیا', adminOnly: true },
-  { href: '/news', label: 'اخبار اقتصادی ایران', adminOnly: false },
+  { href: '/news', label: 'اخبار اقتصادی ایران' },
   { href: '/forex', label: 'آزمایش فارکس', adminOnly: true },
+  { href: '/reseller', label: 'کاربران من', resellerOnly: true },
   { href: '/admin/users', label: 'مدیریت کاربران', adminOnly: true },
   { href: '/admin/ai-cost', label: 'هزینه هوش مصنوعی', adminOnly: true },
   { href: '/admin/ai-history', label: 'سوابق هوش مصنوعی', adminOnly: true },
@@ -124,7 +125,11 @@ export function AppShell({ children }: { children: React.ReactNode }) {
     };
   }, [isAuthPage, router]);
 
-  const links = allLinks.filter((l) => !l.adminOnly || role === 'ADMIN');
+  const links = allLinks.filter((l) => {
+    if (l.adminOnly) return role === 'ADMIN';
+    if (l.resellerOnly) return role === 'RESELLER';
+    return true;
+  });
 
   function logout() {
     clearSession();

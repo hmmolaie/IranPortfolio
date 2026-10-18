@@ -12,6 +12,11 @@ class ChargeDto {
   @Min(10_000)
   @Max(500_000_000)
   amountRial!: number;
+
+  @IsOptional()
+  @IsString()
+  @MaxLength(16)
+  referralCode?: string;
 }
 
 class SaveWalletSettingsDto {
@@ -91,7 +96,7 @@ export class WalletController {
   @Post('charge')
   @UseGuards(JwtAuthGuard)
   charge(@Req() req: { user: { userId: string } }, @Body() dto: ChargeDto) {
-    return this.wallet.startCharge(req.user.userId, dto.amountRial);
+    return this.wallet.startCharge(req.user.userId, dto.amountRial, dto.referralCode);
   }
 
   @Get('admin/settings')

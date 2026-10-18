@@ -40,7 +40,7 @@ type WalletUser = {
   id: string;
   email: string;
   name: string | null;
-  role: 'ADMIN' | 'USER';
+  role: 'ADMIN' | 'USER' | 'RESELLER';
   walletBalanceRial: number;
 };
 
@@ -61,6 +61,7 @@ export function WalletPanel() {
   const toast = useToast();
   const [data, setData] = useState<WalletSummary | null>(null);
   const [amount, setAmount] = useState('');
+  const [referralCode, setReferralCode] = useState('');
   const [busy, setBusy] = useState(false);
 
   async function load() {
@@ -80,10 +81,16 @@ export function WalletPanel() {
     }
     setBusy(true);
     try {
-      const res = await api<{ url: string }>('/wallet/charge', {
+      const res = await api<{ url: string; discountPct?: number; paidRial?: number }>('/wallet/charge', {
         method: 'POST',
-        body: JSON.stringify({ amountRial }),
+        body: JSON.stringify({
+          amountRial,
+          ...(referralCode.trim() ? { referralCode: referralCode.trim() } : {}),
+        }),
       });
+      if (res.discountPct && res.paidRial) {
+        toast.success(`تخفیف ${res.discountPct.toLocaleString('fa-IR')} درصد اعمال شد. پرداخت: ${formatRial(res.paidRial)}`);
+      }
       window.location.assign(res.url);
     } catch (err) {
       toast.error((err as Error).message);
@@ -115,6 +122,19 @@ export function WalletPanel() {
         <p className="text-sm leading-7 text-navy-800/75">
           مبلغ به ریال است. پس از تأیید به درگاه زرین‌پال می‌روید و بعد از پرداخت به همین صفحه برمی‌گردید.
         </p>
+        <div>
+          <label className="label">کد معرف (اختیاری)</label>
+          <input
+            className="input"
+            value={referralCode}
+            onChange={(e) => setReferralCode(e.target.value)}
+            dir="ltr"
+            spellCheck={false}
+          />
+          <p className="mt-1 text-xs leading-6 text-navy-800/55">
+            اگر کد Reseller فعال باشد، همان درصد تخفیف از مبلغ پرداخت کم می‌شود و مبلغ درخواستی به کیف پول اضافه می‌شود.
+          </p>
+        </div>
         <div>
           <label className="label">مبلغ شارژ (ریال)</label>
           <input

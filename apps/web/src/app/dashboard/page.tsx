@@ -56,9 +56,10 @@ export default function DashboardPage() {
         if (r) setUserRole(r);
         setRole(r ?? null);
         if (r === 'ADMIN') {
-          return api<AppUser[]>('/users').then((list) => {
-            setUsers(list);
-            if (list[0]) setSelectedUserId(list[0].id);
+          return api<Array<AppUser & { role?: string }>>('/users').then((list) => {
+            const people = list.filter((item) => item.role === 'USER');
+            setUsers(people);
+            if (people[0]) setSelectedUserId(people[0].id);
           });
         }
         return loadPortfolios();

@@ -50,6 +50,7 @@ enum PortfolioEventType {
 enum UserRole {
   ADMIN
   USER
+  RESELLER
 }
 
 model User {
@@ -59,10 +60,20 @@ model User {
   name         String?
   role         UserRole @default(USER)
   isActive     Boolean  @default(true)
+  /// کد معرف Reseller. فقط برای همین نقش ساخته می‌شود
+  referralCode   String? @unique
+  referralActive Boolean @default(true)
+  /// درصد تخفیف شارژ کیف پول برای کسی که این کد را وارد کند
+  discountPct    Int     @default(0)
+  /// کاربری که این حساب را ساخته است
+  resellerId     String?
   /// موجودی کیف پول به ریال
   walletBalanceRial Int @default(0)
   createdAt    DateTime @default(now())
   updatedAt    DateTime @updatedAt
+
+  reseller User?  @relation("ResellerClients", fields: [resellerId], references: [id], onDelete: SetNull)
+  clients  User[] @relation("ResellerClients")
 
   profile     UserProfile?
   llmSetting  LlmSetting?
@@ -130,7 +141,13 @@ model WalletTransaction {
 model WalletPayment {
   id         String              @id @default(cuid())
   userId     String
+  /// مبلغی که به کیف پول اضافه می‌شود
   amountRial Int
+  /// مبلغ پرداختی درگاه پس از تخفیف کد معرف
+  paidRial   Int                 @default(0)
+  resellerId String?
+  referralCode String?
+  discountPct Int                @default(0)
   authority  String              @unique
   status     WalletPaymentStatus @default(PENDING)
   refId      String?
@@ -140,6 +157,7 @@ model WalletPayment {
   user User @relation(fields: [userId], references: [id], onDelete: Cascade)
 
   @@index([userId, createdAt])
+  @@index([resellerId, paidAt])
 }
 
 model WalletNotice {

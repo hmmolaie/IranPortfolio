@@ -137,7 +137,7 @@ export function setToken(token: string | null) {
   }
 }
 
-export type UserRole = 'ADMIN' | 'USER';
+export type UserRole = 'ADMIN' | 'USER' | 'RESELLER';
 
 export function setUserRole(role: UserRole | null) {
   if (typeof window === 'undefined') return;
@@ -148,7 +148,7 @@ export function setUserRole(role: UserRole | null) {
 export function getUserRole(): UserRole | null {
   if (typeof window === 'undefined') return null;
   const r = localStorage.getItem(ROLE_KEY);
-  return r === 'ADMIN' || r === 'USER' ? r : null;
+  return r === 'ADMIN' || r === 'USER' || r === 'RESELLER' ? r : null;
 }
 
 export function clearSession() {
