@@ -53,7 +53,7 @@ const COLUMNS: Array<{ key: SortKey; label: string }> = [
   { key: 'realProfit', label: 'سود واقعی' },
 ];
 
-function sortValue(row: ValuableOption, key: SortKey): string | number {
+function sortValue(row: ValuableOption, key: SortKey): string | number | null {
   if (key === 'symbol') return row.symbol;
   if (key === 'side') return row.sideFa;
   if (key === 'underlying') return row.underlyingSymbol;
