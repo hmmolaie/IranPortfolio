@@ -68,6 +68,16 @@ export type OptionBoard = {
 const DISCLAIMER =
   'این فهرست از قیمت امروز محاسبه شده است و توصیهٔ قطعی خرید یا فروش نیست.';
 
+/** روز ماندهٔ صفر یا کمتر یعنی سررسید گذشته است. */
+export function optionExpired(daysLeft: number | null | undefined): boolean {
+  return daysLeft != null && Number.isFinite(daysLeft) && daysLeft <= 0;
+}
+
+export function optionMetaExpired(meta: unknown, assetType?: string): boolean {
+  if (assetType && assetType !== 'OPTION') return false;
+  return optionExpired(marketNumber(asRecord(meta).daysLeft));
+}
+
 export function marketNumber(value: unknown): number | null {
   const raw = unwrap(value);
   if (raw === null || raw === undefined || raw === '') return null;
@@ -145,6 +155,7 @@ export function buildOptionBoard(rows: BoardSource[]): OptionBoard {
     const raw = asRecord(row.raw);
     const parsed = parseOptionMeta({ ...raw, ...meta }, row.symbol, row.nameFa);
     if (!parsed.side || !parsed.underlyingSymbol || parsed.strike == null || parsed.strike <= 0) continue;
+    if (optionExpired(parsed.daysLeft) || optionMetaExpired(row.meta, 'OPTION')) continue;
     const premium = row.lastPrice ?? row.closePrice;
     if (premium == null || premium <= 0) continue;
     if (detectQueue(row.raw, premium)) continue;
@@ -374,6 +385,7 @@ export function quotesForUnderlying(
       (target.length >= 2 && nameFa.includes(`${target}-`));
     if (!parsed.side || !sameUnderlying) continue;
     if (parsed.strike == null || parsed.strike <= 0) continue;
+    if (optionExpired(parsed.daysLeft) || optionMetaExpired(row.meta, 'OPTION')) continue;
     const premium = optionTradePrice(row).last ?? optionTradePrice(row).close;
     const spot =
       underlyingPrice != null && underlyingPrice > 0
@@ -473,7 +485,7 @@ function judgeOption(input: {
   const intrinsic = side === 'CALL' ? Math.max(0, spot - strike) : Math.max(0, strike - spot);
   const premiumPctOfSpot = Math.round(premiumPct * 10) / 10;
   const base = { premiumPctOfSpot, intrinsic, worthwhile: false as boolean };
-  if (daysLeft != null && daysLeft < 0) {
+  if (optionExpired(daysLeft)) {
     return { ...base, verdictFa: 'سررسید گذشته', reasonFa: 'روز باقی‌ماندهٔ این قرارداد تمام شده است.' };
   }
   if (distance > 0.12) {
@@ -518,6 +530,7 @@ export type ValuableOption = {
   id: string;
   symbol: string;
   nameFa: string;
+  side: OptionSide;
   sideFa: string;
   underlyingSymbol: string;
   underlyingPrice: number;
@@ -528,13 +541,36 @@ export type ValuableOption = {
   profitPerUnit: number;
   profitRial: number;
   profitPct: number;
+  realProfitRial: number | null;
+  realProfitPct: number | null;
   reasonFa: string;
 };
 
 /** سود هر واحد = ارزش ذاتی نسبت به قیمت دارایی پایه، منهای قیمت اختیار. کمتر از ۵ درصد قیمت اختیار، قابل توجه نیست. */
 const MIN_PROFIT_PCT = 5;
 
-export function listValuableOptions(rows: BoardSource[]): ValuableOption[] {
+/** سود واقعیِ همان بازه: سود دوره را با تورمِ روزهای مانده تا سررسید تعدیل می‌کند. */
+function realProfitForHolding(input: {
+  profitPerUnit: number;
+  premium: number;
+  daysLeft: number;
+  contractSize: number | null;
+  inflationPct: number | null;
+}): { realProfitRial: number; realProfitPct: number } | null {
+  const { profitPerUnit, premium, daysLeft, contractSize, inflationPct } = input;
+  if (inflationPct == null || !Number.isFinite(inflationPct) || !(premium > 0) || !(daysLeft > 0)) return null;
+  const annual = inflationPct / 100;
+  if (annual <= -1) return null;
+  const periodFactor = (1 + annual) ** (daysLeft / 365);
+  if (!(periodFactor > 0)) return null;
+  const real = (1 + profitPerUnit / premium) / periodFactor - 1;
+  return {
+    realProfitPct: Math.round(real * 1000) / 10,
+    realProfitRial: real * premium * (contractSize ?? 1),
+  };
+}
+
+export function listValuableOptions(rows: BoardSource[], inflationPct: number | null = null): ValuableOption[] {
   const spotBySymbol = new Map<string, number>();
   for (const row of rows) {
     if (row.assetType === 'OPTION') continue;
@@ -550,7 +586,7 @@ export function listValuableOptions(rows: BoardSource[]): ValuableOption[] {
     const meta = asRecord(row.meta);
     const parsed = parseOptionMeta({ ...raw, ...meta }, row.symbol, row.nameFa);
     if (!parsed.side || !parsed.underlyingSymbol || parsed.strike == null || !(parsed.strike > 0)) continue;
-    if (parsed.daysLeft == null || parsed.daysLeft < 0) continue;
+    if (parsed.daysLeft == null || optionExpired(parsed.daysLeft) || optionMetaExpired(row.meta, 'OPTION')) continue;
     const premium = optionTradePrice(row).last ?? optionTradePrice(row).close;
     if (premium == null || !(premium > 0)) continue;
     const spot =
@@ -564,10 +600,18 @@ export function listValuableOptions(rows: BoardSource[]): ValuableOption[] {
     if (profitPct < MIN_PROFIT_PCT) continue;
     const contractSize = parsed.contractSize != null && parsed.contractSize > 0 ? parsed.contractSize : null;
     const sideFa = parsed.sideFa ?? (parsed.side === 'CALL' ? 'اختیار خرید' : 'اختیار فروش');
+    const real = realProfitForHolding({
+      profitPerUnit,
+      premium,
+      daysLeft: parsed.daysLeft,
+      contractSize,
+      inflationPct,
+    });
     out.push({
       id: row.id,
       symbol: row.symbol,
       nameFa: row.nameFa,
+      side: parsed.side,
       sideFa,
       underlyingSymbol: parsed.underlyingSymbol,
       underlyingPrice: spot,
@@ -578,6 +622,8 @@ export function listValuableOptions(rows: BoardSource[]): ValuableOption[] {
       profitPerUnit,
       profitRial: profitPerUnit * (contractSize ?? 1),
       profitPct: Math.round(profitPct * 10) / 10,
+      realProfitRial: real?.realProfitRial ?? null,
+      realProfitPct: real?.realProfitPct ?? null,
       reasonFa: `ارزش ذاتی این ${sideFa} از قیمت اختیار بیشتر است و تا سررسید ${Math.round(parsed.daysLeft).toLocaleString('en-US')} روز مانده.`,
     });
   }

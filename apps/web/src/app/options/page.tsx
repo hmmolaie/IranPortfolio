@@ -1,6 +1,6 @@
 'use client';
 
-import { useEffect, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import { useRouter } from 'next/navigation';
 import { api, formatNum, getToken } from '@/lib/api';
 
@@ -8,6 +8,7 @@ type ValuableOption = {
   id: string;
   symbol: string;
   nameFa: string;
+  side: 'CALL' | 'PUT';
   sideFa: string;
   underlyingSymbol: string;
   underlyingPrice: number;
@@ -18,18 +19,94 @@ type ValuableOption = {
   profitPerUnit: number;
   profitRial: number;
   profitPct: number;
+  realProfitRial: number | null;
+  realProfitPct: number | null;
   reasonFa: string;
 };
 
 type Payload = {
   disclaimerFa: string;
+  inflationPct: number | null;
   items: ValuableOption[];
 };
+
+type SortKey =
+  | 'symbol'
+  | 'side'
+  | 'underlying'
+  | 'underlyingPrice'
+  | 'strike'
+  | 'premium'
+  | 'daysLeft'
+  | 'profit'
+  | 'realProfit';
+
+const COLUMNS: Array<{ key: SortKey; label: string }> = [
+  { key: 'symbol', label: 'نماد' },
+  { key: 'side', label: 'نوع' },
+  { key: 'underlying', label: 'دارایی پایه' },
+  { key: 'underlyingPrice', label: 'قیمت پایه' },
+  { key: 'strike', label: 'اعمال' },
+  { key: 'premium', label: 'قیمت اختیار' },
+  { key: 'daysLeft', label: 'روز مانده' },
+  { key: 'profit', label: 'سود' },
+  { key: 'realProfit', label: 'سود واقعی' },
+];
+
+function sortValue(row: ValuableOption, key: SortKey): string | number {
+  if (key === 'symbol') return row.symbol;
+  if (key === 'side') return row.sideFa;
+  if (key === 'underlying') return row.underlyingSymbol;
+  if (key === 'underlyingPrice') return row.underlyingPrice;
+  if (key === 'strike') return row.strike;
+  if (key === 'premium') return row.premium;
+  if (key === 'daysLeft') return row.daysLeft;
+  if (key === 'realProfit') return row.realProfitRial;
+  return row.profitRial;
+}
 
 export default function OptionsMarketPage() {
   const router = useRouter();
   const [data, setData] = useState<Payload | null>(null);
   const [error, setError] = useState('');
+  const [q, setQ] = useState('');
+  const [side, setSide] = useState<'' | 'CALL' | 'PUT'>('');
+  const [sort, setSort] = useState<SortKey>('profit');
+  const [sortDir, setSortDir] = useState<'asc' | 'desc'>('desc');
+
+  const rows = useMemo(() => {
+    const text = q.trim();
+    const list = (data?.items ?? []).filter((row) => {
+      if (side && row.side !== side) return false;
+      if (text && !row.symbol.includes(text)) return false;
+      return true;
+    });
+    const dir = sortDir === 'asc' ? 1 : -1;
+    list.sort((a, b) => {
+      const left = sortValue(a, sort);
+      const right = sortValue(b, sort);
+      if (left == null || right == null) {
+        if (left == null && right == null) return a.symbol.localeCompare(b.symbol, 'fa');
+        return left == null ? 1 : -1;
+      }
+      const cmp =
+        typeof left === 'number' && typeof right === 'number'
+          ? left - right
+          : String(left).localeCompare(String(right), 'fa');
+      if (cmp !== 0) return cmp * dir;
+      return a.symbol.localeCompare(b.symbol, 'fa');
+    });
+    return list;
+  }, [data, q, side, sort, sortDir]);
+
+  function toggleSort(column: SortKey) {
+    if (sort === column) {
+      setSortDir((current) => (current === 'desc' ? 'asc' : 'desc'));
+      return;
+    }
+    setSort(column);
+    setSortDir('desc');
+  }
 
   useEffect(() => {
     if (!getToken()) {
@@ -46,29 +123,53 @@ export default function OptionsMarketPage() {
       <div>
         <h1 className="text-3xl font-bold">بازار اختیار معامله</h1>
         <p className="mt-2 text-navy-800/70">
-          فقط اختیارهای فعال که سررسیدشان نگذشته و سودشان نسبت به قیمت دارایی پایه قابل توجه است. مرتب‌سازی بر اساس سود قرارداد، از زیاد به کم.
+          فقط اختیارهای فعال که سررسیدشان نگذشته و سودشان نسبت به قیمت دارایی پایه قابل توجه است. سود واقعی، همین سود را پس از تورمِ روزهای مانده تا سررسید نشان می‌دهد.
+          {data?.inflationPct != null
+            ? ` نرخ تورم سالانه: ${data.inflationPct.toLocaleString('fa-IR')}٪.`
+            : data
+              ? ' نرخ تورم سالانه در اقتصاد ایران ثبت نشده است.'
+              : ''}
         </p>
       </div>
 
       {error && <p className="text-sm text-red-700">{error}</p>}
       {data && <p className="text-sm text-navy-800/60">{data.disclaimerFa}</p>}
 
+      <div className="card flex flex-wrap gap-3">
+        <input
+          className="input max-w-xs"
+          placeholder="جستجوی نماد..."
+          value={q}
+          onChange={(e) => setQ(e.target.value)}
+        />
+        <select className="input max-w-xs" value={side} onChange={(e) => setSide(e.target.value as '' | 'CALL' | 'PUT')}>
+          <option value="">همهٔ انواع</option>
+          <option value="CALL">اختیار خرید</option>
+          <option value="PUT">اختیار فروش</option>
+        </select>
+        {data && (
+          <span className="self-center text-sm text-navy-800/55">
+            {rows.length.toLocaleString('fa-IR')} نماد
+          </span>
+        )}
+      </div>
+
       <section className="card overflow-x-auto p-0">
         <table className="min-w-full text-sm">
           <thead className="bg-navy-900 text-white">
             <tr>
-              <th className="px-3 py-3 text-start font-medium">نماد</th>
-              <th className="px-3 py-3 text-start font-medium">نوع</th>
-              <th className="px-3 py-3 text-start font-medium">دارایی پایه</th>
-              <th className="px-3 py-3 text-start font-medium">قیمت پایه</th>
-              <th className="px-3 py-3 text-start font-medium">اعمال</th>
-              <th className="px-3 py-3 text-start font-medium">قیمت اختیار</th>
-              <th className="px-3 py-3 text-start font-medium">روز مانده</th>
-              <th className="px-3 py-3 text-start font-medium">سود</th>
+              {COLUMNS.map((column) => (
+                <th key={column.key} className="px-3 py-3 text-start font-medium">
+                  <button type="button" className="font-medium text-white" onClick={() => toggleSort(column.key)}>
+                    {column.label}
+                    {sort === column.key ? (sortDir === 'asc' ? ' ↑' : ' ↓') : ''}
+                  </button>
+                </th>
+              ))}
             </tr>
           </thead>
           <tbody>
-            {(data?.items ?? []).map((row) => (
+            {rows.map((row) => (
               <tr
                 key={row.id}
                 className="cursor-pointer border-b border-navy-900/5 odd:bg-white even:bg-navy-50/40 hover:bg-gold-400/10"
@@ -88,6 +189,20 @@ export default function OptionsMarketPage() {
                     {row.contractSize != null ? ` · اندازه ${formatNum(row.contractSize)}` : ''}
                   </div>
                 </td>
+                <td className="px-3 py-2.5">
+                  {row.realProfitRial == null || row.realProfitPct == null ? (
+                    <span className="text-navy-800/45">—</span>
+                  ) : (
+                    <>
+                      <div className={row.realProfitRial >= 0 ? 'font-medium text-emerald-700' : 'font-medium text-red-700'}>
+                        {formatNum(row.realProfitRial)}
+                      </div>
+                      <div className="text-xs text-navy-800/55">
+                        {row.realProfitPct.toLocaleString('fa-IR')}٪ پس از تورم {Math.round(row.daysLeft).toLocaleString('fa-IR')} روز
+                      </div>
+                    </>
+                  )}
+                </td>
               </tr>
             ))}
           </tbody>
@@ -96,6 +211,9 @@ export default function OptionsMarketPage() {
           <p className="p-6 text-sm text-navy-800/60">
             اختیار ارزشمندی با سود قابل توجه و سررسید باقی‌مانده در دادهٔ امروز نیست.
           </p>
+        )}
+        {data && data.items.length > 0 && rows.length === 0 && (
+          <p className="p-6 text-sm text-navy-800/60">نمادی با این فیلتر پیدا نشد.</p>
         )}
         {!data && !error && <p className="p-6 text-sm text-navy-800/60">در حال بارگذاری...</p>}
       </section>

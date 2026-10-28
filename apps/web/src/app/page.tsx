@@ -156,24 +156,24 @@ export default function HomePage() {
   }
 
   return (
-    <div className="bg-cream lg:h-dvh lg:overflow-hidden">
-      <div className="mx-auto grid w-full max-w-6xl items-start gap-5 px-5 py-5 lg:h-full lg:grid-cols-[minmax(0,28rem)_minmax(0,1fr)] lg:items-stretch lg:gap-8 lg:px-8 lg:py-6">
-        <section className="flex min-h-0 flex-col lg:overflow-y-auto lg:py-1">
+    <div className="bg-cream md:h-dvh md:overflow-hidden">
+      <div className="mx-auto grid w-full max-w-6xl items-start gap-5 px-5 py-5 md:h-full md:grid-cols-[minmax(0,26rem)_minmax(0,1fr)] md:items-center md:gap-6 md:px-8 md:py-4">
+        <section className="flex min-h-0 flex-col">
           <p className="text-xs font-medium tracking-[0.28em] text-gold-500" dir="ltr">
             PIIIP
           </p>
-          <h1 className="mt-2 text-4xl font-bold leading-tight text-navy-900 lg:text-5xl">پیپ</h1>
-          <p className="mt-2 max-w-md text-base leading-7 text-navy-800/80">
+          <h1 className="mt-1 text-3xl font-bold leading-tight text-navy-900 md:text-4xl">پیپ</h1>
+          <p className="mt-1 max-w-md text-sm leading-6 text-navy-800/80">
             پلتفرم بینش‌های هوشمند سرمایه‌گذاری شخصی
           </p>
-          <p className="mt-1 max-w-md text-sm leading-6 text-navy-800/55" dir="ltr">
+          <p className="mt-1 max-w-md text-xs leading-5 text-navy-800/55 [@media(max-height:760px)]:hidden" dir="ltr">
             Personal Investment Intelligence Insights Platform
           </p>
 
-          <ul className="mt-4 space-y-2">
+          <ul className="mt-3 space-y-1.5 [@media(max-height:760px)]:hidden">
             {FEATURES.map((item) => (
               <li key={item} className="flex items-center gap-3 text-sm text-navy-800/80">
-                <span className="flex h-6 w-6 shrink-0 items-center justify-center rounded-full bg-navy-900/8 text-xs text-gold-500">
+                <span className="flex h-5 w-5 shrink-0 items-center justify-center rounded-full bg-navy-900/8 text-xs text-gold-500">
                   ✓
                 </span>
                 {item}
@@ -181,9 +181,9 @@ export default function HomePage() {
             ))}
           </ul>
 
-          <div className="card mt-4 w-full max-w-md border-navy-900/8 p-5 shadow-soft">
-            <div className="mb-4 border-b border-navy-900/8 pb-3">
-              <h2 className="text-xl font-semibold text-navy-900">ورود به حساب</h2>
+          <div className="card mt-3 w-full max-w-md border-navy-900/8 p-4 shadow-soft">
+            <div className="mb-3 border-b border-navy-900/8 pb-2">
+              <h2 className="text-lg font-semibold text-navy-900">ورود به حساب</h2>
               <p className="mt-1 text-sm text-navy-800/55">
                 {showBiometric
                   ? 'با اثر انگشت، چهره، یا نام کاربری و رمز عبور وارد شوید'
@@ -192,10 +192,10 @@ export default function HomePage() {
             </div>
 
             {showBiometric && (
-              <div className="mb-5 space-y-3">
+              <div className="mb-3 space-y-2">
                 <button
                   type="button"
-                  className="btn-primary w-full py-3"
+                  className="btn-primary w-full"
                   disabled={bioBusy || loading || enableBusy}
                   onClick={() => void onBiometric()}
                 >
@@ -212,7 +212,7 @@ export default function HomePage() {
               </div>
             )}
 
-            <form onSubmit={onSubmit} className="space-y-3">
+            <form onSubmit={onSubmit} className="space-y-2.5">
               <div>
                 <label className="label" htmlFor="username">
                   نام کاربری
@@ -244,18 +244,18 @@ export default function HomePage() {
               {error && (
                 <p className="rounded-lg bg-red-50 px-3 py-2 text-sm text-red-700">{error}</p>
               )}
-              <button type="submit" className="btn-primary w-full py-3" disabled={loading || bioBusy}>
+              <button type="submit" className="btn-primary w-full" disabled={loading || bioBusy}>
                 {loading ? 'در حال ورود...' : showBiometric ? 'ورود با رمز عبور' : 'ورود'}
               </button>
             </form>
           </div>
 
-          <p className="mt-3 max-w-md text-xs leading-5 text-navy-800/45">
+          <p className="mt-2 max-w-md text-xs leading-5 text-navy-800/45">
             این سرویس ابزار تصمیم‌یار است و جایگزین مشاوره رسمی سرمایه‌گذاری نیست.
           </p>
         </section>
 
-        <figure className="relative mx-auto h-44 w-full max-w-xl overflow-hidden rounded-[1.75rem] border border-navy-900/10 shadow-soft sm:h-56 lg:h-full lg:max-w-none lg:min-h-0">
+        <figure className="relative mx-auto h-44 w-full max-w-xl overflow-hidden rounded-[1.75rem] border border-navy-900/10 shadow-soft sm:h-56 md:h-full md:max-h-[calc(100dvh-2rem)] md:max-w-none md:min-h-0">
           <img
             src="/brand/login-hero.jpg"
             alt=""

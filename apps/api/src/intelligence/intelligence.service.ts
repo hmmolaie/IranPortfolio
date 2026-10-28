@@ -285,6 +285,7 @@ export class IntelligenceService {
     cashRial: number;
     snapshots: Array<{
       items: Array<{
+        symbol: string;
         assetType: string;
         amountRial: number;
         quantity: number;
@@ -294,7 +295,21 @@ export class IntelligenceService {
     }>;
   }) {
     const latest = portfolio.snapshots[0];
-    const items = latest?.items ?? [];
+    const held = latest?.items ?? [];
+    const optionIds = held
+      .filter((item) => item.assetType === 'OPTION' && item.instrumentId)
+      .map((item) => item.instrumentId as string);
+    const expiredIds = new Set(
+      optionIds.length
+        ? (
+            await this.prisma.instrument.findMany({
+              where: { id: { in: optionIds }, meta: { path: ['daysLeft'], lte: 0 } },
+              select: { id: true },
+            })
+          ).map((row) => row.id)
+        : [],
+    );
+    const items = held.filter((item) => !(item.assetType === 'OPTION' && item.instrumentId && expiredIds.has(item.instrumentId)));
     const ids = [...new Set(items.map((item) => item.instrumentId).filter((id): id is string => !!id))];
     const live = new Map<string, number>();
     await Promise.all(

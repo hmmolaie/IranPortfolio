@@ -22,8 +22,8 @@ import {
 } from '../trade-fees/trade-fees';
 import { daysAgoDateKey } from '../news/tehran-date';
 import { foldFa, tokenizeMarketQuestion } from '../market/tehran-chat';
-import { MarketService } from '../market/market.service';
-import { optionBoardForPrompt, redirectAnalysisSuggestion, redirectQueuedSymbol } from '../market/option-board';
+import { excludeExpiredOptions, MarketService } from '../market/market.service';
+import { optionBoardForPrompt, optionMetaExpired, redirectAnalysisSuggestion, redirectQueuedSymbol } from '../market/option-board';
 
 type PortfolioNewsRow = {
   batch: { newsDateKey: string };
@@ -167,12 +167,38 @@ export class PortfoliosService {
     const lastBySymbol = new Map(
       universe.map((u) => [u.symbol.trim(), u.lastPrice] as const),
     );
+    const optionSymbols = [
+      ...new Set(
+        portfolio.snapshots.flatMap((snap) =>
+          snap.items
+            .filter((item) => item.assetType === AssetType.OPTION)
+            .map((item) => item.symbol.trim())
+            .filter(Boolean),
+        ),
+      ),
+    ];
+    const expiredOptions = new Set(
+      optionSymbols.length
+        ? (
+            await this.prisma.instrument.findMany({
+              where: {
+                assetType: AssetType.OPTION,
+                symbol: { in: optionSymbols },
+                meta: { path: ['daysLeft'], lte: 0 },
+              },
+              select: { symbol: true },
+            })
+          ).map((row) => row.symbol.trim())
+        : [],
+    );
 
     return {
       ...portfolio,
       snapshots: portfolio.snapshots.map((snap) => ({
         ...snap,
-        items: snap.items.map((item) => {
+        items: snap.items
+          .filter((item) => !(item.assetType === AssetType.OPTION && expiredOptions.has(item.symbol.trim())))
+          .map((item) => {
           const lastPrice =
             lastBySymbol.get(item.symbol.trim()) ??
             (item.unitPrice != null && item.unitPrice > 0 ? item.unitPrice : null);
@@ -1210,9 +1236,26 @@ ${historyText}`,
       where: {
         isActive: true,
         symbol: { equals: key, mode: 'insensitive' },
+        ...excludeExpiredOptions(),
       },
       include: { priceBars: { orderBy: { tradeDate: 'desc' }, take: 1 } },
     });
+    if (
+      !inst &&
+      (assetType === AssetType.OPTION || !assetType)
+    ) {
+      const expired = await this.prisma.instrument.findFirst({
+        where: {
+          isActive: true,
+          assetType: AssetType.OPTION,
+          symbol: { equals: key, mode: 'insensitive' },
+        },
+        select: { meta: true, assetType: true },
+      });
+      if (expired && optionMetaExpired(expired.meta, expired.assetType)) {
+        throw new BadRequestException('سررسید این اختیار معامله گذشته است و در سبد نمی‌آید.');
+      }
+    }
     const bar = inst?.priceBars[0];
     const price = bar?.lastPrice ?? bar?.closePrice ?? null;
     if (inst && price != null && price > 0) {
@@ -2139,7 +2182,7 @@ summaryFa و نقاط قوت و ضعف گزارش وضعیت سبد هستند �
 
   private async buildUniverse() {
     const instruments = await this.prisma.instrument.findMany({
-      where: { isActive: true, assetType: { not: AssetType.INDEX } },
+      where: { isActive: true, assetType: { not: AssetType.INDEX }, ...excludeExpiredOptions() },
       take: 200,
       include: { priceBars: { orderBy: { tradeDate: 'desc' }, take: 1 } },
     });

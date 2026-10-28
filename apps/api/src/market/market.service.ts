@@ -20,6 +20,7 @@ import {
   listValuableOptions,
   marketNumber,
   optionBoardForPrompt,
+  optionMetaExpired,
   optionTradePrice,
   parseOptionMeta,
   quotesForUnderlying,
@@ -36,6 +37,15 @@ import {
 
 const UA =
   'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/126.0.0.0 Safari/537.36';
+
+/** اختیار با روز ماندهٔ صفر یا کمتر در فهرست‌ها و پیشنهادها نیاید. */
+export function excludeExpiredOptions(): Prisma.InstrumentWhereInput {
+  return {
+    NOT: {
+      AND: [{ assetType: AssetType.OPTION }, { meta: { path: ['daysLeft'], lte: 0 } }],
+    },
+  };
+}
 
 const FETCH_HEADERS: Record<string, string> = {
   'User-Agent': UA,
@@ -305,6 +315,11 @@ export class MarketService implements OnModuleInit {
         LIMIT 1
       ) latest ON true
       WHERE i."isActive" = true
+      AND NOT (
+        i."assetType" = 'OPTION'::"AssetType"
+        AND jsonb_typeof(i.meta->'daysLeft') = 'number'
+        AND (i.meta->>'daysLeft')::double precision <= 0
+      )
       ${assetSql}
       ${symbolSql}
       ORDER BY ${metric}, i.symbol ASC
@@ -330,6 +345,7 @@ export class MarketService implements OnModuleInit {
       isActive: true,
       assetType: params.assetType ? params.assetType : { not: AssetType.INDEX },
       ...(params.q ? { symbol: { contains: params.q } } : {}),
+      ...excludeExpiredOptions(),
     };
 
     const orderedIds = sort
@@ -501,8 +517,16 @@ export class MarketService implements OnModuleInit {
         },
       },
     });
+    const inflation = await this.prisma.macroSnapshot.findFirst({
+      where: { inflationPct: { not: null } },
+      orderBy: { asOfDate: 'desc' },
+      select: { inflationPct: true },
+    });
+    const inflationPct =
+      inflation?.inflationPct != null && Number.isFinite(inflation.inflationPct) ? inflation.inflationPct : null;
     return {
       disclaimerFa: 'این فهرست از قیمت ذخیره‌شدهٔ اختیار و دارایی پایه حساب شده و توصیهٔ قطعی معامله نیست.',
+      inflationPct,
       items: listValuableOptions(
         rows.map((row) => ({
           id: row.id,
@@ -515,6 +539,7 @@ export class MarketService implements OnModuleInit {
           raw: row.priceBars[0]?.raw ?? null,
           meta: row.meta,
         })),
+        inflationPct,
       ),
     };
   }
@@ -560,7 +585,7 @@ export class MarketService implements OnModuleInit {
         priceBars: { orderBy: { tradeDate: 'desc' }, take: 1 },
       },
     });
-    if (!i) return null;
+    if (!i || optionMetaExpired(i.meta, i.assetType)) return null;
     return {
       id: i.id,
       symbol: i.symbol,
@@ -573,6 +598,11 @@ export class MarketService implements OnModuleInit {
   }
 
   async getPriceHistory(id: string, limit = 90) {
+    const inst = await this.prisma.instrument.findUnique({
+      where: { id },
+      select: { assetType: true, meta: true },
+    });
+    if (inst && optionMetaExpired(inst.meta, inst.assetType)) return [];
     const bars = await this.prisma.priceBar.findMany({
       where: { instrumentId: id },
       orderBy: { tradeDate: 'desc' },
@@ -725,6 +755,7 @@ export class MarketService implements OnModuleInit {
           where: {
             isActive: true,
             assetType: { in: [AssetType.STOCK, AssetType.INDEX, AssetType.FUND, AssetType.GOLD_ETF, AssetType.OPTION] },
+            ...excludeExpiredOptions(),
             OR: or,
           },
           take: 24,
