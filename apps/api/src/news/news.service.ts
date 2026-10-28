@@ -38,6 +38,7 @@ type NewsLlmOut = {
 export class NewsService implements OnModuleInit {
   private readonly logger = new Logger(NewsService.name);
   private refreshInFlight = false;
+  private llmRefresh: Promise<unknown> | null = null;
 
   constructor(
     private readonly prisma: PrismaService,
@@ -80,7 +81,7 @@ export class NewsService implements OnModuleInit {
     if (!slot) return;
     const label = `${String(schedule.iranNewsHour).padStart(2, '0')}:${String(schedule.iranNewsMinute).padStart(2, '0')}`;
     this.logger.log(`بروزرسانی زمان‌بندی‌شده اخبار ایران (${label} تهران)`);
-    await this.runScheduledRefresh({ overwriteExisting: slot === 'exact' });
+    await this.runScheduledRefresh();
   }
 
   private async catchUpAfterRestart() {
@@ -88,10 +89,10 @@ export class NewsService implements OnModuleInit {
     const now = tehranTimeParts();
     if (now.hour * 60 + now.minute < schedule.iranNewsHour * 60 + schedule.iranNewsMinute) return;
     this.logger.log('پس از راه‌اندازی: اگر اخبار امروز خالی باشد جمع می‌شود');
-    await this.runScheduledRefresh({ overwriteExisting: false });
+    await this.runScheduledRefresh();
   }
 
-  private async runScheduledRefresh(opts: { overwriteExisting: boolean }) {
+  private async runScheduledRefresh() {
     if (this.refreshInFlight) {
       this.logger.log('کرون اخبار در حال اجراست؛ درخواست هم‌زمان رد شد');
       return;
@@ -104,16 +105,15 @@ export class NewsService implements OnModuleInit {
         return;
       }
       const newsDateKey = tehranDateKey();
-      if (!opts.overwriteExisting) {
-        const existing = await this.prisma.economicNewsBatch.findUnique({
-          where: { userId_newsDateKey: { userId: adminId, newsDateKey } },
-          include: { _count: { select: { items: true } } },
-        });
-        if (existing && existing._count.items > 0) {
-          return;
-        }
-        this.logger.log(`تلاش مجدد اخبار ${newsDateKey} (ساعت تهران ${tehranHour()})`);
+      const existing = await this.prisma.economicNewsBatch.findUnique({
+        where: { userId_newsDateKey: { userId: adminId, newsDateKey } },
+        include: { _count: { select: { items: true } } },
+      });
+      if (existing && existing._count.items > 0) {
+        this.logger.log(`اخبار ${newsDateKey} از قبل ذخیره شده؛ مدل دوباره خوانده نشد`);
+        return;
       }
+      this.logger.log(`خواندن اخبار ${newsDateKey} از مدل (ساعت تهران ${tehranHour()})`);
       const batch = await this.refresh(adminId, { persistEmpty: false });
       const n = batch?.items?.length ?? 0;
       this.logger.log(`کرون اخبار ${newsDateKey}: ${n} خبر ذخیره شد`);
@@ -150,10 +150,38 @@ export class NewsService implements OnModuleInit {
     };
   }
 
-  async refresh(userId: string, opts?: { persistEmpty?: boolean }) {
+  async refresh(userId: string, opts?: { persistEmpty?: boolean; force?: boolean }) {
     const ownerId = await this.platformOwnerId(userId);
     const newsDateKey = tehranDateKey();
     const persistEmpty = opts?.persistEmpty !== false;
+    if (!opts?.force) {
+      const stored = await this.prisma.economicNewsBatch.findUnique({
+        where: { userId_newsDateKey: { userId: ownerId, newsDateKey } },
+        include: { items: { orderBy: { sortOrder: 'asc' } } },
+      });
+      if (stored && stored.items.length > 0) {
+        this.logger.log(`اخبار ${newsDateKey} از ذخیره خوانده شد؛ مدل دوباره صدا زده نشد`);
+        return stored;
+      }
+      if (this.llmRefresh) {
+        await this.llmRefresh.catch(() => undefined);
+        const again = await this.prisma.economicNewsBatch.findUnique({
+          where: { userId_newsDateKey: { userId: ownerId, newsDateKey } },
+          include: { items: { orderBy: { sortOrder: 'asc' } } },
+        });
+        if (again && again.items.length > 0) return again;
+      }
+    }
+    const task = this.readNewsFromModel(ownerId, newsDateKey, persistEmpty);
+    this.llmRefresh = task;
+    try {
+      return await task;
+    } finally {
+      if (this.llmRefresh === task) this.llmRefresh = null;
+    }
+  }
+
+  private async readNewsFromModel(ownerId: string, newsDateKey: string, persistEmpty: boolean) {
     const includeItems = { items: { orderBy: { sortOrder: 'asc' as const } } };
     const recentBatches = await this.prisma.economicNewsBatch.findMany({
       where: { userId: ownerId },

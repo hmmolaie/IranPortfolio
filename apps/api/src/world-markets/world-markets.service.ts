@@ -364,6 +364,11 @@ export class WorldMarketsService implements OnModuleInit {
 
   /** حداکثر ۵ خبر مهم اقتصاد کلان جهان و آمریکا؛ درس‌های پایدار هم در Lesson ذخیره می‌شوند */
   private async refreshMacroNews(dateKey: string, fetchedAt: Date) {
+    const already = await this.prisma.worldMacroNews.count({ where: { dateKey } });
+    if (already > 0) {
+      this.logger.log(`اخبار کلان جهان ${dateKey} از قبل ذخیره شده؛ مدل دوباره خوانده نشد`);
+      return;
+    }
     const adminId = (await this.users.getAdminUserId()) ?? undefined;
     const system = await this.llm.getSystemPrompt(adminId, 'world_macro_news');
     const previous = await this.prisma.worldMacroNews.findMany({

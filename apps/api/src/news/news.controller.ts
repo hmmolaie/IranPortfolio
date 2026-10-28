@@ -59,7 +59,7 @@ export class NewsController {
   @Post('refresh')
   @UseGuards(AdminGuard)
   refresh(@Req() req: { user: { userId: string } }) {
-    return this.news.refresh(req.user.userId);
+    return this.news.refresh(req.user.userId, { force: true });
   }
 
   @Get('schedule')

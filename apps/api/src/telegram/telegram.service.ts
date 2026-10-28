@@ -984,7 +984,24 @@ export class TelegramService implements OnModuleInit {
    * متن اخبار و فایل صوتی برای همه یکسان است.
    * هر dateKey فقط یک‌بار از مدل ساخته می‌شود و ارسال‌های بعدی همان روز از ذخیره خوانده می‌شود.
    */
-  private async sharedNewsVoice(
+  private sharedVoiceTask: { dateKey: string; task: Promise<Buffer | null> } | null = null;
+
+  private sharedNewsVoice(
+    dateKey: string,
+    botNameFa: string | null,
+    batch: NewsBatchRow | null | undefined,
+    optionLines: string[] = [],
+  ): Promise<Buffer | null> {
+    if (this.sharedVoiceTask?.dateKey === dateKey) return this.sharedVoiceTask.task;
+    const task = this.loadOrBuildSharedVoice(dateKey, botNameFa, batch, optionLines).then((audio) => {
+      if (!audio && this.sharedVoiceTask?.task === task) this.sharedVoiceTask = null;
+      return audio;
+    });
+    this.sharedVoiceTask = { dateKey, task };
+    return task;
+  }
+
+  private async loadOrBuildSharedVoice(
     dateKey: string,
     botNameFa: string | null,
     batch: NewsBatchRow | null | undefined,
@@ -992,23 +1009,15 @@ export class TelegramService implements OnModuleInit {
   ): Promise<Buffer | null> {
     const cached = await this.prisma.telegramSharedDigest.findUnique({ where: { dateKey } });
     if (cached?.voiceAudio?.length) {
+      this.logger.log(`صوت اخبار ${dateKey} از ذخیره خوانده شد و برای همهٔ گیرنده‌ها همان فایل فرستاده می‌شود`);
       return Buffer.from(cached.voiceAudio);
     }
 
     let script = cached?.voiceScript?.trim() ?? '';
-    let persisted = Boolean(script);
     if (!script) {
       const built = await this.buildSharedVoiceScript(botNameFa, batch, optionLines);
       script = built.script;
       if (!script) return null;
-      if (built.fromModel) {
-        await this.prisma.telegramSharedDigest.upsert({
-          where: { dateKey },
-          create: { dateKey, voiceScript: script },
-          update: { voiceScript: script },
-        });
-        persisted = true;
-      }
     }
 
     const adminId = await this.users.getAdminUserId();
@@ -1022,12 +1031,12 @@ export class TelegramService implements OnModuleInit {
         instructions: DIGEST_TTS_INSTRUCTIONS,
       });
       if (audio?.length) {
-        if (persisted) {
-          await this.prisma.telegramSharedDigest.update({
-            where: { dateKey },
-            data: { voiceAudio: new Uint8Array(audio) },
-          });
-        }
+        await this.prisma.telegramSharedDigest.upsert({
+          where: { dateKey },
+          create: { dateKey, voiceScript: script, voiceAudio: new Uint8Array(audio) },
+          update: { voiceScript: script, voiceAudio: new Uint8Array(audio) },
+        });
+        this.logger.log(`صوت اخبار ${dateKey} یک‌بار ساخته شد و برای همهٔ گیرنده‌ها همان فایل فرستاده می‌شود`);
         return audio;
       }
       await this.notifyAdminError('خطای ساخت صوت اخبار روزانه', `تاریخ: ${dateKey}\nپاسخ گفتار خالی بود.`);

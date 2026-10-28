@@ -71,6 +71,12 @@ export class MarketController {
     return this.market.getValuableOptions();
   }
 
+  @Post('options/refresh')
+  @UseGuards(AdminGuard)
+  refreshOptions() {
+    return this.market.refreshOptionsNow();
+  }
+
   @Get('option-board')
   optionBoard() {
     return this.market.getOptionBoard();

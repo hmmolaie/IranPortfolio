@@ -980,6 +980,27 @@ export class MarketService implements OnModuleInit {
     return this.ingestCatchUp();
   }
 
+  /** به‌روزرسانی دستی اختیار معامله؛ فقط از دکمهٔ ادمین صدا زده می‌شود. */
+  async refreshOptionsNow() {
+    if (this.ingestInFlight) {
+      throw new ServiceUnavailableException('به‌روزرسانی بازار از قبل در حال انجام است. لطفاً صبر کنید.');
+    }
+    this.ingestInFlight = true;
+    try {
+      const saved = await this.ingestOptions(todayDateOnly());
+      return {
+        saved,
+        messageFa: `اختیار معامله به‌روز شد: ${saved.toLocaleString('fa-IR')} قرارداد.`,
+      };
+    } catch (e) {
+      await this.recordMarketError(e);
+      const message = e instanceof Error ? e.message : 'به‌روزرسانی اختیار معامله ناموفق بود.';
+      throw new BadRequestException(message);
+    } finally {
+      this.ingestInFlight = false;
+    }
+  }
+
   ingestCatchUp() {
     return this.beginIngest(true);
   }
