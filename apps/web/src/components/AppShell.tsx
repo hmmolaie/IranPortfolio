@@ -98,7 +98,11 @@ export function AppShell({ children }: { children: React.ReactNode }) {
     }
 
     const tick = window.setInterval(() => {
-      if (sessionTimedOut()) logoutIdle();
+      if (sessionTimedOut()) {
+        logoutIdle();
+        return;
+      }
+      void refreshSessionIfNeeded();
     }, 5000);
 
     const onVis = () => {

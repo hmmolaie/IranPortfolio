@@ -31,9 +31,9 @@ const TOKEN_KEY = 'sabadyar_token';
 const ROLE_KEY = 'sabadyar_role';
 const LAST_ACTIVITY_KEY = 'sabadyar_last_activity';
 
-/** اگر کاربر ۱۵ دقیقه کاری نکند، جلسه تمام می‌شود */
+/** اگر کاربر ۱۵ دقیقه کاری نکند، جلسه تمام می‌شود. این از حداقل ۵ دقیقه بیشتر است. */
 export const SESSION_IDLE_MS = 15 * 60 * 1000;
-const COOKIE_MAX_AGE_SEC = 15 * 60;
+const COOKIE_MAX_AGE_SEC = Math.ceil(SESSION_IDLE_MS / 1000);
 const ACTIVITY_TOUCH_THROTTLE_MS = 1000;
 const TOKEN_REFRESH_EVERY_MS = 60 * 1000;
 
@@ -55,29 +55,22 @@ function readStoredToken(): string | null {
   return localStorage.getItem(TOKEN_KEY);
 }
 
-function jwtExpired(token: string): boolean {
-  try {
-    const payload = token.split('.')[1];
-    if (!payload) return true;
-    const json = JSON.parse(atob(payload.replace(/-/g, '+').replace(/_/g, '/'))) as { exp?: number };
-    if (typeof json.exp !== 'number') return true;
-    return json.exp * 1000 <= Date.now() + 1000;
-  } catch {
-    return true;
-  }
-}
-
 function idleExpired(): boolean {
   if (typeof window === 'undefined') return true;
   const last = Number(localStorage.getItem(LAST_ACTIVITY_KEY) ?? '');
-  if (!Number.isFinite(last) || last <= 0) return true;
+  if (!Number.isFinite(last) || last <= 0) {
+    if (readStoredToken()) {
+      localStorage.setItem(LAST_ACTIVITY_KEY, String(Date.now()));
+      return false;
+    }
+    return true;
+  }
   return Date.now() - last > SESSION_IDLE_MS;
 }
 
 export function sessionTimedOut(): boolean {
-  const token = readStoredToken();
-  if (!token) return true;
-  return idleExpired() || jwtExpired(token);
+  if (!readStoredToken()) return true;
+  return idleExpired();
 }
 
 export function touchSession() {
@@ -113,7 +106,7 @@ export function getToken(): string | null {
   if (typeof window === 'undefined') return null;
   const token = readStoredToken();
   if (!token) return null;
-  if (idleExpired() || jwtExpired(token)) {
+  if (idleExpired()) {
     clearSession();
     return null;
   }
@@ -278,6 +271,7 @@ export async function api<T>(
       res.status === 401 &&
       options.auth !== false &&
       path !== '/auth/login' &&
+      path !== '/auth/refresh' &&
       !path.startsWith('/auth/webauthn/login')
     ) {
       expireAndRedirect();
