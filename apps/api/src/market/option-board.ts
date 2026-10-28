@@ -514,6 +514,77 @@ function judgeOption(input: {
   };
 }
 
+export type ValuableOption = {
+  id: string;
+  symbol: string;
+  nameFa: string;
+  sideFa: string;
+  underlyingSymbol: string;
+  underlyingPrice: number;
+  strike: number;
+  premium: number;
+  daysLeft: number;
+  contractSize: number | null;
+  profitPerUnit: number;
+  profitRial: number;
+  profitPct: number;
+  reasonFa: string;
+};
+
+/** سود هر واحد = ارزش ذاتی نسبت به قیمت دارایی پایه، منهای قیمت اختیار. کمتر از ۵ درصد قیمت اختیار، قابل توجه نیست. */
+const MIN_PROFIT_PCT = 5;
+
+export function listValuableOptions(rows: BoardSource[]): ValuableOption[] {
+  const spotBySymbol = new Map<string, number>();
+  for (const row of rows) {
+    if (row.assetType === 'OPTION') continue;
+    const price = row.lastPrice ?? row.closePrice;
+    if (price != null && price > 0) spotBySymbol.set(fold(row.symbol), price);
+  }
+
+  const out: ValuableOption[] = [];
+  for (const row of rows) {
+    if (row.assetType !== 'OPTION') continue;
+    if (row.volume === 0) continue;
+    const raw = asRecord(row.raw);
+    const meta = asRecord(row.meta);
+    const parsed = parseOptionMeta({ ...raw, ...meta }, row.symbol, row.nameFa);
+    if (!parsed.side || !parsed.underlyingSymbol || parsed.strike == null || !(parsed.strike > 0)) continue;
+    if (parsed.daysLeft == null || parsed.daysLeft < 0) continue;
+    const premium = optionTradePrice(row).last ?? optionTradePrice(row).close;
+    if (premium == null || !(premium > 0)) continue;
+    const spot =
+      spotBySymbol.get(fold(parsed.underlyingSymbol)) ??
+      (parsed.underlyingPrice != null && parsed.underlyingPrice > 0 ? parsed.underlyingPrice : null);
+    if (spot == null) continue;
+    const intrinsic = parsed.side === 'CALL' ? Math.max(0, spot - parsed.strike) : Math.max(0, parsed.strike - spot);
+    const profitPerUnit = intrinsic - premium;
+    if (!(profitPerUnit > 0)) continue;
+    const profitPct = (profitPerUnit / premium) * 100;
+    if (profitPct < MIN_PROFIT_PCT) continue;
+    const contractSize = parsed.contractSize != null && parsed.contractSize > 0 ? parsed.contractSize : null;
+    const sideFa = parsed.sideFa ?? (parsed.side === 'CALL' ? 'اختیار خرید' : 'اختیار فروش');
+    out.push({
+      id: row.id,
+      symbol: row.symbol,
+      nameFa: row.nameFa,
+      sideFa,
+      underlyingSymbol: parsed.underlyingSymbol,
+      underlyingPrice: spot,
+      strike: parsed.strike,
+      premium,
+      daysLeft: parsed.daysLeft,
+      contractSize,
+      profitPerUnit,
+      profitRial: profitPerUnit * (contractSize ?? 1),
+      profitPct: Math.round(profitPct * 10) / 10,
+      reasonFa: `ارزش ذاتی این ${sideFa} از قیمت اختیار بیشتر است و تا سررسید ${Math.round(parsed.daysLeft).toLocaleString('en-US')} روز مانده.`,
+    });
+  }
+  out.sort((a, b) => b.profitRial - a.profitRial || b.profitPct - a.profitPct);
+  return out;
+}
+
 function scoreOption(idea: OptionIdea): number {
   const distance = Math.abs(idea.strike - idea.underlyingPrice) / idea.underlyingPrice;
   return distance * 2 + idea.premiumPctOfSpot / 100;

@@ -53,13 +53,22 @@ export class MarketController {
     @Query('assetType') assetType?: AssetType,
     @Query('take') take?: string,
     @Query('page') page?: string,
+    @Query('sort') sort?: string,
+    @Query('dir') dir?: string,
   ) {
     return this.market.listLatest({
       q,
       assetType,
       take: take ? Number(take) : undefined,
       page: page ? Number(page) : undefined,
+      sort,
+      dir,
     });
+  }
+
+  @Get('option-value')
+  optionValue() {
+    return this.market.getValuableOptions();
   }
 
   @Get('option-board')

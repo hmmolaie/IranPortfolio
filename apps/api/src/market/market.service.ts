@@ -3,6 +3,7 @@ import { Cron } from '@nestjs/schedule';
 import { AssetType, Prisma, UserRole } from '@prisma/client';
 import { PrismaService } from '../prisma/prisma.service';
 import { LlmService } from '../llm/llm.service';
+import { AiQuotaExceededException, AiUsageService } from '../ai-usage/ai-usage.service';
 import {
   foldFa,
   isTehranMarketScoped,
@@ -16,6 +17,7 @@ import { tehranTimeParts } from '../news/tehran-date';
 import {
   buildOptionBoard,
   describeQuote,
+  listValuableOptions,
   marketNumber,
   optionBoardForPrompt,
   optionTradePrice,
@@ -180,6 +182,7 @@ export class MarketService implements OnModuleInit {
   constructor(
     private readonly prisma: PrismaService,
     private readonly llm: LlmService,
+    private readonly aiUsage: AiUsageService,
   ) {}
 
   onModuleInit() {
@@ -268,35 +271,84 @@ export class MarketService implements OnModuleInit {
     }
   }
 
+  /** مرتب‌سازی روی EPS یا P/E آخرین میلهٔ هر نماد. مقدار خالی آخر می‌ماند. */
+  private async instrumentIdsByLatestRatio(input: {
+    q?: string;
+    assetType?: AssetType;
+    sort: 'eps' | 'pe';
+    dir: 'asc' | 'desc';
+    skip: number;
+    take: number;
+  }): Promise<string[]> {
+    const metric =
+      input.sort === 'eps'
+        ? input.dir === 'asc'
+          ? Prisma.sql`latest.eps ASC NULLS LAST`
+          : Prisma.sql`latest.eps DESC NULLS LAST`
+        : input.dir === 'asc'
+          ? Prisma.sql`latest.pe ASC NULLS LAST`
+          : Prisma.sql`latest.pe DESC NULLS LAST`;
+    const assetSql = input.assetType
+      ? Prisma.sql`AND i."assetType" = ${input.assetType}::"AssetType"`
+      : Prisma.sql`AND i."assetType" <> 'INDEX'::"AssetType"`;
+    const symbolSql = input.q
+      ? Prisma.sql`AND i.symbol LIKE ${`%${input.q.replace(/[\\%_]/g, (ch) => `\\${ch}`)}%`} ESCAPE '\\'`
+      : Prisma.empty;
+    const rows = await this.prisma.$queryRaw<{ id: string }[]>`
+      SELECT i.id
+      FROM "Instrument" i
+      LEFT JOIN LATERAL (
+        SELECT pb.eps, pb.pe
+        FROM "PriceBar" pb
+        WHERE pb."instrumentId" = i.id
+        ORDER BY pb."tradeDate" DESC
+        LIMIT 1
+      ) latest ON true
+      WHERE i."isActive" = true
+      ${assetSql}
+      ${symbolSql}
+      ORDER BY ${metric}, i.symbol ASC
+      LIMIT ${input.take} OFFSET ${input.skip}
+    `;
+    return rows.map((row) => row.id);
+  }
+
   async listLatest(params: {
     q?: string;
     assetType?: AssetType;
     take?: number;
     page?: number;
+    sort?: string;
+    dir?: string;
   }) {
     const take = Math.min(Math.max(params.take ?? 20, 1), 100);
     const page = Math.max(params.page ?? 1, 1);
     const skip = (page - 1) * take;
+    const sort = params.sort === 'eps' || params.sort === 'pe' ? params.sort : undefined;
+    const dir = params.dir === 'asc' ? 'asc' : 'desc';
     const where = {
       isActive: true,
       assetType: params.assetType ? params.assetType : { not: AssetType.INDEX },
-      ...(params.q
-        ? {
-            OR: [
-              { symbol: { contains: params.q } },
-              { nameFa: { contains: params.q } },
-            ],
-          }
-        : {}),
+      ...(params.q ? { symbol: { contains: params.q } } : {}),
     };
 
+    const orderedIds = sort
+      ? await this.instrumentIdsByLatestRatio({
+          q: params.q,
+          assetType: params.assetType,
+          sort,
+          dir,
+          skip,
+          take,
+        })
+      : null;
     const [total, instruments, lastInstrument, lastBar] = await Promise.all([
       this.prisma.instrument.count({ where }),
       this.prisma.instrument.findMany({
-        where,
-        skip,
-        take,
-        orderBy: { symbol: 'asc' },
+        where: orderedIds ? { id: { in: orderedIds } } : where,
+        skip: orderedIds ? undefined : skip,
+        take: orderedIds ? undefined : take,
+        orderBy: orderedIds ? undefined : { symbol: 'asc' },
         include: {
           priceBars: {
             orderBy: { tradeDate: 'desc' },
@@ -313,7 +365,12 @@ export class MarketService implements OnModuleInit {
       }),
     ]);
 
-    const items = instruments.map((i) => {
+    const ordered = orderedIds
+      ? orderedIds
+          .map((id) => instruments.find((row) => row.id === id))
+          .filter((row): row is (typeof instruments)[number] => Boolean(row))
+      : instruments;
+    const items = ordered.map((i) => {
       const bar = i.priceBars[0];
       const source: BoardSource = {
         id: i.id,
@@ -416,32 +473,49 @@ export class MarketService implements OnModuleInit {
         inst.insCode,
       );
     };
-    let quotes = await read();
-    if (!quotes.length && !this.ingestInFlight) {
-      const priced = await this.prisma.priceBar.count({
-        where: {
-          instrument: { assetType: AssetType.OPTION },
-          OR: [{ lastPrice: { gt: 0 } }, { closePrice: { gt: 0 } }],
-        },
-      });
-      if (!priced) {
-        this.ingestInFlight = true;
-        try {
-          await this.ingestOptions(todayDateOnly());
-          quotes = await read();
-        } catch (e) {
-          this.logger.warn(`خواندن اختیار برای ${inst.symbol}: ${(e as Error).message}`);
-          await this.recordMarketError(e);
-        } finally {
-          this.ingestInFlight = false;
-        }
-      }
-    }
+    const quotes = await read();
     return {
       symbol: inst.symbol,
       spot,
       disclaimerFa: 'مقایسه از قیمت ذخیره‌شدهٔ سهم و اختیار است و توصیهٔ قطعی معامله نیست.',
       options: quotes,
+    };
+  }
+
+  async getValuableOptions() {
+    const rows = await this.prisma.instrument.findMany({
+      where: {
+        isActive: true,
+        assetType: { in: [AssetType.STOCK, AssetType.GOLD_ETF, AssetType.FUND, AssetType.OPTION] },
+      },
+      select: {
+        id: true,
+        symbol: true,
+        nameFa: true,
+        assetType: true,
+        meta: true,
+        priceBars: {
+          orderBy: { tradeDate: 'desc' },
+          take: 1,
+          select: { lastPrice: true, closePrice: true, volume: true, raw: true },
+        },
+      },
+    });
+    return {
+      disclaimerFa: 'این فهرست از قیمت ذخیره‌شدهٔ اختیار و دارایی پایه حساب شده و توصیهٔ قطعی معامله نیست.',
+      items: listValuableOptions(
+        rows.map((row) => ({
+          id: row.id,
+          symbol: row.symbol,
+          nameFa: row.nameFa,
+          assetType: row.assetType,
+          lastPrice: row.priceBars[0]?.lastPrice ?? null,
+          closePrice: row.priceBars[0]?.closePrice ?? null,
+          volume: row.priceBars[0]?.volume ?? null,
+          raw: row.priceBars[0]?.raw ?? null,
+          meta: row.meta,
+        })),
+      ),
     };
   }
 
@@ -573,9 +647,14 @@ export class MarketService implements OnModuleInit {
     let reply = MARKET_CHAT_REFUSE_FA;
     if (inScope) {
       try {
+        await this.aiUsage.assertAllowed(userId, 'market_tehran_chat');
         reply = await this.answerTehranMarketChat(userId, role, text, mentioned);
       } catch (e) {
-        reply = `متأسفانه مدل زبانی در دسترس نیست. (${(e as Error).message.slice(0, 120)})`;
+        if (e instanceof AiQuotaExceededException) {
+          reply = 'سهمیه توکن شما تمام شده است. از بخش کیف پول در تنظیمات، حساب خود را شارژ کنید.';
+        } else {
+          reply = `متأسفانه مدل زبانی در دسترس نیست. (${(e as Error).message.slice(0, 120)})`;
+        }
       }
     }
 
@@ -1067,20 +1146,7 @@ export class MarketService implements OnModuleInit {
 
   async getMarketIndices(historyDays = 60) {
     const take = Math.min(Math.max(historyDays, 5), 365);
-    try {
-      await this.ensureLatestIndexValues();
-    } catch (e) {
-      this.logger.warn(`تکمیل شاخص برای نمایش: ${(e as Error).message}`);
-    }
-    let out = await this.readMarketIndices(take);
-    const usdMissingHistory = out.some((i) => i.unit === 'usd' && i.history.length === 0);
-    try {
-      await this.syncUsdIndexBars(usdMissingHistory ? 'all' : 'latest');
-      out = await this.readMarketIndices(take);
-    } catch (e) {
-      this.logger.warn(`شاخص دلاری: ${(e as Error).message}`);
-    }
-    return out;
+    return this.readMarketIndices(take);
   }
 
   private async readMarketIndices(take: number) {
@@ -1211,7 +1277,7 @@ export class MarketService implements OnModuleInit {
 
   private indexSnapshotAt = 0;
 
-  /** force برای زمان‌بندی است. باز شدن صفحه حداکثر هر ۱۵ دقیقه یک‌بار API شاخص را می‌زند. */
+  /** فقط از زمان‌بندی و به‌روزرسانی ادمین صدا زده می‌شود، نه از باز شدن صفحه. */
   private async ensureLatestIndexValues(force = false) {
     if (!force && Date.now() - this.indexSnapshotAt < 15 * 60 * 1000) return 0;
     if (this.indexSnapshotInFlight) return this.indexSnapshotInFlight;

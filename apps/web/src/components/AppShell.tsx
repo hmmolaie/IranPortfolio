@@ -11,6 +11,7 @@ import { InstallAppPrompt } from '@/components/InstallAppPrompt';
 const allLinks: Array<{ href: string; label: string; adminOnly?: boolean; resellerOnly?: boolean }> = [
   { href: '/dashboard', label: 'داشبورد' },
   { href: '/market', label: 'بازار سهام تهران' },
+  { href: '/options', label: 'بازار اختیار معامله' },
   { href: '/portfolios', label: 'سبدها' },
   { href: '/funds', label: 'صندوق‌ها', adminOnly: true },
   { href: '/lessons', label: 'درس‌آموخته‌ها', adminOnly: true },

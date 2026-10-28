@@ -146,6 +146,8 @@ export default function MarketPage() {
   const [indices, setIndices] = useState<MarketIndex[]>([]);
   const [q, setQ] = useState('');
   const [assetType, setAssetType] = useState('');
+  const [sort, setSort] = useState<'eps' | 'pe' | ''>('');
+  const [sortDir, setSortDir] = useState<'asc' | 'desc'>('desc');
   const [page, setPage] = useState(1);
   const [total, setTotal] = useState(0);
   const [totalPages, setTotalPages] = useState(1);
@@ -154,13 +156,29 @@ export default function MarketPage() {
   const [isAdmin, setIsAdmin] = useState(false);
   const [updatedAt, setUpdatedAt] = useState<string | null>(null);
   const requestSeq = useRef(0);
+  const assetTypeRef = useRef(assetType);
+  assetTypeRef.current = assetType;
+  const sortRef = useRef(sort);
+  const sortDirRef = useRef(sortDir);
+  sortRef.current = sort;
+  sortDirRef.current = sortDir;
 
-  async function load(nextPage = page, query = q, type = assetType) {
+  async function load(
+    nextPage = page,
+    query = q,
+    type = assetType,
+    sortBy = sortRef.current,
+    direction = sortDirRef.current,
+  ) {
     const seq = ++requestSeq.current;
     const params = new URLSearchParams();
     const text = query.trim();
     if (text) params.set('q', text);
     if (type) params.set('assetType', type);
+    if (sortBy) {
+      params.set('sort', sortBy);
+      params.set('dir', direction);
+    }
     params.set('take', String(PAGE_SIZE));
     params.set('page', String(nextPage));
     const data = await api<QuotesPage>(`/market/quotes?${params}`);
@@ -199,10 +217,26 @@ export default function MarketPage() {
   useEffect(() => {
     if (!getToken()) return;
     const timer = window.setTimeout(() => {
-      void load(1, q, assetType);
+      void load(1, q, assetTypeRef.current).catch((e) => setMsg((e as Error).message));
     }, 300);
     return () => window.clearTimeout(timer);
-  }, [q, assetType]);
+  }, [q]);
+
+  function onAssetType(next: string) {
+    setAssetType(next);
+    setPage(1);
+    void load(1, q, next).catch((e) => setMsg((e as Error).message));
+  }
+
+  function toggleSort(column: 'eps' | 'pe') {
+    const nextDir = sortRef.current === column && sortDirRef.current === 'desc' ? 'asc' : 'desc';
+    sortRef.current = column;
+    sortDirRef.current = nextDir;
+    setSort(column);
+    setSortDir(nextDir);
+    setPage(1);
+    void load(1, q, assetTypeRef.current, column, nextDir).catch((e) => setMsg((e as Error).message));
+  }
 
   async function goToPage(next: number) {
     const clamped = Math.min(Math.max(next, 1), totalPages);
@@ -297,7 +331,7 @@ export default function MarketPage() {
           value={q}
           onChange={(e) => setQ(e.target.value)}
         />
-        <select className="input max-w-xs" value={assetType} onChange={(e) => setAssetType(e.target.value)}>
+        <select className="input max-w-xs" value={assetType} onChange={(e) => onAssetType(e.target.value)}>
           <option value="">همه دارایی‌ها</option>
           <option value="STOCK">سهام</option>
           <option value="GOLD_ETF">طلا</option>
@@ -320,8 +354,16 @@ export default function MarketPage() {
               <th className="px-4 py-3 text-start font-medium">نوع</th>
               <th className="px-4 py-3 text-start font-medium">آخرین</th>
               <th className="px-4 py-3 text-start font-medium">پایانی</th>
-              <th className="px-4 py-3 text-start font-medium">EPS</th>
-              <th className="px-4 py-3 text-start font-medium">P/E</th>
+              <th className="px-4 py-3 text-start font-medium">
+                <button type="button" className="font-medium text-white" onClick={() => toggleSort('eps')}>
+                  EPS{sort === 'eps' ? (sortDir === 'asc' ? ' ↑' : ' ↓') : ''}
+                </button>
+              </th>
+              <th className="px-4 py-3 text-start font-medium">
+                <button type="button" className="font-medium text-white" onClick={() => toggleSort('pe')}>
+                  P/E{sort === 'pe' ? (sortDir === 'asc' ? ' ↑' : ' ↓') : ''}
+                </button>
+              </th>
             </tr>
           </thead>
           <tbody>
