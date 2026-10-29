@@ -69,6 +69,10 @@ model User {
   resellerId     String?
   /// بازار اختیار معامله؛ پیش‌فرض بسته است و ادمین یا معرف آن را باز می‌کند
   optionsMarketAccess Boolean @default(false)
+  /// پیشنهاد، آنالیز و بازچینش سبد با هوش مصنوعی
+  aiPortfolioEnabled Boolean @default(true)
+  /// گفتگو و بقیهٔ فراخوانی‌های مدل زبانی برای همین کاربر
+  llmEnabled Boolean @default(true)
   /// موجودی کیف پول به ریال
   walletBalanceRial Int @default(0)
   createdAt    DateTime @default(now())
@@ -275,6 +279,10 @@ model UserProfile {
   telegramChatId          String?
   telegramUsername        String?
   telegramLinkedAt        DateTime?
+  /// نمودار و پیشنهاد بهبود سبد در پیام روزانه
+  telegramPortfolioEnabled Boolean @default(true)
+  /// اخبار و فرصت‌های سرمایه‌گذاری، همراه فایل صوتی
+  telegramNewsEnabled      Boolean @default(true)
   user                    User      @relation(fields: [userId], references: [id], onDelete: Cascade)
 
   @@index([mobilePhone])

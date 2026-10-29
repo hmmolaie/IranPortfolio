@@ -13,6 +13,8 @@ type MineUser = {
   createdAt: string;
   isActive: boolean;
   optionsMarketAccess: boolean;
+  aiPortfolioEnabled: boolean;
+  llmEnabled: boolean;
 };
 
 type ReportRow = {
@@ -64,6 +66,34 @@ export default function ResellerPage() {
     load().catch((err) => toast.error((err as Error).message));
     loadReport().catch((err) => toast.error((err as Error).message));
   }, [router]);
+
+  async function toggleAi(user: MineUser, field: 'portfolio' | 'llm') {
+    setBusy(true);
+    try {
+      await api(`/users/mine/${user.id}/ai-access`, {
+        method: 'PATCH',
+        body: JSON.stringify(
+          field === 'portfolio'
+            ? { portfolio: !user.aiPortfolioEnabled }
+            : { llm: !user.llmEnabled },
+        ),
+      });
+      await load();
+      toast.success(
+        field === 'portfolio'
+          ? user.aiPortfolioEnabled
+            ? 'پیشنهاد سبد با هوش مصنوعی خاموش شد.'
+            : 'پیشنهاد سبد با هوش مصنوعی روشن شد.'
+          : user.llmEnabled
+            ? 'استفاده از مدل زبانی خاموش شد.'
+            : 'استفاده از مدل زبانی روشن شد.',
+      );
+    } catch (err) {
+      toast.error((err as Error).message);
+    } finally {
+      setBusy(false);
+    }
+  }
 
   async function toggleOptions(user: MineUser) {
     setBusy(true);
@@ -196,6 +226,8 @@ export default function ResellerPage() {
               <th className="px-4 py-3 text-start">تاریخ</th>
               <th className="px-4 py-3 text-start">وضعیت</th>
               <th className="px-4 py-3 text-start">بازار اختیار</th>
+              <th className="px-4 py-3 text-start">پیشنهاد سبد</th>
+              <th className="px-4 py-3 text-start">مدل زبانی</th>
               <th className="px-4 py-3 text-start">رمز</th>
             </tr>
           </thead>
@@ -220,6 +252,26 @@ export default function ResellerPage() {
                   <button
                     type="button"
                     className="text-xs text-navy-800 underline"
+                    disabled={busy}
+                    onClick={() => void toggleAi(user, 'portfolio')}
+                  >
+                    {user.aiPortfolioEnabled ? 'خاموش' : 'روشن'}
+                  </button>
+                </td>
+                <td className="px-4 py-3">
+                  <button
+                    type="button"
+                    className="text-xs text-navy-800 underline"
+                    disabled={busy}
+                    onClick={() => void toggleAi(user, 'llm')}
+                  >
+                    {user.llmEnabled ? 'خاموش' : 'روشن'}
+                  </button>
+                </td>
+                <td className="px-4 py-3">
+                  <button
+                    type="button"
+                    className="text-xs text-navy-800 underline"
                     onClick={() => {
                       setPasswordFor(user);
                       setPassword('');
@@ -232,7 +284,7 @@ export default function ResellerPage() {
             ))}
             {users.length === 0 && (
               <tr>
-                <td className="px-4 py-4 text-navy-800/50" colSpan={6}>
+                <td className="px-4 py-4 text-navy-800/50" colSpan={8}>
                   هنوز کاربری نساخته‌اید.
                 </td>
               </tr>

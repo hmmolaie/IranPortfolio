@@ -55,6 +55,16 @@ class SaveTelegramConfigDto {
   sendWeekdays?: number[];
 }
 
+class NotifyPrefsDto {
+  @IsOptional()
+  @IsBoolean()
+  portfolio?: boolean;
+
+  @IsOptional()
+  @IsBoolean()
+  news?: boolean;
+}
+
 class SendTodayDto {
   @IsOptional()
   @IsBoolean()
@@ -80,6 +90,12 @@ export class TelegramController {
   @UseGuards(AdminGuard)
   listLinks() {
     return this.telegram.listLinkedUsers();
+  }
+
+  @Put('links/:userId/notify')
+  @UseGuards(AdminGuard)
+  setNotify(@Param('userId') userId: string, @Body() dto: NotifyPrefsDto) {
+    return this.telegram.setLinkedNotify(userId, { portfolio: dto.portfolio, news: dto.news });
   }
 
   @Post('links/:userId/unlink')

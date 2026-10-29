@@ -46,6 +46,7 @@ export default function PortfoliosPage() {
   const [pendingDelete, setPendingDelete] = useState<Portfolio | null>(null);
   const [deleting, setDeleting] = useState(false);
   const [creating, setCreating] = useState(false);
+  const [portfolioAi, setPortfolioAi] = useState(true);
 
   async function load() {
     setItems(await api<Portfolio[]>('/portfolios'));
@@ -57,6 +58,13 @@ export default function PortfoliosPage() {
       return;
     }
     load().catch(() => router.replace('/'));
+    api<{ role?: string; aiPortfolioEnabled?: boolean; llmEnabled?: boolean }>('/users/me')
+      .then((u) => {
+        const admin = u.role === 'ADMIN';
+        const llm = admin || u.llmEnabled !== false;
+        setPortfolioAi(admin || (llm && u.aiPortfolioEnabled !== false));
+      })
+      .catch(() => undefined);
   }, [router]);
 
   function onCapitalChange(raw: string) {
@@ -155,10 +163,10 @@ export default function PortfoliosPage() {
         </div>
         <div className="flex items-end">
           <button className="btn-primary w-full" disabled={creating}>
-            {creating ? 'در حال ساخت سبد با AI...' : 'ایجاد سبد'}
+            {creating ? (portfolioAi ? 'در حال ساخت سبد با AI...' : 'در حال ساخت سبد...') : 'ایجاد سبد'}
           </button>
         </div>
-        {creating && (
+        {creating && portfolioAi && (
           <p className="text-sm text-navy-800/55 sm:col-span-2 lg:col-span-4">
             لطفاً صفحه را نبندید؛ ساخت سبد با هوش مصنوعی ممکن است کمی طول بکشد.
           </p>

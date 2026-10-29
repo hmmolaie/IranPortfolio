@@ -21,6 +21,7 @@ const allLinks: Array<{ href: string; label: string; adminOnly?: boolean; resell
   { href: '/forex', label: 'آزمایش فارکس', adminOnly: true },
   { href: '/reseller', label: 'کاربران من', resellerOnly: true },
   { href: '/admin/users', label: 'مدیریت کاربران', adminOnly: true },
+  { href: '/admin/telegram', label: 'اطلاع‌رسانی تلگرام', adminOnly: true },
   { href: '/admin/ai-cost', label: 'هزینه هوش مصنوعی', adminOnly: true },
   { href: '/admin/ai-history', label: 'سوابق هوش مصنوعی', adminOnly: true },
   { href: '/admin/data-health', label: 'سلامت داده', adminOnly: true },

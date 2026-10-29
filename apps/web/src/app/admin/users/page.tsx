@@ -18,6 +18,8 @@ type AppUser = {
   referralActive?: boolean;
   discountPct?: number;
   optionsMarketAccess?: boolean;
+  aiPortfolioEnabled?: boolean;
+  llmEnabled?: boolean;
   clientCount?: number;
   mobilePhone?: string | null;
   telegramLinked?: boolean;
@@ -157,6 +159,34 @@ export default function AdminUsersPage() {
       });
       toast.success('رمز عبور تغییر کرد.');
       closePanel();
+    } catch (err) {
+      toast.error((err as Error).message);
+    } finally {
+      setLoading(false);
+    }
+  }
+
+  async function toggleAi(user: AppUser, field: 'portfolio' | 'llm') {
+    setLoading(true);
+    try {
+      await api(`/users/${user.id}/ai-access`, {
+        method: 'PATCH',
+        body: JSON.stringify(
+          field === 'portfolio'
+            ? { portfolio: !user.aiPortfolioEnabled }
+            : { llm: !user.llmEnabled },
+        ),
+      });
+      await loadUsers();
+      toast.success(
+        field === 'portfolio'
+          ? user.aiPortfolioEnabled
+            ? 'پیشنهاد سبد با هوش مصنوعی خاموش شد.'
+            : 'پیشنهاد سبد با هوش مصنوعی روشن شد.'
+          : user.llmEnabled
+            ? 'استفاده از مدل زبانی خاموش شد.'
+            : 'استفاده از مدل زبانی روشن شد.',
+      );
     } catch (err) {
       toast.error((err as Error).message);
     } finally {
@@ -409,6 +439,24 @@ export default function AdminUsersPage() {
                 </td>
                 <td className="px-4 py-3">
                   <div className="flex flex-wrap gap-2">
+                    {u.role !== 'ADMIN' && (
+                      <button
+                        type="button"
+                        className="text-xs text-navy-800 hover:underline"
+                        onClick={() => void toggleAi(u, 'portfolio')}
+                      >
+                        {u.aiPortfolioEnabled === false ? 'روشن کردن پیشنهاد سبد' : 'خاموش کردن پیشنهاد سبد'}
+                      </button>
+                    )}
+                    {u.role !== 'ADMIN' && (
+                      <button
+                        type="button"
+                        className="text-xs text-navy-800 hover:underline"
+                        onClick={() => void toggleAi(u, 'llm')}
+                      >
+                        {u.llmEnabled === false ? 'روشن کردن مدل زبانی' : 'خاموش کردن مدل زبانی'}
+                      </button>
+                    )}
                     {u.role !== 'ADMIN' && (
                       <button
                         type="button"

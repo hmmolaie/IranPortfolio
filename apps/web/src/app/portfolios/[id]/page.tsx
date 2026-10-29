@@ -133,6 +133,7 @@ export default function PortfolioDetailPage() {
   const [appliedSuggestions, setAppliedSuggestions] = useState<number[]>([]);
   const [confirmDelete, setConfirmDelete] = useState(false);
   const [deleting, setDeleting] = useState(false);
+  const [aiOn, setAiOn] = useState({ portfolio: true, llm: true });
 
   async function load() {
     const data = await api<Portfolio>(`/portfolios/${id}`);
@@ -156,6 +157,13 @@ export default function PortfolioDetailPage() {
       return;
     }
     Promise.all([load(), loadChat()]).catch(() => router.replace('/portfolios'));
+    api<{ role?: string; aiPortfolioEnabled?: boolean; llmEnabled?: boolean }>('/users/me')
+      .then((u) => {
+        const admin = u.role === 'ADMIN';
+        const llm = admin || u.llmEnabled !== false;
+        setAiOn({ portfolio: admin || (llm && u.aiPortfolioEnabled !== false), llm });
+      })
+      .catch(() => undefined);
   }, [id, router]);
 
   useEffect(() => {
@@ -501,6 +509,7 @@ export default function PortfolioDetailPage() {
           </p>
         </div>
         <div className="flex flex-wrap gap-2">
+          {aiOn.portfolio && (
           <button
             className="btn-primary"
             disabled={!!busy || !latest}
@@ -508,6 +517,7 @@ export default function PortfolioDetailPage() {
           >
             {busy === 'analyze' ? '...' : 'آنالیز سبد جاری با AI'}
           </button>
+          )}
           {SHOW_MULTI_STRATEGY && (
             <button
               className="btn-primary"
@@ -517,6 +527,7 @@ export default function PortfolioDetailPage() {
               پیشنهاد چند استراتژی AI
             </button>
           )}
+          {aiOn.portfolio && (
           <button
             className="btn-secondary"
             disabled={!!busy}
@@ -524,6 +535,7 @@ export default function PortfolioDetailPage() {
           >
             ارزیابی ماهانه
           </button>
+          )}
           <button
             type="button"
             className="inline-flex items-center justify-center rounded-lg border border-red-700/30 bg-white px-5 py-2.5 text-sm font-medium text-red-700 transition hover:bg-red-50"
@@ -659,6 +671,7 @@ export default function PortfolioDetailPage() {
               اگر به‌جای انتخاب یکی از کارت‌ها می‌خواهید سبد یک‌جا با AI بازچینش شود:
             </p>
             <div className="flex flex-wrap items-center gap-3">
+              {aiOn.portfolio && (
               <button
                 type="button"
                 className="btn-primary"
@@ -667,6 +680,7 @@ export default function PortfolioDetailPage() {
               >
                 {busy === 'rebalance' ? '...' : 'بازچینش سبد'}
               </button>
+              )}
               <button
                 type="button"
                 className="text-sm text-navy-800/60 hover:underline"
@@ -918,7 +932,7 @@ export default function PortfolioDetailPage() {
         </section>
       )}
 
-      <section className="card flex flex-col gap-4">
+      {aiOn.llm && <section className="card flex flex-col gap-4">
         <div className="flex flex-wrap items-start justify-between gap-3">
           <div>
             <h2 className="text-lg font-semibold">گفتگو دربارهٔ سبد</h2>
@@ -968,7 +982,7 @@ export default function PortfolioDetailPage() {
             {chatBusy ? '...' : 'ارسال'}
           </button>
         </form>
-      </section>
+      </section>}
 
       <section className="card grid gap-4 sm:grid-cols-3">
         <div className="sm:col-span-1">
@@ -985,7 +999,7 @@ export default function PortfolioDetailPage() {
               })
             }
           >
-            واریز نقد + بازچینش
+            {aiOn.portfolio ? 'واریز نقد + بازچینش' : 'واریز نقد'}
           </button>
           <button
             className="btn-secondary"
@@ -997,7 +1011,7 @@ export default function PortfolioDetailPage() {
               })
             }
           >
-            ثبت فروش + بازچینش
+            {aiOn.portfolio ? 'ثبت فروش + بازچینش' : 'ثبت فروش'}
           </button>
         </div>
       </section>

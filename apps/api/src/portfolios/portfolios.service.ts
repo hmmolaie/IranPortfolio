@@ -240,7 +240,8 @@ export class PortfoliosService {
     userId: string,
     data: { name: string; strategy: PortfolioStrategy; capitalRial: number; description?: string },
   ) {
-    await this.wallet.ensure(userId, 'suggest');
+    const ai = await this.users.aiAccess(userId);
+    if (ai.portfolio) await this.wallet.ensure(userId, 'suggest');
     const portfolio = await this.prisma.portfolio.create({
       data: {
         userId,
@@ -253,7 +254,7 @@ export class PortfoliosService {
     });
 
     try {
-      await this.suggest(userId, portfolio.id, { initialCreate: true });
+      if (ai.portfolio) await this.suggest(userId, portfolio.id, { initialCreate: true });
     } catch (e) {
       if (e instanceof BadRequestException) throw e;
       /* سبد خالی برمی‌گردد؛ کاربر بعداً می‌تواند پیشنهاد بگیرد */
@@ -1381,7 +1382,8 @@ ${historyText}`,
     const fx = await this.prisma.spotPriceDaily.findFirst({ orderBy: { dateKey: 'desc' } });
 
     let analysis: Awaited<ReturnType<PortfoliosService['analyzeCurrent']>> | null = null;
-    if (latest) {
+    const ai = await this.users.aiAccess(userId);
+    if (latest && ai.portfolio) {
       try {
         analysis = await this.analyzeCurrent(userId, main.id, {
           pastTenseFa: true,
@@ -1920,6 +1922,8 @@ summaryFa و نقاط قوت و ضعف گزارش وضعیت سبد هستند �
       },
     });
 
+    const ai = await this.users.aiAccess(userId);
+    if (!ai.portfolio) return this.get(userId, portfolioId);
     return this.rebalance(userId, portfolioId, 'بازچینش پس از تغییر نقد/فروش', { skipBilling: true });
   }
 

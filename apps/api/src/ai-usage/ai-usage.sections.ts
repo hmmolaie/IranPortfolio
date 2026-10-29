@@ -1,6 +1,13 @@
 import { AsyncLocalStorage } from 'async_hooks';
 
 /** بخش‌هایی که با تمام شدن سهمیه، برای خود کاربر بسته می‌شوند */
+/** پیشنهاد، آنالیز، ارزیابی ماهانه و بازچینش سبد */
+export const PORTFOLIO_AI_PURPOSES = new Set([
+  'portfolio_suggest_multi',
+  'portfolio_analyze',
+  'monthly_eval',
+]);
+
 export const QUOTA_PURPOSES = new Set([
   'portfolio_suggest_multi',
   'portfolio_analyze',

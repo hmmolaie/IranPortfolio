@@ -15,6 +15,7 @@ export function TehranMarketChat() {
   const [chatBusy, setChatBusy] = useState(false);
   const [clearing, setClearing] = useState(false);
   const [errorFa, setErrorFa] = useState('');
+  const [llmOn, setLlmOn] = useState<boolean | null>(null);
   const chatEndRef = useRef<HTMLDivElement>(null);
 
   async function loadChat() {
@@ -23,8 +24,14 @@ export function TehranMarketChat() {
   }
 
   useEffect(() => {
-    loadChat().catch(() => undefined);
+    api<{ role?: string; llmEnabled?: boolean }>('/users/me')
+      .then((u) => setLlmOn(u.role === 'ADMIN' || u.llmEnabled !== false))
+      .catch(() => setLlmOn(true));
   }, []);
+
+  useEffect(() => {
+    if (llmOn) loadChat().catch(() => undefined);
+  }, [llmOn]);
 
   useEffect(() => {
     chatEndRef.current?.scrollIntoView({ behavior: 'smooth' });
@@ -62,6 +69,15 @@ export function TehranMarketChat() {
     } finally {
       setChatBusy(false);
     }
+  }
+
+  if (llmOn === false) {
+    return (
+      <section className="card">
+        <h2 className="text-lg font-semibold">گفتگو دربارهٔ بازار سهام تهران</h2>
+        <p className="mt-2 text-sm text-navy-800/60">استفاده از مدل زبانی برای این حساب خاموش است.</p>
+      </section>
+    );
   }
 
   return (

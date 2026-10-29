@@ -1,14 +1,16 @@
-import { BadRequestException, Injectable, NotFoundException } from '@nestjs/common';
+import { BadRequestException, ForbiddenException, Injectable, NotFoundException } from '@nestjs/common';
 import { PrismaService } from '../prisma/prisma.service';
 import { daysAgoDateKey, tehranDateKey } from '../news/tehran-date';
 import {
   AiUsageHit,
+  PORTFOLIO_AI_PURPOSES,
   QUOTA_PURPOSES,
   aiUsageStore,
   sectionKey,
   sectionLabel,
   sectionOptions,
 } from './ai-usage.sections';
+import { UsersService } from '../users/users.service';
 
 export class AiQuotaExceededException extends BadRequestException {
   constructor() {
@@ -27,9 +29,21 @@ const ZERO_RATES = { promptRialPer1k: 0, completionRialPer1k: 0, defaultQuotaTok
 
 @Injectable()
 export class AiUsageService {
-  constructor(private readonly prisma: PrismaService) {}
+  constructor(
+    private readonly prisma: PrismaService,
+    private readonly users: UsersService,
+  ) {}
 
   async assertAllowed(userId: string | undefined, purpose: string) {
+    if (userId) {
+      const access = await this.users.aiAccess(userId);
+      if (!access.llm && QUOTA_PURPOSES.has(purpose)) {
+        throw new ForbiddenException('استفاده از مدل زبانی برای این حساب خاموش است.');
+      }
+      if (PORTFOLIO_AI_PURPOSES.has(purpose) && !access.portfolio) {
+        throw new ForbiddenException('پیشنهاد سبد با هوش مصنوعی برای این حساب خاموش است.');
+      }
+    }
     if (!userId || !QUOTA_PURPOSES.has(purpose)) return;
     const limit = await this.limitFor(userId);
     if (limit <= 0) return;

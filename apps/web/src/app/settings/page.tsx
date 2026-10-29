@@ -4,7 +4,6 @@ import { FormEvent, useEffect, useRef, useState } from 'react';
 import { useRouter } from 'next/navigation';
 import clsx from 'clsx';
 import { adminApiErrorText, api, getToken } from '@/lib/api';
-import { TELEGRAM_BOT_USERNAME } from '@/lib/telegram';
 import { TelegramBotLink } from '@/components/TelegramBotLink';
 import { useToast } from '@/components/Toast';
 import { WebAuthnSettings } from '@/components/WebAuthnSettings';
@@ -20,16 +19,6 @@ type FundDefinition = {
   description?: string | null;
   websiteUrl?: string | null;
   isActive: boolean;
-};
-
-type TelegramLink = {
-  userId: string;
-  name?: string | null;
-  email: string;
-  isActive: boolean;
-  mobilePhone?: string | null;
-  telegramUsername?: string | null;
-  telegramLinkedAt?: string | null;
 };
 
 type LlmPrompt = {
@@ -53,7 +42,6 @@ type SettingsTab =
   | 'worldApis'
   | 'iranMarketApi'
   | 'refreshTimes'
-  | 'telegram'
   | 'telegramAssistant'
   | 'mobileLogin'
   | 'fees'
@@ -73,7 +61,6 @@ const TABS: { id: SettingsTab; label: string; adminOnly?: boolean }[] = [
   { id: 'worldApis', label: 'API اقتصاد دنیا', adminOnly: true },
   { id: 'iranMarketApi', label: 'API بورس ایران', adminOnly: true },
   { id: 'refreshTimes', label: 'ساعت به‌روزرسانی', adminOnly: true },
-  { id: 'telegram', label: 'ربات تلگرام', adminOnly: true },
   { id: 'telegramAssistant', label: 'دستیار تلگرام', adminOnly: true },
   { id: 'walletAdmin', label: 'تنظیمات کیف پول', adminOnly: true },
   { id: 'mobileLogin', label: 'ورود از طریق موبایل', adminOnly: true },
@@ -102,16 +89,6 @@ function parseFeePct(raw: string): number {
   }
   return value;
 }
-
-const SEND_WEEKDAYS = [
-  { id: 6, label: 'شنبه' },
-  { id: 0, label: 'یکشنبه' },
-  { id: 1, label: 'دوشنبه' },
-  { id: 2, label: 'سه‌شنبه' },
-  { id: 3, label: 'چهارشنبه' },
-  { id: 4, label: 'پنجشنبه' },
-  { id: 5, label: 'جمعه' },
-];
 
 function clockValue(hour: number, minute: number) {
   return `${String(hour).padStart(2, '0')}:${String(minute).padStart(2, '0')}`;
@@ -239,30 +216,6 @@ export default function SettingsPage() {
   });
   const [refreshTimeBusy, setRefreshTimeBusy] = useState(false);
   const [refreshTimeFeedback, setRefreshTimeFeedback] = useState<{ ok: boolean; text: string } | null>(null);
-  const [tgForm, setTgForm] = useState({
-    botNameFa: 'سبدیار',
-    botUsername: TELEGRAM_BOT_USERNAME,
-    botToken: '',
-    ttsBaseUrl: '',
-    ttsApiToken: '',
-    ttsModel: 'gpt-4o-mini-tts',
-    ttsVoice: 'alloy',
-    sendHour: 8,
-    sendMinute: 30,
-    sendWeekdays: [0, 1, 2, 3, 4, 5, 6],
-    enabled: true,
-  });
-  const [tgMeta, setTgMeta] = useState({
-    hasToken: false,
-    hasTtsToken: false,
-    linkedCount: 0,
-    lastDigest: null as null | {
-      dateKey: string;
-      sentCount: number;
-      failedCount: number;
-      skippedReasonFa?: string | null;
-    },
-  });
   const [tgMe, setTgMe] = useState<{
     configured: boolean;
     botNameFa: string;
@@ -271,9 +224,6 @@ export default function SettingsPage() {
         linked: boolean;
         linkedOnThisAccount?: boolean;
       } | null>(null);
-  const [tgLinks, setTgLinks] = useState<TelegramLink[]>([]);
-  const [tgBusy, setTgBusy] = useState(false);
-  const [tgFeedback, setTgFeedback] = useState<{ ok: boolean; text: string } | null>(null);
   const [assistForm, setAssistForm] = useState({
     botNameFa: 'دستیار سبدیار',
     botUsername: '',
@@ -393,75 +343,6 @@ export default function SettingsPage() {
     }
   }
 
-  async function loadTelegramConfig() {
-    try {
-      const c = await api<{
-        botNameFa?: string;
-        botUsername?: string;
-        enabled?: boolean;
-        ttsBaseUrl?: string;
-        hasTtsToken?: boolean;
-        ttsModel?: string;
-        ttsVoice?: string;
-        sendHour?: number;
-        sendMinute?: number;
-        sendWeekdays?: number[];
-        hasToken?: boolean;
-        linkedCount?: number;
-        lastDigest?: {
-          dateKey: string;
-          sentCount: number;
-          failedCount: number;
-          skippedReasonFa?: string | null;
-        } | null;
-      }>('/telegram/config');
-      setTgForm({
-        botNameFa: c.botNameFa?.trim() || 'سبدیار',
-        botUsername: c.botUsername?.trim() || TELEGRAM_BOT_USERNAME,
-        botToken: '',
-        ttsBaseUrl: c.ttsBaseUrl?.trim() || '',
-        ttsApiToken: '',
-        ttsModel: c.ttsModel?.trim() || 'gpt-4o-mini-tts',
-        ttsVoice: c.ttsVoice?.trim() || 'alloy',
-        sendHour: c.sendHour ?? 8,
-        sendMinute: c.sendMinute ?? 30,
-        sendWeekdays: c.sendWeekdays?.length ? c.sendWeekdays : [0, 1, 2, 3, 4, 5, 6],
-        enabled: c.enabled ?? true,
-      });
-      setTgMeta({
-        hasToken: Boolean(c.hasToken),
-        hasTtsToken: Boolean(c.hasTtsToken),
-        linkedCount: c.linkedCount ?? 0,
-        lastDigest: c.lastDigest ?? null,
-      });
-    } catch {
-      /* non-admin */
-    }
-  }
-
-  async function loadTelegramLinks() {
-    try {
-      const list = await api<TelegramLink[]>('/telegram/links');
-      setTgLinks(list);
-    } catch {
-      setTgLinks([]);
-    }
-  }
-
-  async function unlinkTelegramUser(link: TelegramLink) {
-    const label = link.name || link.email;
-    if (!confirm(`اتصال «${label}» به ربات قطع شود؟ پیام روزانه دیگر برای این نفر نمی‌رود.`)) return;
-    setTgBusy(true);
-    try {
-      await api(`/telegram/links/${link.userId}/unlink`, { method: 'POST' });
-      toast.success('اتصال این کاربر به ربات قطع شد.');
-      await Promise.all([loadTelegramConfig(), loadTelegramLinks()]);
-    } catch (err) {
-      toast.error((err as Error).message);
-    } finally {
-      setTgBusy(false);
-    }
-  }
 
   async function loadMobileLogins() {
     const data = await api<{
@@ -644,7 +525,6 @@ export default function SettingsPage() {
         loadSpotLatest().catch(() => undefined);
         loadWorldApis().catch(() => undefined);
         loadRefreshTimes().catch(() => undefined);
-        loadTelegramConfig().catch(() => undefined);
         loadAssistantConfig().catch(() => undefined);
       }
     });
@@ -683,10 +563,6 @@ export default function SettingsPage() {
     }
     if (tab === 'refreshTimes' && isAdmin) {
       loadRefreshTimes().catch(() => undefined);
-    }
-    if (tab === 'telegram' && isAdmin) {
-      loadTelegramConfig().catch(() => undefined);
-      loadTelegramLinks().catch(() => undefined);
     }
     if (tab === 'telegramAssistant' && isAdmin) {
       loadAssistantConfig().catch(() => undefined);
@@ -931,135 +807,6 @@ export default function SettingsPage() {
     }
   }
 
-  async function saveTelegram(e: FormEvent) {
-    e.preventDefault();
-    if (!tgForm.sendWeekdays.length) {
-      const text = 'حداقل یک روز هفته را برای ارسال انتخاب کنید.';
-      setTgFeedback({ ok: false, text });
-      toast.error(text);
-      return;
-    }
-    setTgBusy(true);
-    setTgFeedback(null);
-    try {
-      await api('/telegram/config', {
-        method: 'PUT',
-        body: JSON.stringify({
-          botNameFa: tgForm.botNameFa.trim(),
-          botUsername: tgForm.botUsername.trim().replace(/^@/, ''),
-          ttsBaseUrl: tgForm.ttsBaseUrl.trim(),
-          ttsModel: tgForm.ttsModel.trim(),
-          ttsVoice: tgForm.ttsVoice.trim(),
-          ...(tgForm.ttsApiToken.trim() ? { ttsApiToken: tgForm.ttsApiToken.trim() } : {}),
-          sendHour: tgForm.sendHour,
-          sendMinute: tgForm.sendMinute,
-          sendWeekdays: tgForm.sendWeekdays,
-          enabled: tgForm.enabled,
-          ...(tgForm.botToken.trim() ? { botToken: tgForm.botToken.trim() } : {}),
-        }),
-      });
-      setTgForm((p) => ({ ...p, botToken: '', ttsApiToken: '' }));
-      await loadTelegramConfig();
-      await loadTelegramMe();
-      const text = 'تنظیمات ربات تلگرام ذخیره شد.';
-      setTgFeedback({ ok: true, text });
-      toast.success(text);
-    } catch (err) {
-      const text = (err as Error).message || 'ذخیره ربات ناموفق بود.';
-      setTgFeedback({ ok: false, text });
-      toast.error(text);
-    } finally {
-      setTgBusy(false);
-    }
-  }
-
-  async function testTelegram() {
-    setTgBusy(true);
-    setTgFeedback(null);
-    try {
-      const res = await api<{ ok: boolean; messageFa?: string; botUsername?: string }>(
-        '/telegram/test',
-        { method: 'POST' },
-      );
-      const text = res.messageFa ?? 'اتصال برقرار است.';
-      setTgFeedback({ ok: true, text });
-      toast.success(text);
-    } catch (err) {
-      const text = adminApiErrorText(err) || 'تست ربات ناموفق بود.';
-      setTgFeedback({ ok: false, text });
-      toast.error(text);
-    } finally {
-      setTgBusy(false);
-    }
-  }
-
-  async function sendTelegramTestMessage() {
-    setTgBusy(true);
-    setTgFeedback(null);
-    try {
-      const res = await api<{ ok: boolean; messageFa?: string }>('/telegram/test-message', {
-        method: 'POST',
-      });
-      const text = res.messageFa ?? 'پیام آزمایشی فرستاده شد.';
-      setTgFeedback({ ok: true, text });
-      toast.success(text);
-    } catch (err) {
-      const text = adminApiErrorText(err) || 'ارسال پیام آزمایشی ناموفق بود.';
-      setTgFeedback({ ok: false, text });
-      toast.error(text);
-    } finally {
-      setTgBusy(false);
-    }
-  }
-
-  async function sendTelegramTestVoice() {
-    setTgBusy(true);
-    setTgFeedback(null);
-    try {
-      const res = await api<{ ok: boolean; messageFa?: string }>('/telegram/test-voice', {
-        method: 'POST',
-      });
-      const text = res.messageFa ?? 'فایل صوتی آزمایشی فرستاده شد.';
-      setTgFeedback({ ok: true, text });
-      toast.success(text);
-    } catch (err) {
-      const text = adminApiErrorText(err) || 'ساخت فایل صوتی ناموفق بود.';
-      setTgFeedback({ ok: false, text });
-      toast.error(text);
-    } finally {
-      setTgBusy(false);
-    }
-  }
-
-  async function sendTelegramToday() {
-    setTgBusy(true);
-    setTgFeedback(null);
-    try {
-      const res = await api<{ ok: boolean; messageFa?: string }>('/telegram/send-today', {
-        method: 'POST',
-        body: JSON.stringify({ force: true }),
-      });
-      const text = res.messageFa ?? 'ارسال انجام شد.';
-      setTgFeedback({ ok: Boolean(res.ok), text });
-      if (res.ok) toast.success(text);
-      else toast.error(text);
-      await loadTelegramConfig();
-      if (res.ok) {
-        // ارسال در پس‌زمینه ادامه دارد؛ نتیجهٔ «آخرین ارسال» چند لحظه بعد می‌رسد
-        for (const delay of [20_000, 60_000, 150_000]) {
-          setTimeout(() => {
-            void loadTelegramConfig();
-          }, delay);
-        }
-      }
-    } catch (err) {
-      const text = adminApiErrorText(err) || 'ارسال ناموفق بود.';
-      setTgFeedback({ ok: false, text });
-      toast.error(text);
-    } finally {
-      setTgBusy(false);
-    }
-  }
 
   async function saveAssistant(e: FormEvent) {
     e.preventDefault();
@@ -1339,7 +1086,7 @@ export default function SettingsPage() {
     <div className="space-y-6">
       <div>
         <h1 className="text-3xl font-bold">تنظیمات</h1>
-        <p className="mt-2 text-navy-800/70">پروفایل، کیف پول، ورود زیست‌سنجی، پرامپت‌ها، صندوق‌ها، اتصال مدل زبانی، ربات و دستیار تلگرام</p>
+        <p className="mt-2 text-navy-800/70">پروفایل، کیف پول، ورود زیست‌سنجی، پرامپت‌ها، صندوق‌ها، اتصال مدل زبانی و دستیار تلگرام</p>
       </div>
 
       <div className="flex flex-col gap-6 lg:flex-row lg:items-start">
@@ -1521,7 +1268,7 @@ export default function SettingsPage() {
             </p>
             {isAdmin && tgMe && !tgMe.configured && (
               <p className="text-sm text-navy-800/70">
-                ارسال خودکار بعد از ذخیرهٔ توکن و انتخاب روز و ساعت، در تب ربات تلگرام فعال می‌شود.
+                ارسال خودکار بعد از ذخیرهٔ توکن و انتخاب روز و ساعت، در بخش اطلاع‌رسانی تلگرام فعال می‌شود.
               </p>
             )}
             {tgMe && (
@@ -2246,276 +1993,6 @@ export default function SettingsPage() {
         </form>
       )}
 
-      {tab === 'telegram' && isAdmin && (
-        <form onSubmit={saveTelegram} className="card grid max-w-2xl gap-4">
-          <p className="text-sm leading-7 text-navy-800/75">
-            ربات عمومی سبدیار همین است:
-            <br />
-            <TelegramBotLink />
-            <br />
-            نام کاربری پیش‌فرض را عوض نکنید مگر ربات دیگری می‌سازید. توکن را از BotFather بگیرید و
-            ذخیره کنید. سرویس API باید روشن بماند تا در روز و ساعت انتخاب‌شده پیام برود. اخبار و فرصت‌ها هم به‌صورت فایل صوتی فارسی با صدای زن (حداکثر حدود دو دقیقه) فرستاده می‌شود. کاربر باید موبایل را در
-            پروفایل ثبت کند و ربات را استارت کند؛ تلگرام با شماره به‌تنهایی پیام نمی‌فرستد.
-          </p>
-          <div>
-            <label className="label">نام ربات (برای متن پیام)</label>
-            <input
-              className="input"
-              value={tgForm.botNameFa}
-              onChange={(e) => setTgForm({ ...tgForm, botNameFa: e.target.value })}
-              placeholder="سبدیار"
-            />
-          </div>
-          <div>
-            <label className="label">نام کاربری ربات (بدون @)</label>
-            <input
-              className="input"
-              value={tgForm.botUsername}
-              onChange={(e) => setTgForm({ ...tgForm, botUsername: e.target.value })}
-              placeholder={TELEGRAM_BOT_USERNAME}
-              dir="ltr"
-            />
-          </div>
-          <div>
-            <label className="label">توکن ربات</label>
-            <input
-              className="input"
-              type="password"
-              value={tgForm.botToken}
-              onChange={(e) => setTgForm({ ...tgForm, botToken: e.target.value })}
-              placeholder={tgMeta.hasToken ? 'برای جایگزینی توکن جدید وارد کنید' : 'از BotFather'}
-              dir="ltr"
-            />
-          </div>
-          <div>
-            <label className="label">نشانی پایه گفتار</label>
-            <input
-              className="input"
-              value={tgForm.ttsBaseUrl}
-              onChange={(e) => setTgForm({ ...tgForm, ttsBaseUrl: e.target.value })}
-              placeholder="https://api.gapgpt.app/v1"
-              dir="ltr"
-              spellCheck={false}
-            />
-          </div>
-          <div>
-            <label className="label">توکن گفتار</label>
-            <input
-              className="input"
-              type="password"
-              value={tgForm.ttsApiToken}
-              onChange={(e) => setTgForm({ ...tgForm, ttsApiToken: e.target.value })}
-              placeholder={tgMeta.hasTtsToken ? 'برای جایگزینی توکن جدید وارد کنید' : 'کلید سرویس گفتار'}
-              dir="ltr"
-              spellCheck={false}
-            />
-            <p className="mt-1 text-xs leading-6 text-navy-800/55">
-              اگر نشانی یا توکن خالی باشد، اتصال مدل زبانی همین مدیر استفاده می‌شود. این توکن، توکن ربات تلگرام نیست.
-            </p>
-          </div>
-          <div>
-            <label className="label">مدل متن به صدا</label>
-            <input
-              className="input"
-              value={tgForm.ttsModel}
-              onChange={(e) => setTgForm({ ...tgForm, ttsModel: e.target.value })}
-              placeholder="gpt-4o-mini-tts"
-              dir="ltr"
-              spellCheck={false}
-            />
-            <p className="mt-1 text-xs leading-6 text-navy-800/55">
-              مدل و صدا از همین‌جا خوانده می‌شوند. اگر نام مدل روی سرویس سازگار با OpenAI شناخته نشود، به gpt-4o-mini-tts عوض می‌شود.
-            </p>
-          </div>
-          <div>
-            <label className="label">صدای گفتار</label>
-            <input
-              className="input"
-              value={tgForm.ttsVoice}
-              onChange={(e) => setTgForm({ ...tgForm, ttsVoice: e.target.value })}
-              placeholder="alloy"
-              dir="ltr"
-              spellCheck={false}
-            />
-          </div>
-          <div>
-            <label className="label">ساعت ارسال (تهران)</label>
-            <input
-              className="input max-w-[10rem]"
-              type="time"
-              value={clockValue(tgForm.sendHour, tgForm.sendMinute)}
-              onChange={(e) => {
-                const [h, m] = e.target.value.split(':').map(Number);
-                if (!Number.isInteger(h) || !Number.isInteger(m)) return;
-                setTgForm({ ...tgForm, sendHour: h, sendMinute: m });
-              }}
-              dir="ltr"
-            />
-          </div>
-          <fieldset>
-            <legend className="label">روزهای ارسال</legend>
-            <div className="flex flex-wrap gap-2">
-              {SEND_WEEKDAYS.map((day) => {
-                const on = tgForm.sendWeekdays.includes(day.id);
-                return (
-                  <label
-                    key={day.id}
-                    className={clsx(
-                      'cursor-pointer rounded-full border px-3 py-1.5 text-sm',
-                      on
-                        ? 'border-navy-900 bg-navy-900 text-white'
-                        : 'border-navy-900/15 bg-white text-navy-800',
-                    )}
-                  >
-                    <input
-                      type="checkbox"
-                      className="sr-only"
-                      checked={on}
-                      onChange={() => {
-                        const sendWeekdays = on
-                          ? tgForm.sendWeekdays.filter((id) => id !== day.id)
-                          : [...tgForm.sendWeekdays, day.id];
-                        setTgForm({ ...tgForm, sendWeekdays });
-                      }}
-                    />
-                    {day.label}
-                  </label>
-                );
-              })}
-            </div>
-          </fieldset>
-          <label className="flex items-center gap-2 text-sm">
-            <input
-              type="checkbox"
-              checked={tgForm.enabled}
-              onChange={(e) => setTgForm({ ...tgForm, enabled: e.target.checked })}
-            />
-            ارسال خودکار در روزها و ساعت انتخاب‌شده فعال باشد
-          </label>
-          <div className="rounded-lg border border-navy-100 bg-white px-3 py-3 text-sm text-navy-800/80">
-            <div>توکن ربات ذخیره شده: {tgMeta.hasToken ? 'بله' : 'خیر'}</div>
-            <div className="mt-1">توکن گفتار ذخیره شده: {tgMeta.hasTtsToken ? 'بله' : 'خیر'}</div>
-            <div className="mt-1">
-              کاربران وصل‌شده:{' '}
-              {tgMeta.linkedCount.toLocaleString('fa-IR')}
-            </div>
-            {tgMeta.lastDigest && (
-              <div className="mt-1">
-                آخرین ارسال: {formatShamsiDate(tgMeta.lastDigest.dateKey)} — موفق{' '}
-                {tgMeta.lastDigest.sentCount.toLocaleString('fa-IR')}
-                {tgMeta.lastDigest.skippedReasonFa
-                  ? ` — ${tgMeta.lastDigest.skippedReasonFa}`
-                  : ''}
-              </div>
-            )}
-          </div>
-          <p className="text-xs leading-6 text-navy-800/60">
-            «تست پیام به موبایل من» فقط به تلگرام وصل‌شده با شماره موبایل همین حساب مدیر می‌رود. کاربران دیگر این پیام را نمی‌گیرند و ارسال روزانهٔ همه عوض نمی‌شود.
-          </p>
-          <div className="flex flex-wrap gap-2">
-            <button type="submit" className="btn-primary w-fit" disabled={tgBusy}>
-              {tgBusy ? 'در حال ذخیره...' : 'ذخیره ربات'}
-            </button>
-            <button
-              type="button"
-              className="btn-secondary w-fit"
-              disabled={tgBusy || !tgMeta.hasToken}
-              onClick={testTelegram}
-            >
-              تست اتصال
-            </button>
-            <button
-              type="button"
-              className="btn-secondary w-fit"
-              disabled={tgBusy || !tgMeta.hasToken}
-              onClick={sendTelegramTestMessage}
-            >
-              تست پیام به موبایل من
-            </button>
-            <button
-              type="button"
-              className="btn-secondary w-fit"
-              disabled={tgBusy || !tgMeta.hasToken}
-              onClick={sendTelegramTestVoice}
-            >
-              تست فایل صوتی به موبایل من
-            </button>
-            <button
-              type="button"
-              className="btn-secondary w-fit"
-              disabled={tgBusy || !tgMeta.hasToken}
-              onClick={sendTelegramToday}
-            >
-              ارسال خلاصهٔ امروز
-            </button>
-          </div>
-          {tgFeedback && (
-            <div
-              className={clsx(
-                'whitespace-pre-wrap break-words rounded-lg px-3 py-3 text-sm leading-7',
-                tgFeedback.ok ? 'bg-emerald-50 text-emerald-900' : 'bg-red-50 text-red-800',
-              )}
-              role={tgFeedback.ok ? 'status' : 'alert'}
-            >
-              {tgFeedback.ok ? '✓ ' : '! '}
-              {tgFeedback.text}
-            </div>
-          )}
-        </form>
-      )}
-
-      {tab === 'telegram' && isAdmin && (
-        <section className="card max-w-4xl overflow-x-auto p-0">
-          <div className="px-4 py-4">
-            <h2 className="text-lg font-semibold">کاربران وصل‌شده به ربات</h2>
-            <p className="mt-1 text-sm leading-7 text-navy-800/70">
-              قطع اتصال فقط دریافت پیام روزانه را برای همان نفر متوقف می‌کند. حساب سایت حذف نمی‌شود.
-            </p>
-          </div>
-          <table className="min-w-full text-sm">
-            <thead className="bg-navy-900 text-white">
-              <tr>
-                <th className="px-4 py-3 text-start font-medium">نام</th>
-                <th className="px-4 py-3 text-start font-medium">نام کاربری</th>
-                <th className="px-4 py-3 text-start font-medium">موبایل</th>
-                <th className="px-4 py-3 text-start font-medium">تلگرام</th>
-                <th className="px-4 py-3 text-start font-medium">تاریخ اتصال</th>
-                <th className="px-4 py-3 text-start font-medium">عملیات</th>
-              </tr>
-            </thead>
-            <tbody>
-              {tgLinks.map((link) => (
-                <tr key={link.userId} className="border-b border-navy-900/5 odd:bg-white even:bg-navy-50/40">
-                  <td className="px-4 py-3 font-medium">{link.name || '—'}</td>
-                  <td className="px-4 py-3">{link.email}</td>
-                  <td className="px-4 py-3" dir="ltr">
-                    {link.mobilePhone || '—'}
-                  </td>
-                  <td className="px-4 py-3" dir="ltr">
-                    {link.telegramUsername ? `@${link.telegramUsername}` : '—'}
-                  </td>
-                  <td className="px-4 py-3 text-navy-800/70">
-                    {link.telegramLinkedAt ? formatShamsiDate(link.telegramLinkedAt) : '—'}
-                  </td>
-                  <td className="px-4 py-3">
-                    <button
-                      type="button"
-                      className="text-xs text-red-700 hover:underline"
-                      disabled={tgBusy}
-                      onClick={() => unlinkTelegramUser(link)}
-                    >
-                      قطع اتصال
-                    </button>
-                  </td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
-          {tgLinks.length === 0 && (
-            <p className="p-6 text-sm text-navy-800/60">کسی به ربات وصل نیست.</p>
-          )}
-        </section>
-      )}
 
       {tab === 'telegramAssistant' && isAdmin && (
         <form onSubmit={saveAssistant} className="card grid max-w-2xl gap-4">

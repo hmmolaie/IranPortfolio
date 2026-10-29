@@ -42,6 +42,8 @@ export class UsersService {
         referralActive: true,
         discountPct: true,
         optionsMarketAccess: true,
+        aiPortfolioEnabled: true,
+        llmEnabled: true,
         profile: {
           select: { mobilePhone: true, telegramChatId: true, telegramUsername: true },
         },
@@ -59,6 +61,8 @@ export class UsersService {
       referralActive: row.referralActive,
       discountPct: row.discountPct,
       optionsMarketAccess: row.optionsMarketAccess,
+      aiPortfolioEnabled: row.aiPortfolioEnabled,
+      llmEnabled: row.llmEnabled,
       clientCount: row._count.clients,
       mobilePhone: row.profile?.mobilePhone ?? null,
       telegramLinked: Boolean(row.profile?.telegramChatId),
@@ -255,6 +259,8 @@ export class UsersService {
         createdAt: true,
         isActive: true,
         optionsMarketAccess: true,
+        aiPortfolioEnabled: true,
+        llmEnabled: true,
       },
     });
     return rows;
@@ -279,6 +285,56 @@ export class UsersService {
     if (!user?.isActive) return false;
     if (user.role === UserRole.ADMIN) return true;
     return user.optionsMarketAccess;
+  }
+
+  async aiAccess(userId: string): Promise<{ llm: boolean; portfolio: boolean }> {
+    const user = await this.prisma.user.findUnique({
+      where: { id: userId },
+      select: { role: true, isActive: true, llmEnabled: true, aiPortfolioEnabled: true },
+    });
+    if (!user?.isActive) return { llm: false, portfolio: false };
+    if (user.role === UserRole.ADMIN) return { llm: true, portfolio: true };
+    return {
+      llm: user.llmEnabled,
+      portfolio: user.llmEnabled && user.aiPortfolioEnabled,
+    };
+  }
+
+  async setAiAccessByAdmin(userId: string, input: { portfolio?: boolean; llm?: boolean }) {
+    if (input.portfolio == null && input.llm == null) {
+      throw new BadRequestException('مشخص کنید کدام بخش عوض شود');
+    }
+    const user = await this.prisma.user.findUnique({ where: { id: userId } });
+    if (!user || user.role === UserRole.ADMIN) throw new NotFoundException('کاربر یافت نشد');
+    const row = await this.prisma.user.update({
+      where: { id: userId },
+      data: {
+        ...(input.portfolio != null ? { aiPortfolioEnabled: input.portfolio } : {}),
+        ...(input.llm != null ? { llmEnabled: input.llm } : {}),
+      },
+      select: { aiPortfolioEnabled: true, llmEnabled: true },
+    });
+    return { ok: true, ...row };
+  }
+
+  async setAiAccessByReseller(resellerId: string, userId: string, input: { portfolio?: boolean; llm?: boolean }) {
+    if (input.portfolio == null && input.llm == null) {
+      throw new BadRequestException('مشخص کنید کدام بخش عوض شود');
+    }
+    await this.requireActiveReseller(resellerId);
+    const user = await this.prisma.user.findFirst({
+      where: { id: userId, resellerId, role: UserRole.USER },
+    });
+    if (!user) throw new NotFoundException('این کاربر برای شما نیست');
+    const row = await this.prisma.user.update({
+      where: { id: userId },
+      data: {
+        ...(input.portfolio != null ? { aiPortfolioEnabled: input.portfolio } : {}),
+        ...(input.llm != null ? { llmEnabled: input.llm } : {}),
+      },
+      select: { aiPortfolioEnabled: true, llmEnabled: true },
+    });
+    return { ok: true, ...row };
   }
 
   async setOptionsAccessByAdmin(userId: string, enabled: boolean) {

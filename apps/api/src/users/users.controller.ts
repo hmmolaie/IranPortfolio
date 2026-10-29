@@ -80,6 +80,16 @@ class OptionsAccessDto {
   enabled!: boolean;
 }
 
+class AiAccessDto {
+  @IsOptional()
+  @IsBoolean()
+  portfolio?: boolean;
+
+  @IsOptional()
+  @IsBoolean()
+  llm?: boolean;
+}
+
 class UpdateUserByAdminDto {
   @IsOptional()
   @IsString()
@@ -193,6 +203,16 @@ export class UsersController {
     return this.users.createForReseller(req.user.userId, dto);
   }
 
+  @Patch('mine/:id/ai-access')
+  setMineAiAccess(
+    @Req() req: { user: { userId: string; role?: string } },
+    @Param('id') id: string,
+    @Body() dto: AiAccessDto,
+  ) {
+    this.assertReseller(req.user.role);
+    return this.users.setAiAccessByReseller(req.user.userId, id, { portfolio: dto.portfolio, llm: dto.llm });
+  }
+
   @Patch('mine/:id/options-access')
   setMineOptionsAccess(
     @Req() req: { user: { userId: string; role?: string } },
@@ -244,6 +264,12 @@ export class UsersController {
   @UseGuards(AdminGuard)
   setPassword(@Param('id') id: string, @Body() dto: SetPasswordByAdminDto) {
     return this.users.setPasswordByAdmin(id, dto.password);
+  }
+
+  @Patch(':id/ai-access')
+  @UseGuards(AdminGuard)
+  setAiAccess(@Param('id') id: string, @Body() dto: AiAccessDto) {
+    return this.users.setAiAccessByAdmin(id, { portfolio: dto.portfolio, llm: dto.llm });
   }
 
   @Patch(':id/options-access')

@@ -349,14 +349,16 @@ export class TelegramService implements OnModuleInit {
     const rows = await this.prisma.userProfile.findMany({
       where: { telegramChatId: { not: null } },
       orderBy: { telegramLinkedAt: 'desc' },
-      select: {
-        userId: true,
-        mobilePhone: true,
-        telegramUsername: true,
-        telegramLinkedAt: true,
-        user: { select: { email: true, name: true, isActive: true } },
-      },
-    });
+        select: {
+          userId: true,
+          mobilePhone: true,
+          telegramUsername: true,
+          telegramLinkedAt: true,
+          telegramPortfolioEnabled: true,
+          telegramNewsEnabled: true,
+          user: { select: { email: true, name: true, isActive: true } },
+        },
+      });
     return rows.map((row) => ({
       userId: row.userId,
       name: row.user.name,
@@ -365,7 +367,29 @@ export class TelegramService implements OnModuleInit {
       mobilePhone: row.mobilePhone,
       telegramUsername: row.telegramUsername,
       telegramLinkedAt: row.telegramLinkedAt,
+      telegramPortfolioEnabled: row.telegramPortfolioEnabled,
+      telegramNewsEnabled: row.telegramNewsEnabled,
     }));
+  }
+
+  async setLinkedNotify(userId: string, input: { portfolio?: boolean; news?: boolean }) {
+    if (input.portfolio == null && input.news == null) {
+      throw new BadRequestException('مشخص کنید کدام بخش اطلاع‌رسانی عوض شود');
+    }
+    const profile = await this.prisma.userProfile.findUnique({
+      where: { userId },
+      select: { telegramChatId: true },
+    });
+    if (!profile?.telegramChatId) throw new NotFoundException('این کاربر به ربات وصل نیست');
+    const row = await this.prisma.userProfile.update({
+      where: { userId },
+      data: {
+        ...(input.portfolio != null ? { telegramPortfolioEnabled: input.portfolio } : {}),
+        ...(input.news != null ? { telegramNewsEnabled: input.news } : {}),
+      },
+      select: { telegramPortfolioEnabled: true, telegramNewsEnabled: true },
+    });
+    return { ok: true, ...row };
   }
 
   /** اتصال تلگرام یک کاربر را قطع می‌کند؛ حساب سایت دست نمی‌خورد. */
@@ -467,46 +491,59 @@ export class TelegramService implements OnModuleInit {
         return { ok: false, messageFa: 'ربات تلگرام پیکربندی نشده یا غیرفعال است.' };
       }
 
-      let batch =
-        opts.batch ??
-        (await this.prisma.economicNewsBatch.findFirst({
-          where: { newsDateKey: dateKey },
-          orderBy: { createdAt: 'desc' },
-          include: { items: { orderBy: { sortOrder: 'asc' } } },
-        }));
-      if (!batch?.items?.length) {
-        const adminId = await this.users.getAdminUserId();
-        if (adminId) {
-          try {
-            batch = await this.news.refresh(adminId, { persistEmpty: false });
-          } catch (e) {
-            this.logger.warn(`رفرش اخبار قبل از تلگرام ناموفق: ${(e as Error).message.slice(0, 160)}`);
-          }
-        }
-      }
-
       const recipients = await this.prisma.userProfile.findMany({
         where: {
           telegramChatId: { not: null },
           mobilePhone: { not: null },
           user: { isActive: true },
         },
-        select: { telegramChatId: true, userId: true },
+        select: {
+          telegramChatId: true,
+          userId: true,
+          telegramPortfolioEnabled: true,
+          telegramNewsEnabled: true,
+        },
       });
       if (!recipients.length) {
         await this.upsertLog(dateKey, 0, 0, 'هیچ کاربری ربات را با موبایل پروفایل وصل نکرده');
         return { ok: false, messageFa: 'کاربر متصل به ربات یافت نشد.' };
       }
+      const audience = recipients.filter((r) => r.telegramPortfolioEnabled || r.telegramNewsEnabled);
+      if (!audience.length) {
+        await this.upsertLog(dateKey, 0, 0, 'برای کاربران وصل‌شده، به‌روزرسانی سبد و اخبار هر دو خاموش است');
+        return { ok: false, messageFa: 'برای هیچ کاربر وصل‌شده‌ای ارسال سبد یا اخبار فعال نیست.' };
+      }
 
-      const regimeBrief = await this.intelligence.regimeBriefFa().catch(() => '');
-      const optionLines = await this.optionOpportunityLines();
-      const newsText = [await this.formatNewsSection(cfg.botNameFa, batch, optionLines), regimeBrief]
-        .filter(Boolean)
-        .join('\n\n');
-      const newsVoice = await this.sharedNewsVoice(dateKey, cfg.botNameFa, batch, optionLines);
+      let newsText = '';
+      let newsVoice: Buffer | null = null;
+      if (audience.some((r) => r.telegramNewsEnabled)) {
+        let batch =
+          opts.batch ??
+          (await this.prisma.economicNewsBatch.findFirst({
+            where: { newsDateKey: dateKey },
+            orderBy: { createdAt: 'desc' },
+            include: { items: { orderBy: { sortOrder: 'asc' } } },
+          }));
+        if (!batch?.items?.length) {
+          const adminId = await this.users.getAdminUserId();
+          if (adminId) {
+            try {
+              batch = await this.news.refresh(adminId, { persistEmpty: false });
+            } catch (e) {
+              this.logger.warn(`رفرش اخبار قبل از تلگرام ناموفق: ${(e as Error).message.slice(0, 160)}`);
+            }
+          }
+        }
+        const regimeBrief = await this.intelligence.regimeBriefFa().catch(() => '');
+        const optionLines = await this.optionOpportunityLines();
+        newsText = [await this.formatNewsSection(cfg.botNameFa, batch, optionLines), regimeBrief]
+          .filter(Boolean)
+          .join('\n\n');
+        newsVoice = await this.sharedNewsVoice(dateKey, cfg.botNameFa, batch, optionLines);
+      }
       let sentCount = 0;
       let failedCount = 0;
-      for (const r of recipients) {
+      for (const r of audience) {
         if (!r.telegramChatId) continue;
         const bill = await this.wallet.tryCharge(r.userId, 'telegram');
         if (!bill.ok) {
@@ -524,7 +561,10 @@ export class TelegramService implements OnModuleInit {
           continue;
         }
         try {
-          await this.sendPersonalized(token, r.telegramChatId, r.userId, newsText, newsVoice);
+          await this.sendPersonalized(token, r.telegramChatId, r.userId, newsText, newsVoice, {
+            portfolio: r.telegramPortfolioEnabled,
+            news: r.telegramNewsEnabled,
+          });
           sentCount += 1;
         } catch (e) {
           await this.wallet.refund(r.userId, bill.charged, 'telegram');
@@ -660,7 +700,9 @@ export class TelegramService implements OnModuleInit {
     userId: string,
     newsText: string,
     newsVoice: Buffer | null,
+    parts: { portfolio: boolean; news: boolean },
   ) {
+    if (parts.portfolio) {
     const briefing = await this.portfolios.telegramPortfolioBriefing(userId);
     if (briefing.hasPortfolio && briefing.items.length) {
       const caption = this.formatChartCaption(briefing);
@@ -713,8 +755,9 @@ export class TelegramService implements OnModuleInit {
     } catch (e) {
       this.logger.warn(`خلاصه بازچینش ${userId}: ${(e as Error).message.slice(0, 140)}`);
     }
+    }
 
-    if (newsText) {
+    if (parts.news && newsText) {
       await this.tg(token, 'sendMessage', {
         chat_id: chatId,
         text: newsText,
@@ -722,7 +765,7 @@ export class TelegramService implements OnModuleInit {
         disable_web_page_preview: true,
       });
     }
-    if (newsVoice?.length) {
+    if (parts.news && newsVoice?.length) {
       try {
         await this.sendAudio(token, chatId, newsVoice, {
           filename: 'akhbar-sabadyar.mp3',
