@@ -5,6 +5,7 @@ import { MouseEvent, useEffect, useMemo, useRef, useState } from 'react';
 import { useParams, useRouter } from 'next/navigation';
 import { ASSET_TYPE_LABELS_FA, AssetType } from '@sabadyar/shared';
 import { api, formatNum, getToken } from '@/lib/api';
+import { OptionsTableRow, OptionsValueTable } from '@/components/OptionsValueTable';
 import clsx from 'clsx';
 import { formatShamsiDate } from '@/lib/shamsi-date';
 
@@ -27,25 +28,13 @@ type Instrument = {
   last: Bar | null;
 };
 
-type UnderlyingOption = {
-  id: string;
-  symbol: string;
-  sideFa: string;
-  strike: number;
-  premium: number | null;
-  daysLeft: number | null;
-  premiumPctOfSpot: number | null;
-  intrinsic: number | null;
-  worthwhile: boolean;
-  verdictFa: string;
-  reasonFa: string;
-};
-
 type UnderlyingOptions = {
   symbol: string;
   spot: number | null;
+  hasOptions: boolean;
   disclaimerFa: string;
-  options: UnderlyingOption[];
+  inflationPct: number | null;
+  items: OptionsTableRow[];
 };
 
 type QuoteKind = 'rial' | 'point' | 'usd';
@@ -383,8 +372,8 @@ export default function MarketInstrumentPage() {
       <div>
         <div className="flex flex-wrap items-start gap-x-3 gap-y-2">
           <div className="min-w-0 space-y-1.5">
-            <h1 className="text-2xl font-bold text-navy-900">{inst.symbol}</h1>
-            <p className="text-base leading-7 text-navy-800/60">{inst.nameFa}</p>
+            <h1 className="text-2xl font-bold text-navy-900">{kind === 'usd' ? inst.nameFa : inst.symbol}</h1>
+            {kind !== 'usd' && <p className="text-base leading-7 text-navy-800/60">{inst.nameFa}</p>}
           </div>
           <span className="mt-1 shrink-0 rounded-md bg-navy-900/5 px-2 py-0.5 text-xs text-navy-800/60">
             {ASSET_TYPE_LABELS_FA[inst.assetType as AssetType] ?? inst.assetType}
@@ -462,62 +451,21 @@ export default function MarketInstrumentPage() {
         </div>
       </div>
 
-      {optionPack && optionPack.disclaimerFa && (
-        <section className="space-y-3">
-          <h2 className="text-base font-semibold text-navy-900">اختیار معامله این سهم</h2>
-          <p className="text-sm text-navy-800/60">{optionPack.disclaimerFa}</p>
-          {optionPack.options.length === 0 ? (
-            <p className="text-sm text-navy-800/55">اختیار معامله‌ای برای این سهم در دادهٔ ذخیره‌شده نیست.</p>
-          ) : (
-            <div className="overflow-x-auto">
-              <table className="min-w-full text-sm">
-                <thead>
-                  <tr className="border-b border-navy-900/10 text-navy-800/55">
-                    <th className="px-2 py-2 text-start font-medium">نماد</th>
-                    <th className="px-2 py-2 text-start font-medium">نوع</th>
-                    <th className="px-2 py-2 text-start font-medium">اعمال</th>
-                    <th className="px-2 py-2 text-start font-medium">قیمت اختیار</th>
-                    <th className="px-2 py-2 text-start font-medium">نسبت به سهم</th>
-                    <th className="px-2 py-2 text-start font-medium">ارزش ذاتی</th>
-                    <th className="px-2 py-2 text-start font-medium">روز مانده</th>
-                    <th className="px-2 py-2 text-start font-medium">نتیجه</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {optionPack.options.map((row) => (
-                    <tr
-                      key={row.id}
-                      className="cursor-pointer border-b border-navy-900/5 hover:bg-gold-400/10"
-                      onClick={() => router.push(`/market/${row.id}`)}
-                    >
-                      <td className="px-2 py-2 font-medium text-navy-900">{row.symbol}</td>
-                      <td className="px-2 py-2">{row.sideFa}</td>
-                      <td className="px-2 py-2">{formatNum(row.strike)}</td>
-                      <td className="px-2 py-2">{formatNum(row.premium)}</td>
-                      <td className="px-2 py-2">
-                        {row.premiumPctOfSpot == null ? '—' : `${row.premiumPctOfSpot.toLocaleString('fa-IR')}٪`}
-                      </td>
-                      <td className="px-2 py-2">{formatNum(row.intrinsic)}</td>
-                      <td className="px-2 py-2">
-                        {row.daysLeft == null ? '—' : Math.round(row.daysLeft).toLocaleString('fa-IR')}
-                      </td>
-                      <td className="px-2 py-2">
-                        <div
-                          className={clsx(
-                            'font-medium',
-                            row.worthwhile ? 'text-emerald-700' : row.verdictFa === 'گران' ? 'text-red-700' : 'text-navy-800/70',
-                          )}
-                        >
-                          {row.verdictFa}
-                        </div>
-                        <div className="text-xs leading-5 text-navy-800/55">{row.reasonFa}</div>
-                      </td>
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
-            </div>
+      {optionPack?.hasOptions && (
+        <section className="space-y-4">
+          <div>
+            <h2 className="text-base font-semibold text-navy-900">اختیار معامله این سهم</h2>
+            <p className="mt-2 text-sm text-navy-800/70">
+              فقط اختیارهای فعال که سررسیدشان نگذشته و سودشان نسبت به قیمت دارایی پایه قابل توجه است. سود واقعی، همین سود را پس از تورمِ روزهای مانده تا سررسید نشان می‌دهد.
+              {optionPack.inflationPct != null
+                ? ` نرخ تورم سالانه: ${optionPack.inflationPct.toLocaleString('fa-IR')}٪.`
+                : ' نرخ تورم سالانه در اقتصاد ایران ثبت نشده است.'}
+            </p>
+          </div>
+          {optionPack.disclaimerFa && (
+            <p className="text-sm text-navy-800/60">{optionPack.disclaimerFa}</p>
           )}
+          <OptionsValueTable items={optionPack.items} />
         </section>
       )}
 

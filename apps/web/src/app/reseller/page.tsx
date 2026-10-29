@@ -12,6 +12,7 @@ type MineUser = {
   name: string | null;
   createdAt: string;
   isActive: boolean;
+  optionsMarketAccess: boolean;
 };
 
 type ReportRow = {
@@ -63,6 +64,22 @@ export default function ResellerPage() {
     load().catch((err) => toast.error((err as Error).message));
     loadReport().catch((err) => toast.error((err as Error).message));
   }, [router]);
+
+  async function toggleOptions(user: MineUser) {
+    setBusy(true);
+    try {
+      await api(`/users/mine/${user.id}/options-access`, {
+        method: 'PATCH',
+        body: JSON.stringify({ enabled: !user.optionsMarketAccess }),
+      });
+      await load();
+      toast.success(user.optionsMarketAccess ? 'دسترسی بازار اختیار بسته شد.' : 'دسترسی بازار اختیار باز شد.');
+    } catch (err) {
+      toast.error((err as Error).message);
+    } finally {
+      setBusy(false);
+    }
+  }
 
   async function createUser(e: FormEvent) {
     e.preventDefault();
@@ -178,6 +195,7 @@ export default function ResellerPage() {
               <th className="px-4 py-3 text-start">نام کاربری</th>
               <th className="px-4 py-3 text-start">تاریخ</th>
               <th className="px-4 py-3 text-start">وضعیت</th>
+              <th className="px-4 py-3 text-start">بازار اختیار</th>
               <th className="px-4 py-3 text-start">رمز</th>
             </tr>
           </thead>
@@ -188,6 +206,16 @@ export default function ResellerPage() {
                 <td className="px-4 py-3">{user.email}</td>
                 <td className="px-4 py-3">{formatShamsiDate(user.createdAt)}</td>
                 <td className="px-4 py-3">{user.isActive ? 'فعال' : 'غیرفعال'}</td>
+                <td className="px-4 py-3">
+                  <button
+                    type="button"
+                    className="text-xs text-navy-800 underline"
+                    disabled={busy}
+                    onClick={() => void toggleOptions(user)}
+                  >
+                    {user.optionsMarketAccess ? 'بستن' : 'دادن دسترسی'}
+                  </button>
+                </td>
                 <td className="px-4 py-3">
                   <button
                     type="button"
@@ -204,7 +232,7 @@ export default function ResellerPage() {
             ))}
             {users.length === 0 && (
               <tr>
-                <td className="px-4 py-4 text-navy-800/50" colSpan={5}>
+                <td className="px-4 py-4 text-navy-800/50" colSpan={6}>
                   هنوز کاربری نساخته‌اید.
                 </td>
               </tr>

@@ -8,10 +8,10 @@ import clsx from 'clsx';
 import { ToastProvider, useToast } from '@/components/Toast';
 import { InstallAppPrompt } from '@/components/InstallAppPrompt';
 
-const allLinks: Array<{ href: string; label: string; adminOnly?: boolean; resellerOnly?: boolean }> = [
+const allLinks: Array<{ href: string; label: string; adminOnly?: boolean; resellerOnly?: boolean; optionsMarket?: boolean }> = [
   { href: '/dashboard', label: 'داشبورد' },
   { href: '/market', label: 'بازار سهام تهران' },
-  { href: '/options', label: 'بازار اختیار معامله' },
+  { href: '/options', label: 'بازار اختیار معامله', optionsMarket: true },
   { href: '/portfolios', label: 'سبدها' },
   { href: '/funds', label: 'صندوق‌ها', adminOnly: true },
   { href: '/lessons', label: 'درس‌آموخته‌ها', adminOnly: true },
@@ -33,6 +33,7 @@ export function AppShell({ children }: { children: React.ReactNode }) {
   const [ready, setReady] = useState(false);
   const [authed, setAuthed] = useState(false);
   const [role, setRole] = useState<UserRole | null>(null);
+  const [optionsAccess, setOptionsAccess] = useState(false);
   const [userLabel, setUserLabel] = useState('');
   const isAuthPage = pathname === '/login' || pathname === '/login2' || pathname === '/register' || pathname === '/';
 
@@ -49,24 +50,27 @@ export function AppShell({ children }: { children: React.ReactNode }) {
 
     if (!hasToken) {
       setRole(null);
+      setOptionsAccess(false);
       setUserLabel('');
       return;
     }
 
     const cached = getUserRole();
     if (cached) setRole(cached);
-    api<{ role?: UserRole; email?: string; name?: string | null }>('/users/me')
+    api<{ role?: UserRole; email?: string; name?: string | null; optionsMarketAccess?: boolean }>('/users/me')
       .then((u) => {
         if (u.role) {
           setUserRole(u.role);
           setRole(u.role);
         }
+        setOptionsAccess(u.role === 'ADMIN' || Boolean(u.optionsMarketAccess));
         setUserLabel(u.name?.trim() || u.email || '');
       })
       .catch(() => {
         clearSession();
         setAuthed(false);
         setRole(null);
+        setOptionsAccess(false);
         setUserLabel('');
         if (!isAuthPage) router.replace('/');
       });
@@ -79,6 +83,7 @@ export function AppShell({ children }: { children: React.ReactNode }) {
       clearSession();
       setAuthed(false);
       setRole(null);
+      setOptionsAccess(false);
       setUserLabel('');
       router.replace('/');
     }
@@ -133,6 +138,7 @@ export function AppShell({ children }: { children: React.ReactNode }) {
   const links = allLinks.filter((l) => {
     if (l.adminOnly) return role === 'ADMIN';
     if (l.resellerOnly) return role === 'RESELLER';
+    if (l.optionsMarket) return role === 'ADMIN' || optionsAccess;
     return true;
   });
 
@@ -140,6 +146,7 @@ export function AppShell({ children }: { children: React.ReactNode }) {
     clearSession();
     setAuthed(false);
     setRole(null);
+    setOptionsAccess(false);
     setUserLabel('');
     window.location.assign('/');
   }

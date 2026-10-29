@@ -67,6 +67,8 @@ model User {
   discountPct    Int     @default(0)
   /// کاربری که این حساب را ساخته است
   resellerId     String?
+  /// بازار اختیار معامله؛ پیش‌فرض بسته است و ادمین یا معرف آن را باز می‌کند
+  optionsMarketAccess Boolean @default(false)
   /// موجودی کیف پول به ریال
   walletBalanceRial Int @default(0)
   createdAt    DateTime @default(now())

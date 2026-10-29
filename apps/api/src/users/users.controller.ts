@@ -75,6 +75,11 @@ class CreateUserDto {
   name?: string;
 }
 
+class OptionsAccessDto {
+  @IsBoolean()
+  enabled!: boolean;
+}
+
 class UpdateUserByAdminDto {
   @IsOptional()
   @IsString()
@@ -188,6 +193,16 @@ export class UsersController {
     return this.users.createForReseller(req.user.userId, dto);
   }
 
+  @Patch('mine/:id/options-access')
+  setMineOptionsAccess(
+    @Req() req: { user: { userId: string; role?: string } },
+    @Param('id') id: string,
+    @Body() dto: OptionsAccessDto,
+  ) {
+    this.assertReseller(req.user.role);
+    return this.users.setOptionsAccessByReseller(req.user.userId, id, dto.enabled);
+  }
+
   @Patch('mine/:id/password')
   setMinePassword(
     @Req() req: { user: { userId: string; role?: string } },
@@ -229,6 +244,12 @@ export class UsersController {
   @UseGuards(AdminGuard)
   setPassword(@Param('id') id: string, @Body() dto: SetPasswordByAdminDto) {
     return this.users.setPasswordByAdmin(id, dto.password);
+  }
+
+  @Patch(':id/options-access')
+  @UseGuards(AdminGuard)
+  setOptionsAccess(@Param('id') id: string, @Body() dto: OptionsAccessDto) {
+    return this.users.setOptionsAccessByAdmin(id, dto.enabled);
   }
 
   @Patch(':id/status')

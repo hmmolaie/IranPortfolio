@@ -5,6 +5,7 @@ import { PrismaService } from '../prisma/prisma.service';
 import { tehranDateKey } from '../news/tehran-date';
 import { extractBitpinSpot } from './bitpin-spot';
 import { readMarketSourceApi } from '../market-source/market-source-api';
+import { MarketService } from '../market/market.service';
 
 type ParsedSpot = {
   usdIrr: number | null;
@@ -113,7 +114,10 @@ function extractSpotPrices(payload: unknown): ParsedSpot {
 export class PricesService {
   private readonly logger = new Logger(PricesService.name);
 
-  constructor(private readonly prisma: PrismaService) {}
+  constructor(
+    private readonly prisma: PrismaService,
+    private readonly market: MarketService,
+  ) {}
 
   getConfig() {
     return this.prisma.spotPriceApiConfig.findUnique({ where: { id: 'default' } });
@@ -225,6 +229,7 @@ export class PricesService {
 
     if (row.usdIrr != null && row.usdIrr > 0) {
       await this.syncMacroUsd(dateKey, row.usdIrr);
+      await this.rememberUsdIndices();
     }
 
     return row;
@@ -387,12 +392,22 @@ export class PricesService {
 
     if (parsed.usdIrr != null) {
       await this.syncMacroUsd(dateKey, parsed.usdIrr);
+      await this.rememberUsdIndices();
     }
 
     this.logger.log(
       `قیمت ${dateKey}: دلار=${parsed.usdIrr ?? '—'} طلاگرم۱۸=${parsed.goldGramRial ?? '—'}`,
     );
     return { ...row, sourceNoteFa: this.sourceNoteFa(row.sourceRaw) };
+  }
+
+  private async rememberUsdIndices() {
+    try {
+      const saved = await this.market.storeUsdIndicesFromDollar();
+      if (saved > 0) this.logger.log(`شاخص دلاری همان روز: ${saved} ردیف ذخیره شد`);
+    } catch (e) {
+      this.logger.warn(`ذخیره شاخص دلاری: ${(e as Error).message}`);
+    }
   }
 
   private async syncMacroUsd(dateKey: string, usdIrr: number) {

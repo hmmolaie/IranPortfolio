@@ -23,7 +23,7 @@ import {
   optionMetaExpired,
   optionTradePrice,
   parseOptionMeta,
-  quotesForUnderlying,
+  valuableOptionsForUnderlying,
   type BoardSource,
   type OptionBoard,
 } from './option-board';
@@ -74,13 +74,13 @@ const MARKET_INDICES = [
   },
 ];
 
-/** معادل دلاری: شاخص تقسیم بر دلار آزاد به تومان. insCode ساختگی است تا با کد TSETMC قاطی نشود. */
+/** عدد محاسبه‌شده، نه نماد بورس. insCode ساختگی است تا با کد TSETMC قاطی نشود. */
 const USD_MARKET_INDICES = [
   {
     key: 'totalUsd' as const,
     baseKey: 'total' as const,
     insCode: 'USD-TEDPIX',
-    symbol: 'TEDPIXUSD',
+    symbol: 'CALC-TOTAL-USD',
     nameFa: 'شاخص کل دلاری',
     unit: 'usd' as const,
   },
@@ -88,7 +88,7 @@ const USD_MARKET_INDICES = [
     key: 'equalWeightUsd' as const,
     baseKey: 'equalWeight' as const,
     insCode: 'USD-TESWEQ',
-    symbol: 'TESWEQUSD',
+    symbol: 'CALC-EQUAL-USD',
     nameFa: 'شاخص هم‌وزن دلاری',
     unit: 'usd' as const,
   },
@@ -148,27 +148,11 @@ function tradeDateKey(d: Date): string {
   return d.toISOString().slice(0, 10);
 }
 
-/** شاخص دلاری = امتیاز شاخص ÷ نرخ فعلی دلار آزاد به تومان. usdIrr به ریال است. */
+/** شاخص همان روز ÷ قیمت دلار همان روز. usdIrr به ریال است و قیمت رایج دلار به تومان است. */
 function indexPointsToUsd(points: number, usdIrr: number): number | null {
   const toman = usdIrr / 10;
   if (!(points > 0) || !(toman > 0)) return null;
   return Math.round((points / toman) * 100) / 100;
-}
-
-function usdIrrOnOrBefore(
-  rates: Array<{ dateKey: string; usdIrr: number }>,
-  dateKey: string,
-): number | null {
-  let found: number | null = null;
-  for (const row of rates) {
-    if (row.dateKey > dateKey) break;
-    found = row.usdIrr;
-  }
-  return found;
-}
-
-function currentUsdIrr(rates: Array<{ dateKey: string; usdIrr: number }>): number | null {
-  return rates.length ? rates[rates.length - 1].usdIrr : null;
 }
 
 /** پنجشنبه و جمعه بورس تهران تعطیل است */
@@ -454,48 +438,77 @@ export class MarketService implements OnModuleInit {
       inst.assetType === AssetType.GOLD_ETF ||
       inst.assetType === AssetType.FUND;
     if (!eligible) {
-      return { symbol: inst.symbol, spot, disclaimerFa: '', options: [] };
-    }
-    const read = async () => {
-      const options = await this.prisma.instrument.findMany({
-        where: { isActive: true, assetType: AssetType.OPTION },
-        select: {
-          id: true,
-          symbol: true,
-          nameFa: true,
-          assetType: true,
-          meta: true,
-          priceBars: {
-            orderBy: { tradeDate: 'desc' },
-            take: 1,
-            select: { lastPrice: true, closePrice: true, volume: true, raw: true },
-          },
-        },
-      });
-      return quotesForUnderlying(
-        inst.symbol,
+      return {
+        symbol: inst.symbol,
         spot,
-        options.map((row) => ({
-          id: row.id,
-          symbol: row.symbol,
-          nameFa: row.nameFa,
-          assetType: row.assetType,
-          lastPrice: row.priceBars[0]?.lastPrice ?? null,
-          closePrice: row.priceBars[0]?.closePrice ?? null,
-          volume: row.priceBars[0]?.volume ?? null,
-          raw: row.priceBars[0]?.raw ?? null,
-          meta: row.meta,
-        })),
-        inst.insCode,
-      );
-    };
-    const quotes = await read();
+        hasOptions: false,
+        disclaimerFa: '',
+        inflationPct: null,
+        items: [],
+      };
+    }
+    const options = await this.prisma.instrument.findMany({
+      where: { isActive: true, assetType: AssetType.OPTION },
+      select: {
+        id: true,
+        symbol: true,
+        nameFa: true,
+        assetType: true,
+        meta: true,
+        priceBars: {
+          orderBy: { tradeDate: 'desc' },
+          take: 1,
+          select: { lastPrice: true, closePrice: true, volume: true, raw: true },
+        },
+      },
+    });
+    const inflationPct = await this.latestInflationPct();
+    const bar = inst.priceBars[0];
+    const valued = valuableOptionsForUnderlying(
+      {
+        id: inst.id,
+        symbol: inst.symbol,
+        nameFa: inst.nameFa,
+        assetType: inst.assetType,
+        lastPrice: bar?.lastPrice ?? null,
+        closePrice: bar?.closePrice ?? null,
+        volume: bar?.volume ?? null,
+        raw: bar?.raw ?? null,
+        meta: inst.meta,
+      },
+      inst.insCode,
+      options.map((row) => ({
+        id: row.id,
+        symbol: row.symbol,
+        nameFa: row.nameFa,
+        assetType: row.assetType,
+        lastPrice: row.priceBars[0]?.lastPrice ?? null,
+        closePrice: row.priceBars[0]?.closePrice ?? null,
+        volume: row.priceBars[0]?.volume ?? null,
+        raw: row.priceBars[0]?.raw ?? null,
+        meta: row.meta,
+      })),
+      inflationPct,
+    );
     return {
       symbol: inst.symbol,
       spot,
-      disclaimerFa: 'مقایسه از قیمت ذخیره‌شدهٔ سهم و اختیار است و توصیهٔ قطعی معامله نیست.',
-      options: quotes,
+      hasOptions: valued.hasOptions,
+      disclaimerFa: 'این فهرست از قیمت ذخیره‌شدهٔ اختیار و دارایی پایه حساب شده و توصیهٔ قطعی معامله نیست.',
+      inflationPct,
+      items: valued.items,
     };
+  }
+
+  private async latestInflationPct(): Promise<number | null> {
+    const inflation = await this.prisma.macroSnapshot.findFirst({
+      where: { inflationPct: { not: null } },
+      orderBy: { asOfDate: 'desc' },
+      select: { inflationPct: true },
+    });
+    return inflation?.inflationPct != null && Number.isFinite(inflation.inflationPct)
+      ? inflation.inflationPct
+      : null;
   }
 
   async getValuableOptions() {
@@ -517,13 +530,7 @@ export class MarketService implements OnModuleInit {
         },
       },
     });
-    const inflation = await this.prisma.macroSnapshot.findFirst({
-      where: { inflationPct: { not: null } },
-      orderBy: { asOfDate: 'desc' },
-      select: { inflationPct: true },
-    });
-    const inflationPct =
-      inflation?.inflationPct != null && Number.isFinite(inflation.inflationPct) ? inflation.inflationPct : null;
+    const inflationPct = await this.latestInflationPct();
     return {
       disclaimerFa: 'این فهرست از قیمت ذخیره‌شدهٔ اختیار و دارایی پایه حساب شده و توصیهٔ قطعی معامله نیست.',
       inflationPct,
@@ -1318,7 +1325,7 @@ export class MarketService implements OnModuleInit {
       this.logger.warn(`شاخص لحظه‌ای: ${(e as Error).message}`);
     }
     try {
-      upserted += await this.syncUsdIndexBars('all');
+      upserted += await this.syncUsdIndexBars();
     } catch (e) {
       this.logger.warn(`شاخص دلاری: ${(e as Error).message}`);
     }
@@ -1399,22 +1406,29 @@ export class MarketService implements OnModuleInit {
         upserted += 1;
       }
     try {
-      upserted += await this.syncUsdIndexBars('latest');
+      upserted += await this.syncUsdIndexBars();
     } catch (e) {
       this.logger.warn(`شاخص دلاری لحظه‌ای: ${(e as Error).message}`);
     }
     return upserted;
   }
 
-  /** شاخص کل و هم‌وزن را بر دلار آزاد تقسیم و مثل خود شاخص ذخیره می‌کند. آخرین روز همیشه بر نرخ فعلی دلار است. */
-  private async syncUsdIndexBars(mode: 'all' | 'latest'): Promise<number> {
+  /** بعد از ذخیرهٔ دلار: شاخص هر روز ÷ دلار همان روز، و نوشتن در جدول قیمت. */
+  async storeUsdIndicesFromDollar(): Promise<number> {
+    return this.syncUsdIndexBars();
+  }
+
+  /** فقط روزهایی که هم شاخص و هم دلار همان تاریخ را دارند. نرخ روز دیگر جایگزین نمی‌شود. */
+  private async syncUsdIndexBars(): Promise<number> {
     const spots = await this.prisma.spotPriceDaily.findMany({
       where: { usdIrr: { gt: 0 } },
-      orderBy: { dateKey: 'asc' },
       select: { dateKey: true, usdIrr: true },
     });
-    const rates = spots.filter((s): s is { dateKey: string; usdIrr: number } => s.usdIrr != null && s.usdIrr > 0);
-    if (!rates.length) return 0;
+    const rateByDay = new Map<string, number>();
+    for (const row of spots) {
+      if (row.usdIrr != null && row.usdIrr > 0) rateByDay.set(row.dateKey, row.usdIrr);
+    }
+    if (!rateByDay.size) return 0;
 
     let upserted = 0;
     for (const def of USD_MARKET_INDICES) {
@@ -1428,8 +1442,7 @@ export class MarketService implements OnModuleInit {
       if (!baseInst) continue;
       const bars = await this.prisma.priceBar.findMany({
         where: { instrumentId: baseInst.id },
-        orderBy: { tradeDate: mode === 'latest' ? 'desc' : 'asc' },
-        take: mode === 'latest' ? 1 : undefined,
+        orderBy: { tradeDate: 'asc' },
       });
       if (!bars.length) continue;
 
@@ -1440,27 +1453,25 @@ export class MarketService implements OnModuleInit {
           symbol: def.symbol,
           nameFa: def.nameFa,
           assetType: AssetType.INDEX,
-          meta: { unit: 'usd', baseSymbol: base.symbol },
+          meta: { unit: 'usd', baseSymbol: base.symbol, derived: true },
         },
         update: {
           symbol: def.symbol,
           nameFa: def.nameFa,
           assetType: AssetType.INDEX,
           isActive: true,
-          meta: { unit: 'usd', baseSymbol: base.symbol },
+          meta: { unit: 'usd', baseSymbol: base.symbol, derived: true },
         },
       });
 
-      const newestMs = bars[bars.length - 1]?.tradeDate.getTime();
+      const written: Date[] = [];
       for (const bar of bars) {
         const points = bar.closePrice ?? bar.lastPrice;
         if (points == null || !(points > 0)) continue;
-        const useCurrentRate = bar.tradeDate.getTime() === newestMs;
-        const usdIrr = useCurrentRate
-          ? currentUsdIrr(rates)
-          : usdIrrOnOrBefore(rates, tradeDateKey(bar.tradeDate));
+        const usdIrr = rateByDay.get(tradeDateKey(bar.tradeDate));
         const usdValue = usdIrr == null ? null : indexPointsToUsd(points, usdIrr);
         if (usdValue == null) continue;
+        written.push(bar.tradeDate);
         await this.prisma.priceBar.upsert({
           where: {
             instrumentId_tradeDate: { instrumentId: usdInst.id, tradeDate: bar.tradeDate },
@@ -1478,6 +1489,12 @@ export class MarketService implements OnModuleInit {
         });
         upserted += 1;
       }
+      await this.prisma.priceBar.deleteMany({
+        where: {
+          instrumentId: usdInst.id,
+          ...(written.length ? { tradeDate: { notIn: written } } : {}),
+        },
+      });
     }
     return upserted;
   }

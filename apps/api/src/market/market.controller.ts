@@ -2,6 +2,7 @@ import {
   Body,
   Controller,
   Delete,
+  ForbiddenException,
   Get,
   NotFoundException,
   Param,
@@ -14,6 +15,7 @@ import {
 import { AssetType } from '@prisma/client';
 import { IsOptional, IsString, MaxLength, MinLength } from 'class-validator';
 import { MarketService } from './market.service';
+import { UsersService } from '../users/users.service';
 import { JwtAuthGuard } from '../auth/jwt-auth.guard';
 import { AdminGuard } from '../auth/admin.guard';
 
@@ -45,7 +47,10 @@ class SaveBrsApiDto {
 @Controller('market')
 @UseGuards(JwtAuthGuard)
 export class MarketController {
-  constructor(private readonly market: MarketService) {}
+  constructor(
+    private readonly market: MarketService,
+    private readonly users: UsersService,
+  ) {}
 
   @Get('quotes')
   list(
@@ -67,7 +72,10 @@ export class MarketController {
   }
 
   @Get('option-value')
-  optionValue() {
+  async optionValue(@Req() req: { user: { userId: string } }) {
+    if (!(await this.users.canUseOptionsMarket(req.user.userId))) {
+      throw new ForbiddenException('دسترسی بازار اختیار معامله برای شما فعال نیست.');
+    }
     return this.market.getValuableOptions();
   }
 

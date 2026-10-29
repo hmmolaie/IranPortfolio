@@ -41,6 +41,7 @@ export class UsersService {
         referralCode: true,
         referralActive: true,
         discountPct: true,
+        optionsMarketAccess: true,
         profile: {
           select: { mobilePhone: true, telegramChatId: true, telegramUsername: true },
         },
@@ -57,6 +58,7 @@ export class UsersService {
       referralCode: row.referralCode,
       referralActive: row.referralActive,
       discountPct: row.discountPct,
+      optionsMarketAccess: row.optionsMarketAccess,
       clientCount: row._count.clients,
       mobilePhone: row.profile?.mobilePhone ?? null,
       telegramLinked: Boolean(row.profile?.telegramChatId),
@@ -246,7 +248,14 @@ export class UsersService {
     const rows = await this.prisma.user.findMany({
       where: { resellerId, role: UserRole.USER },
       orderBy: { createdAt: 'desc' },
-      select: { id: true, email: true, name: true, createdAt: true, isActive: true },
+      select: {
+        id: true,
+        email: true,
+        name: true,
+        createdAt: true,
+        isActive: true,
+        optionsMarketAccess: true,
+      },
     });
     return rows;
   }
@@ -260,6 +269,33 @@ export class UsersService {
     const passwordHash = await bcrypt.hash(password, 10);
     await this.prisma.user.update({ where: { id: userId }, data: { passwordHash } });
     return { ok: true };
+  }
+
+  async canUseOptionsMarket(userId: string): Promise<boolean> {
+    const user = await this.prisma.user.findUnique({
+      where: { id: userId },
+      select: { role: true, isActive: true, optionsMarketAccess: true },
+    });
+    if (!user?.isActive) return false;
+    if (user.role === UserRole.ADMIN) return true;
+    return user.optionsMarketAccess;
+  }
+
+  async setOptionsAccessByAdmin(userId: string, enabled: boolean) {
+    const user = await this.prisma.user.findUnique({ where: { id: userId } });
+    if (!user || user.role === UserRole.ADMIN) throw new NotFoundException('کاربر یافت نشد');
+    await this.prisma.user.update({ where: { id: userId }, data: { optionsMarketAccess: enabled } });
+    return { ok: true, optionsMarketAccess: enabled };
+  }
+
+  async setOptionsAccessByReseller(resellerId: string, userId: string, enabled: boolean) {
+    await this.requireActiveReseller(resellerId);
+    const user = await this.prisma.user.findFirst({
+      where: { id: userId, resellerId, role: UserRole.USER },
+    });
+    if (!user) throw new NotFoundException('این کاربر برای شما نیست');
+    await this.prisma.user.update({ where: { id: userId }, data: { optionsMarketAccess: enabled } });
+    return { ok: true, optionsMarketAccess: enabled };
   }
 
   async referralReport(actorId: string, role: string, fromRaw?: string, toRaw?: string) {

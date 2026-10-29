@@ -364,26 +364,53 @@ export function optionTradePrice(source: {
   return { last, close };
 }
 
+export function optionBelongsToUnderlying(
+  underlyingSymbol: string,
+  underlyingInsCode: string | null | undefined,
+  row: BoardSource,
+): boolean {
+  const target = fold(underlyingSymbol);
+  const raw = asRecord(row.raw);
+  const meta = asRecord(row.meta);
+  const parsed = parseOptionMeta({ ...raw, ...meta }, row.symbol, row.nameFa);
+  const baseId = text(raw.base_id ?? meta.base_id ?? meta.baseId);
+  const nameFa = fold(row.nameFa);
+  return (
+    Boolean(parsed.underlyingSymbol && fold(parsed.underlyingSymbol) === target) ||
+    Boolean(underlyingInsCode && baseId && baseId === underlyingInsCode) ||
+    (target.length >= 2 && nameFa.includes(`${target}-`))
+  );
+}
+
+export function valuableOptionsForUnderlying(
+  underlying: BoardSource,
+  insCode: string | null | undefined,
+  optionRows: BoardSource[],
+  inflationPct: number | null,
+): { hasOptions: boolean; items: ValuableOption[] } {
+  const mine = optionRows.filter(
+    (row) => row.assetType === 'OPTION' && optionBelongsToUnderlying(underlying.symbol, insCode, row),
+  );
+  const live = mine.filter((row) => !optionMetaExpired(row.meta, 'OPTION'));
+  return {
+    hasOptions: live.length > 0,
+    items: listValuableOptions([underlying, ...live], inflationPct),
+  };
+}
+
 export function quotesForUnderlying(
   underlyingSymbol: string,
   underlyingPrice: number | null,
   rows: BoardSource[],
   underlyingInsCode?: string | null,
 ): UnderlyingOptionQuote[] {
-  const target = fold(underlyingSymbol);
   const out: UnderlyingOptionQuote[] = [];
   for (const row of rows) {
     if (row.assetType !== 'OPTION') continue;
     const raw = asRecord(row.raw);
     const meta = asRecord(row.meta);
     const parsed = parseOptionMeta({ ...raw, ...meta }, row.symbol, row.nameFa);
-    const baseId = text(raw.base_id ?? meta.base_id ?? meta.baseId);
-    const nameFa = fold(row.nameFa);
-    const sameUnderlying =
-      Boolean(parsed.underlyingSymbol && fold(parsed.underlyingSymbol) === target) ||
-      Boolean(underlyingInsCode && baseId && baseId === underlyingInsCode) ||
-      (target.length >= 2 && nameFa.includes(`${target}-`));
-    if (!parsed.side || !sameUnderlying) continue;
+    if (!parsed.side || !optionBelongsToUnderlying(underlyingSymbol, underlyingInsCode, row)) continue;
     if (parsed.strike == null || parsed.strike <= 0) continue;
     if (optionExpired(parsed.daysLeft) || optionMetaExpired(row.meta, 'OPTION')) continue;
     const premium = optionTradePrice(row).last ?? optionTradePrice(row).close;

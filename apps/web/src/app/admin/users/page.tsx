@@ -17,6 +17,7 @@ type AppUser = {
   referralCode?: string | null;
   referralActive?: boolean;
   discountPct?: number;
+  optionsMarketAccess?: boolean;
   clientCount?: number;
   mobilePhone?: string | null;
   telegramLinked?: boolean;
@@ -156,6 +157,22 @@ export default function AdminUsersPage() {
       });
       toast.success('رمز عبور تغییر کرد.');
       closePanel();
+    } catch (err) {
+      toast.error((err as Error).message);
+    } finally {
+      setLoading(false);
+    }
+  }
+
+  async function toggleOptionsAccess(user: AppUser) {
+    setLoading(true);
+    try {
+      await api(`/users/${user.id}/options-access`, {
+        method: 'PATCH',
+        body: JSON.stringify({ enabled: !user.optionsMarketAccess }),
+      });
+      await loadUsers();
+      toast.success(user.optionsMarketAccess ? 'دسترسی بازار اختیار بسته شد.' : 'دسترسی بازار اختیار باز شد.');
     } catch (err) {
       toast.error((err as Error).message);
     } finally {
@@ -392,6 +409,15 @@ export default function AdminUsersPage() {
                 </td>
                 <td className="px-4 py-3">
                   <div className="flex flex-wrap gap-2">
+                    {u.role !== 'ADMIN' && (
+                      <button
+                        type="button"
+                        className="text-xs text-navy-800 hover:underline"
+                        onClick={() => void toggleOptionsAccess(u)}
+                      >
+                        {u.optionsMarketAccess ? 'بستن اختیار' : 'دسترسی اختیار'}
+                      </button>
+                    )}
                     {u.role !== 'ADMIN' && (
                       <button
                         type="button"
