@@ -171,6 +171,11 @@ type IngestRow = Record<string, unknown>;
 export class MarketService implements OnModuleInit {
   private readonly logger = new Logger(MarketService.name);
   private ingestInFlight = false;
+  private optionsRefresh: { running: boolean; messageFa: string; error: boolean } = {
+    running: false,
+    messageFa: '',
+    error: false,
+  };
   private indexSnapshotInFlight: Promise<number> | null = null;
 
   constructor(
@@ -512,43 +517,58 @@ export class MarketService implements OnModuleInit {
   }
 
   async getValuableOptions() {
-    const rows = await this.prisma.instrument.findMany({
-      where: {
-        isActive: true,
-        assetType: { in: [AssetType.STOCK, AssetType.GOLD_ETF, AssetType.FUND, AssetType.OPTION] },
-      },
-      select: {
-        id: true,
-        symbol: true,
-        nameFa: true,
-        assetType: true,
-        meta: true,
-        priceBars: {
-          orderBy: { tradeDate: 'desc' },
-          take: 1,
-          select: { lastPrice: true, closePrice: true, volume: true, raw: true },
-        },
-      },
-    });
+    const rows = await this.latestOptionBoardPrices();
     const inflationPct = await this.latestInflationPct();
     return {
       disclaimerFa: 'این فهرست از قیمت ذخیره‌شدهٔ اختیار و دارایی پایه حساب شده و توصیهٔ قطعی معامله نیست.',
       inflationPct,
-      items: listValuableOptions(
-        rows.map((row) => ({
-          id: row.id,
-          symbol: row.symbol,
-          nameFa: row.nameFa,
-          assetType: row.assetType,
-          lastPrice: row.priceBars[0]?.lastPrice ?? null,
-          closePrice: row.priceBars[0]?.closePrice ?? null,
-          volume: row.priceBars[0]?.volume ?? null,
-          raw: row.priceBars[0]?.raw ?? null,
-          meta: row.meta,
-        })),
-        inflationPct,
-      ),
+      items: listValuableOptions(rows, inflationPct),
     };
+  }
+
+  /** آخرین قیمت بدون ستون خام؛ خواندن خام همهٔ نمادها پاسخ را سنگین و قطع می‌کند. */
+  private async latestOptionBoardPrices() {
+    const rows = await this.prisma.$queryRaw<
+      Array<{
+        id: string;
+        symbol: string;
+        nameFa: string;
+        assetType: string;
+        meta: unknown;
+        lastPrice: number | null;
+        closePrice: number | null;
+        volume: number | null;
+      }>
+    >`
+      SELECT i.id, i.symbol, i."nameFa", i."assetType"::text AS "assetType", i.meta,
+             b."lastPrice", b."closePrice", b.volume
+      FROM "Instrument" i
+      LEFT JOIN LATERAL (
+        SELECT "lastPrice", "closePrice", volume
+        FROM "PriceBar"
+        WHERE "instrumentId" = i.id
+        ORDER BY "tradeDate" DESC
+        LIMIT 1
+      ) b ON true
+      WHERE i."isActive" = true
+        AND i."assetType" IN (
+          'STOCK'::"AssetType",
+          'GOLD_ETF'::"AssetType",
+          'FUND'::"AssetType",
+          'OPTION'::"AssetType"
+        )
+    `;
+    return rows.map((row) => ({
+      id: row.id,
+      symbol: row.symbol,
+      nameFa: row.nameFa,
+      assetType: row.assetType,
+      lastPrice: row.lastPrice,
+      closePrice: row.closePrice,
+      volume: row.volume,
+      raw: null,
+      meta: row.meta,
+    }));
   }
 
   async getOptionBoard() {
@@ -987,22 +1007,46 @@ export class MarketService implements OnModuleInit {
     return this.ingestCatchUp();
   }
 
-  /** به‌روزرسانی دستی اختیار معامله؛ فقط از دکمهٔ ادمین صدا زده می‌شود. */
-  async refreshOptionsNow() {
+  optionsRefreshStatus() {
+    return this.optionsRefresh;
+  }
+
+  /**
+   * دکمهٔ ادمین همین‌جا جواب می‌گیرد.
+   * ذخیرهٔ قراردادها در پس‌زمینه تمام می‌شود تا پروکسی اتصال را با خطای ۵۰۲ نبندد.
+   */
+  refreshOptionsNow() {
     if (this.ingestInFlight) {
-      throw new ServiceUnavailableException('به‌روزرسانی بازار از قبل در حال انجام است. لطفاً صبر کنید.');
+      return {
+        started: false,
+        messageFa: 'به‌روزرسانی بازار از قبل در حال انجام است. لطفاً صبر کنید.',
+      };
     }
     this.ingestInFlight = true;
+    this.optionsRefresh = {
+      running: true,
+      error: false,
+      messageFa: 'به‌روزرسانی اختیار شروع شد.',
+    };
+    void this.finishOptionsRefresh();
+    return {
+      started: true,
+      messageFa: 'به‌روزرسانی اختیار شروع شد. جدول پس از پایان کار تازه می‌شود.',
+    };
+  }
+
+  private async finishOptionsRefresh() {
     try {
       const saved = await this.ingestOptions(todayDateOnly());
-      return {
-        saved,
+      this.optionsRefresh = {
+        running: false,
+        error: false,
         messageFa: `اختیار معامله به‌روز شد: ${saved.toLocaleString('fa-IR')} قرارداد.`,
       };
     } catch (e) {
       await this.recordMarketError(e);
       const message = e instanceof Error ? e.message : 'به‌روزرسانی اختیار معامله ناموفق بود.';
-      throw new BadRequestException(message);
+      this.optionsRefresh = { running: false, error: true, messageFa: message };
     } finally {
       this.ingestInFlight = false;
     }
@@ -1895,56 +1939,67 @@ export class MarketService implements OnModuleInit {
     if (!items.length) {
       throw new Error('فهرست اختیار معامله خالی بود. در تنظیمات، API بورس ایران را بررسی کنید.');
     }
+    const bySymbol = new Map<string, Record<string, unknown>>();
+    for (const item of items) bySymbol.set(this.optionSymbol(item), item);
+    bySymbol.delete('');
+    const list = [...bySymbol.values()];
     let saved = 0;
-    for (const item of items) {
-      const symbol = String(
-        item.l18 ?? item.namad ?? item.lVal18AFC ?? item.instrumentName ?? item.symbol ?? '',
-      ).trim();
-      const nameFa = String(
-        item.l30 ?? item.name ?? item.lVal30 ?? item.companyNamePersian ?? symbol,
-      ).trim();
-      if (!symbol) continue;
-      try {
-        const meta = parseOptionMeta(item, symbol, nameFa);
-        const prices = optionTradePrice({ raw: item });
-        const lastPrice = prices.last;
-        const closePrice = prices.close;
-        const volume = marketNumber(item.tvol ?? item.tradeVolume ?? item.qTotTran5J ?? item.volume);
-        const instrument = await this.prisma.instrument.upsert({
-          where: { symbol_assetType: { symbol, assetType: AssetType.OPTION } },
-          create: {
-            symbol,
-            nameFa: nameFa || symbol,
-            assetType: AssetType.OPTION,
-            meta: meta as Prisma.InputJsonValue,
-          },
-          update: { nameFa: nameFa || symbol, meta: meta as Prisma.InputJsonValue, isActive: true },
-        });
-        await this.prisma.priceBar.upsert({
-          where: { instrumentId_tradeDate: { instrumentId: instrument.id, tradeDate } },
-          create: {
-            instrumentId: instrument.id,
-            tradeDate,
-            lastPrice,
-            closePrice,
-            volume,
-            raw: item as Prisma.InputJsonValue,
-          },
-          update: {
-            lastPrice,
-            closePrice,
-            volume,
-            raw: item as Prisma.InputJsonValue,
-          },
-        });
-        saved += 1;
-      } catch (e) {
-        this.logger.warn(`ردیف اختیار ${symbol}: ${(e as Error).message}`);
-      }
+    const chunk = 8;
+    for (let i = 0; i < list.length; i += chunk) {
+      const counts = await Promise.all(
+        list.slice(i, i + chunk).map((item) => this.saveOptionContract(tradeDate, item)),
+      );
+      saved += counts.reduce((sum, n) => sum + n, 0);
     }
     if (!saved) throw new Error('هیچ قرارداد اختیاری ذخیره نشد.');
     this.logger.log(`اختیار معامله: ${saved} قرارداد`);
     return saved;
+  }
+
+  private optionSymbol(item: Record<string, unknown>): string {
+    return String(item.l18 ?? item.namad ?? item.lVal18AFC ?? item.instrumentName ?? item.symbol ?? '').trim();
+  }
+
+  private async saveOptionContract(tradeDate: Date, item: Record<string, unknown>): Promise<number> {
+    const symbol = this.optionSymbol(item);
+    const nameFa = String(item.l30 ?? item.name ?? item.lVal30 ?? item.companyNamePersian ?? symbol).trim();
+    if (!symbol) return 0;
+    try {
+      const meta = parseOptionMeta(item, symbol, nameFa);
+      const prices = optionTradePrice({ raw: item });
+      const volume = marketNumber(item.tvol ?? item.tradeVolume ?? item.qTotTran5J ?? item.volume);
+      const instrument = await this.prisma.instrument.upsert({
+        where: { symbol_assetType: { symbol, assetType: AssetType.OPTION } },
+        create: {
+          symbol,
+          nameFa: nameFa || symbol,
+          assetType: AssetType.OPTION,
+          meta: meta as Prisma.InputJsonValue,
+        },
+        update: { nameFa: nameFa || symbol, meta: meta as Prisma.InputJsonValue, isActive: true },
+      });
+      await this.prisma.priceBar.upsert({
+        where: { instrumentId_tradeDate: { instrumentId: instrument.id, tradeDate } },
+        create: {
+          instrumentId: instrument.id,
+          tradeDate,
+          lastPrice: prices.last,
+          closePrice: prices.close,
+          volume,
+          raw: item as Prisma.InputJsonValue,
+        },
+        update: {
+          lastPrice: prices.last,
+          closePrice: prices.close,
+          volume,
+          raw: item as Prisma.InputJsonValue,
+        },
+      });
+      return 1;
+    } catch (e) {
+      this.logger.warn(`ردیف اختیار ${symbol}: ${(e as Error).message}`);
+      return 0;
+    }
   }
 
   private async fetchOptionContracts(): Promise<Record<string, unknown>[]> {

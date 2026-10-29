@@ -19,6 +19,7 @@ export default function OptionsMarketPage() {
   const [isAdmin, setIsAdmin] = useState(false);
   const [allowed, setAllowed] = useState<boolean | null>(null);
   const [refreshing, setRefreshing] = useState(false);
+  const [watching, setWatching] = useState(false);
 
   function loadOptions() {
     return api<Payload>('/market/option-value')
@@ -43,18 +44,50 @@ export default function OptionsMarketPage() {
       .catch(() => setAllowed(false));
   }, [router]);
 
+  useEffect(() => {
+    if (!watching) return;
+    let stop = false;
+    let ticks = 0;
+    const timer = window.setInterval(() => {
+      ticks += 1;
+      if (ticks > 45) {
+        setWatching(false);
+        setNotice('به‌روزرسانی هنوز در جریان است. کمی بعد صفحه را دوباره باز کنید.');
+        return;
+      }
+      api<{ running: boolean; messageFa: string; error: boolean }>('/market/options/refresh-status')
+        .then((status) => {
+          if (stop || status.running || !status.messageFa) return;
+          setWatching(false);
+          if (status.error) {
+            setError(status.messageFa);
+            return;
+          }
+          setNotice(status.messageFa);
+          return loadOptions();
+        })
+        .catch(() => undefined);
+    }, 4000);
+    return () => {
+      stop = true;
+      window.clearInterval(timer);
+    };
+  }, [watching]);
+
   async function refreshNow() {
     setRefreshing(true);
     setNotice('');
     setError('');
     try {
-      const res = await api<{ messageFa?: string }>('/market/options/refresh', { method: 'POST' });
-      setNotice(res.messageFa || 'اختیار معامله به‌روز شد.');
-      await loadOptions();
+      const res = await api<{ started?: boolean; messageFa?: string }>('/market/options/refresh', {
+        method: 'POST',
+      });
+      setNotice(res.messageFa || 'به‌روزرسانی اختیار شروع شد.');
+      if (res.started) setWatching(true);
     } catch (e) {
       const raw = e instanceof Error ? e.message : 'به‌روزرسانی اختیار معامله ناموفق بود.';
       setError(
-        /failed to fetch|networkerror|load failed/i.test(raw)
+        /failed to fetch|networkerror|load failed|502/i.test(raw)
           ? 'ارتباط با سرور هنگام به‌روزرسانی قطع شد. متن خطا در بخش خطاهای مشاهده‌شدهٔ تنظیمات ادمین می‌ماند.'
           : raw,
       );
@@ -78,8 +111,13 @@ export default function OptionsMarketPage() {
         </p>
         </div>
         {isAdmin && (
-          <button type="button" className="btn-primary" onClick={() => void refreshNow()} disabled={refreshing}>
-            {refreshing ? 'در حال به‌روزرسانی...' : 'به‌روزرسانی لحظه‌ای'}
+          <button
+            type="button"
+            className="btn-primary"
+            onClick={() => void refreshNow()}
+            disabled={refreshing || watching}
+          >
+            {watching ? 'در پس‌زمینه در جریان است' : refreshing ? 'در حال ارسال...' : 'به‌روزرسانی لحظه‌ای'}
           </button>
         )}
       </div>

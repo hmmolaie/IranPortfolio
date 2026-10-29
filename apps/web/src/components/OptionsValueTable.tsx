@@ -168,10 +168,10 @@ export function OptionsValueTable({
                   ) : (
                     <>
                       <div className={row.realProfitRial >= 0 ? 'font-medium text-emerald-700' : 'font-medium text-red-700'}>
-                        {formatNum(row.realProfitRial)}
+                        {Math.round(row.realProfitRial).toLocaleString('fa-IR')}
                       </div>
                       <div className="text-xs text-navy-800/55">
-                        {row.realProfitPct.toLocaleString('fa-IR')}٪ پس از تورم {Math.round(row.daysLeft).toLocaleString('fa-IR')} روز
+                        {Math.round(row.realProfitPct).toLocaleString('fa-IR')}٪ پس از تورم {Math.round(row.daysLeft).toLocaleString('fa-IR')} روز
                       </div>
                     </>
                   )}

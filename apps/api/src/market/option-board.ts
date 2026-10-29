@@ -592,8 +592,8 @@ function realProfitForHolding(input: {
   if (!(periodFactor > 0)) return null;
   const real = (1 + profitPerUnit / premium) / periodFactor - 1;
   return {
-    realProfitPct: Math.round(real * 1000) / 10,
-    realProfitRial: real * premium * (contractSize ?? 1),
+    realProfitPct: Math.round(real * 100),
+    realProfitRial: Math.round(real * premium * (contractSize ?? 1)),
   };
 }
 
