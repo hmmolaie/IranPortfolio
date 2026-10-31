@@ -80,6 +80,22 @@ export async function visibleInstrumentsWhere(prisma: PrismaService): Promise<Pr
   return { AND: [excludeExpiredOptions(), { id: { notIn: ids } }] };
 }
 
+function bookVolumeSql(prefix: 'qd' | 'qo'): Prisma.Sql {
+  const levels = [1, 2, 3, 4, 5].map(
+    (level) => Prisma.sql`
+      CASE
+        WHEN COALESCE(b.raw->>${`${prefix}${level}`}, '') ~ '^[0-9]+([.][0-9]+)?$'
+        THEN (b.raw->>${`${prefix}${level}`})::double precision
+        ELSE NULL
+      END
+    `,
+  );
+  return Prisma.sql`(SELECT SUM(v) FROM (VALUES ${Prisma.join(
+    levels.map((level) => Prisma.sql`(${level})`),
+    ', ',
+  )}) AS book(v))`;
+}
+
 function listedOptionSql(): Prisma.Sql {
   const today = tehranJalaliCompact();
   return Prisma.sql`
@@ -530,11 +546,15 @@ export class MarketService implements OnModuleInit {
         closePrice: number | null;
         volume: number | null;
         baseId: string | null;
+        buyQueueVolume: number | null;
+        sellQueueVolume: number | null;
       }>
     >`
       SELECT i.id, i.symbol, i."nameFa", i.meta,
              b."lastPrice", b."closePrice", b.volume,
-             NULLIF(b.raw->>'base_id', '') AS "baseId"
+             NULLIF(b.raw->>'base_id', '') AS "baseId",
+             ${bookVolumeSql('qd')} AS "buyQueueVolume",
+             ${bookVolumeSql('qo')} AS "sellQueueVolume"
       FROM "Instrument" i
       LEFT JOIN LATERAL (
         SELECT "lastPrice", "closePrice", volume, raw
@@ -576,6 +596,8 @@ export class MarketService implements OnModuleInit {
           lastPrice: row.lastPrice,
           closePrice: row.closePrice,
           volume: row.volume,
+          buyQueueVolume: row.buyQueueVolume,
+          sellQueueVolume: row.sellQueueVolume,
           raw: null,
           meta,
         };
@@ -625,10 +647,14 @@ export class MarketService implements OnModuleInit {
         lastPrice: number | null;
         closePrice: number | null;
         volume: number | null;
+        buyQueueVolume: number | null;
+        sellQueueVolume: number | null;
       }>
     >`
       SELECT i.id, i.symbol, i."nameFa", i."assetType"::text AS "assetType", i.meta,
-             b."lastPrice", b."closePrice", b.volume
+             b."lastPrice", b."closePrice", b.volume,
+             ${bookVolumeSql('qd')} AS "buyQueueVolume",
+             ${bookVolumeSql('qo')} AS "sellQueueVolume"
       FROM "Instrument" i
       LEFT JOIN LATERAL (
         SELECT "lastPrice", "closePrice", volume
@@ -654,6 +680,8 @@ export class MarketService implements OnModuleInit {
       lastPrice: row.lastPrice,
       closePrice: row.closePrice,
       volume: row.volume,
+      buyQueueVolume: row.buyQueueVolume,
+      sellQueueVolume: row.sellQueueVolume,
       raw: null,
       meta: row.meta,
     }));

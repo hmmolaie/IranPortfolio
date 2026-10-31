@@ -14,6 +14,8 @@ export type BoardSource = {
   volume: number | null;
   raw: unknown;
   meta: unknown;
+  buyQueueVolume?: number | null;
+  sellQueueVolume?: number | null;
 };
 
 export type QueueRow = {
@@ -620,6 +622,9 @@ export type ValuableOption = {
   profitPct: number | null;
   realProfitRial: number | null;
   realProfitPct: number | null;
+  tradeVolume: number | null;
+  buyQueueVolume: number | null;
+  sellQueueVolume: number | null;
   reasonFa: string;
 };
 
@@ -699,6 +704,9 @@ export function listValuableOptions(rows: BoardSource[], inflationPct: number | 
       profitPct: profitPct == null ? null : Math.round(profitPct * 10) / 10,
       realProfitRial: real?.realProfitRial ?? null,
       realProfitPct: real?.realProfitPct ?? null,
+      tradeVolume: row.volume,
+      buyQueueVolume: queueBookVolume(row, 'buy'),
+      sellQueueVolume: queueBookVolume(row, 'sell'),
       reasonFa: `${sideFa} سررسیدنشده.${daysNote}`,
     });
   }
@@ -709,6 +717,22 @@ export function listValuableOptions(rows: BoardSource[], inflationPct: number | 
 function scoreOption(idea: OptionIdea): number {
   const distance = Math.abs(idea.strike - idea.underlyingPrice) / idea.underlyingPrice;
   return distance * 2 + idea.premiumPctOfSpot / 100;
+}
+
+function queueBookVolume(row: BoardSource, side: 'buy' | 'sell'): number | null {
+  const explicit = side === 'buy' ? row.buyQueueVolume : row.sellQueueVolume;
+  if (explicit != null && Number.isFinite(explicit)) return explicit;
+  const source = asRecord(row.raw);
+  const keys = side === 'buy' ? ['qd1', 'qd2', 'qd3', 'qd4', 'qd5'] : ['qo1', 'qo2', 'qo3', 'qo4', 'qo5'];
+  let sum = 0;
+  let any = false;
+  for (const key of keys) {
+    const n = marketNumber(source[key]);
+    if (n == null || n < 0) continue;
+    sum += n;
+    any = true;
+  }
+  return any ? sum : null;
 }
 
 function detectQueue(raw: unknown, lastPrice: number | null): QueueSide | null {

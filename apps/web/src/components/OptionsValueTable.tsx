@@ -21,6 +21,9 @@ export type OptionsTableRow = {
   profitPct: number | null;
   realProfitRial: number | null;
   realProfitPct: number | null;
+  tradeVolume?: number | null;
+  buyQueueVolume?: number | null;
+  sellQueueVolume?: number | null;
   reasonFa: string;
 };
 
@@ -31,6 +34,8 @@ type SortKey =
   | 'underlyingPrice'
   | 'strike'
   | 'premium'
+  | 'buyQueue'
+  | 'sellQueue'
   | 'daysLeft'
   | 'profit'
   | 'realProfit';
@@ -42,10 +47,29 @@ const COLUMNS: Array<{ key: SortKey; label: string }> = [
   { key: 'underlyingPrice', label: 'قیمت پایه' },
   { key: 'strike', label: 'اعمال' },
   { key: 'premium', label: 'قیمت اختیار' },
+  { key: 'buyQueue', label: 'حجم صف خرید' },
+  { key: 'sellQueue', label: 'حجم صف فروش' },
   { key: 'daysLeft', label: 'روز مانده' },
   { key: 'profit', label: 'سود' },
   { key: 'realProfit', label: 'سود واقعی' },
 ];
+
+function parseFilterNumber(raw: string): number | null {
+  const normalized = raw
+    .trim()
+    .replace(/[۰-۹]/g, (ch) => String('۰۱۲۳۴۵۶۷۸۹'.indexOf(ch)))
+    .replace(/[٠-٩]/g, (ch) => String('٠١٢٣٤٥٦٧٨٩'.indexOf(ch)))
+    .replace(/,/g, '.')
+    .replace(/٫/g, '.');
+  if (!normalized) return null;
+  const n = Number(normalized);
+  return Number.isFinite(n) ? n : null;
+}
+
+function formatQueue(value: number | null | undefined): string {
+  if (value == null) return '—';
+  return formatNum(value);
+}
 
 function sortValue(row: OptionsTableRow, key: SortKey): string | number | null {
   if (key === 'symbol') return row.symbol;
@@ -54,6 +78,8 @@ function sortValue(row: OptionsTableRow, key: SortKey): string | number | null {
   if (key === 'underlyingPrice') return row.underlyingPrice;
   if (key === 'strike') return row.strike;
   if (key === 'premium') return row.premium;
+  if (key === 'buyQueue') return row.buyQueueVolume ?? null;
+  if (key === 'sellQueue') return row.sellQueueVolume ?? null;
   if (key === 'daysLeft') return row.daysLeft;
   if (key === 'realProfit') return row.realProfitRial;
   return row.profitRial;
@@ -69,15 +95,26 @@ export function OptionsValueTable({
   const router = useRouter();
   const [q, setQ] = useState('');
   const [side, setSide] = useState<'' | 'CALL' | 'PUT'>('');
+  const [listing, setListing] = useState<'all' | 'traded'>('all');
+  const [minPremium, setMinPremium] = useState('1');
+  const [minBuyQueue, setMinBuyQueue] = useState('');
+  const [minSellQueue, setMinSellQueue] = useState('');
   const [sort, setSort] = useState<SortKey>('profit');
   const [sortDir, setSortDir] = useState<'asc' | 'desc'>('desc');
   const [visible, setVisible] = useState(40);
 
   const rows = useMemo(() => {
     const text = q.trim();
+    const premiumFloor = parseFilterNumber(minPremium);
+    const buyFloor = parseFilterNumber(minBuyQueue);
+    const sellFloor = parseFilterNumber(minSellQueue);
     const list = (items ?? []).filter((row) => {
       if (side && row.side !== side) return false;
       if (text && !row.symbol.includes(text)) return false;
+      if (listing === 'traded' && !(row.tradeVolume != null && row.tradeVolume > 0)) return false;
+      if (premiumFloor != null && !(row.premium != null && row.premium > premiumFloor)) return false;
+      if (buyFloor != null && !(row.buyQueueVolume != null && row.buyQueueVolume >= buyFloor)) return false;
+      if (sellFloor != null && !(row.sellQueueVolume != null && row.sellQueueVolume >= sellFloor)) return false;
       return true;
     });
     const dir = sortDir === 'asc' ? 1 : -1;
@@ -96,11 +133,11 @@ export function OptionsValueTable({
       return a.symbol.localeCompare(b.symbol, 'fa');
     });
     return list;
-  }, [items, q, side, sort, sortDir]);
+  }, [items, q, side, listing, minPremium, minBuyQueue, minSellQueue, sort, sortDir]);
 
   useEffect(() => {
     setVisible(40);
-  }, [items, q, side, sort, sortDir]);
+  }, [items, q, side, listing, minPremium, minBuyQueue, minSellQueue, sort, sortDir]);
 
   const shown = rows.slice(0, visible);
 
@@ -127,6 +164,42 @@ export function OptionsValueTable({
           <option value="CALL">اختیار خرید</option>
           <option value="PUT">اختیار فروش</option>
         </select>
+        <select className="input max-w-xs" value={listing} onChange={(e) => setListing(e.target.value as 'all' | 'traded')}>
+          <option value="all">تمام نمادها</option>
+          <option value="traded">نمادهای معامله شده</option>
+        </select>
+        <label className="flex items-center gap-2 text-sm text-navy-800/80">
+          اختیار بزرگتر از
+          <input
+            className="input w-28"
+            dir="ltr"
+            inputMode="decimal"
+            value={minPremium}
+            onChange={(e) => setMinPremium(e.target.value)}
+          />
+        </label>
+        <label className="flex items-center gap-2 text-sm text-navy-800/80">
+          حجم صف خرید از
+          <input
+            className="input w-28"
+            dir="ltr"
+            inputMode="decimal"
+            value={minBuyQueue}
+            onChange={(e) => setMinBuyQueue(e.target.value)}
+            placeholder="خالی"
+          />
+        </label>
+        <label className="flex items-center gap-2 text-sm text-navy-800/80">
+          حجم صف فروش از
+          <input
+            className="input w-28"
+            dir="ltr"
+            inputMode="decimal"
+            value={minSellQueue}
+            onChange={(e) => setMinSellQueue(e.target.value)}
+            placeholder="خالی"
+          />
+        </label>
         {items && (
           <span className="self-center text-sm text-navy-800/55">
             {rows.length.toLocaleString('fa-IR')} نماد
@@ -161,6 +234,8 @@ export function OptionsValueTable({
                 <td className="px-3 py-2.5">{row.underlyingPrice == null ? '—' : formatNum(row.underlyingPrice)}</td>
                 <td className="px-3 py-2.5">{formatNum(row.strike)}</td>
                 <td className="px-3 py-2.5">{row.premium == null || !(row.premium > 0) ? '—' : formatNum(row.premium)}</td>
+                <td className="px-3 py-2.5">{formatQueue(row.buyQueueVolume)}</td>
+                <td className="px-3 py-2.5">{formatQueue(row.sellQueueVolume)}</td>
                 <td className="px-3 py-2.5">
                   {row.daysLeft == null ? '—' : Math.round(row.daysLeft).toLocaleString('fa-IR')}
                 </td>
