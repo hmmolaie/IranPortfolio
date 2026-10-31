@@ -81,16 +81,29 @@ export async function visibleInstrumentsWhere(prisma: PrismaService): Promise<Pr
 }
 
 function bookVolumeSql(prefix: 'qd' | 'qo'): Prisma.Sql {
-  const levels = [1, 2, 3, 4, 5].map(
-    (level) => Prisma.sql`
+  const cols = [1, 2, 3, 4, 5].map((level) => `${prefix}${level}`);
+  const missing = Prisma.join(
+    cols.map((col) => Prisma.sql`b.${Prisma.raw(`"${col}"`)} IS NULL`),
+    ' AND ',
+  );
+  const levels = cols.map(
+    (col) => Prisma.sql`
       CASE
-        WHEN COALESCE(b.raw->>${`${prefix}${level}`}, '') ~ '^[0-9]+([.][0-9]+)?$'
-        THEN (b.raw->>${`${prefix}${level}`})::double precision
+        WHEN COALESCE(b.${Prisma.raw(`"${col}"`)}, '') ~ '^[0-9]+([.][0-9]+)?$'
+        THEN b.${Prisma.raw(`"${col}"`)}::double precision
         ELSE 0
       END
     `,
   );
-  return Prisma.sql`CASE WHEN b.raw IS NULL THEN NULL ELSE ${Prisma.join(levels, ' + ')} END`;
+  return Prisma.sql`CASE WHEN ${missing} THEN NULL ELSE ${Prisma.join(levels, ' + ')} END`;
+}
+
+function queueKeySelect(): Prisma.Sql {
+  const keys = ['qd1', 'qd2', 'qd3', 'qd4', 'qd5', 'qo1', 'qo2', 'qo3', 'qo4', 'qo5'];
+  return Prisma.join(
+    keys.map((key) => Prisma.sql`raw->>${key} AS ${Prisma.raw(`"${key}"`)}`),
+    ', ',
+  );
 }
 
 function listedOptionSql(): Prisma.Sql {
@@ -554,7 +567,7 @@ export class MarketService implements OnModuleInit {
              ${bookVolumeSql('qo')} AS "sellQueueVolume"
       FROM "Instrument" i
       LEFT JOIN LATERAL (
-        SELECT "lastPrice", "closePrice", volume, raw
+        SELECT "lastPrice", "closePrice", volume, raw, ${queueKeySelect()}
         FROM "PriceBar"
         WHERE "instrumentId" = i.id
         ORDER BY "tradeDate" DESC
@@ -654,7 +667,7 @@ export class MarketService implements OnModuleInit {
              ${bookVolumeSql('qo')} AS "sellQueueVolume"
       FROM "Instrument" i
       LEFT JOIN LATERAL (
-        SELECT "lastPrice", "closePrice", volume
+        SELECT "lastPrice", "closePrice", volume, ${queueKeySelect()}
         FROM "PriceBar"
         WHERE "instrumentId" = i.id
         ORDER BY "tradeDate" DESC
