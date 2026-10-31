@@ -99,6 +99,15 @@ function normalizeLessonTitle(s: string): string {
   return s.replace(/\s+/g, ' ').trim().toLowerCase();
 }
 
+type YahooComparable = {
+  code: string;
+  baseCode: string;
+  quoteCode: string;
+  priceNum?: number | null;
+  yahooPriceNum?: number | null;
+  diffPct?: number | null;
+};
+
 /** متن فارسی مدل؛ «null» و خط تیره را خالی حساب می‌کند */
 function faText(v: unknown, maxChars: number): string {
   const t = asText(v).replace(/\s+/g, ' ').trim();
@@ -537,23 +546,14 @@ export class WorldMarketsService implements OnModuleInit {
   }
 
   /** اگر اختلاف یاهو هنوز ذخیره نشده، یک‌بار قیمت جهانی را می‌خواند و روی همان ردیف‌ها می‌نویسد */
-  private async ensureYahooDiffs<
-    T extends {
-      code: string;
-      baseCode: string;
-      quoteCode: string;
-      priceNum?: number | null;
-      yahooPriceNum?: number | null;
-      diffPct?: number | null;
-    },
-  >(markets: T[]): Promise<T[]> {
+  private async ensureYahooDiffs<T extends YahooComparable>(markets: T[]): Promise<T[]> {
     const comparable = markets.some((m) => yahooSymbolFor(String(m.baseCode), String(m.quoteCode)));
     const has = markets.some((m) => m.yahooPriceNum != null && m.diffPct != null);
     if (!comparable || has) return markets;
     if (Date.now() - this.yahooMissAt < 10 * 60_000) return markets;
 
     if (!this.yahooBackfill) {
-      this.yahooBackfill = this.persistMissingYahooDiffs(markets as Array<Prisma.WorldMarketCreateManyInput & { code: string }>)
+      this.yahooBackfill = this.persistMissingYahooDiffs(markets)
         .catch((e) => {
           this.yahooMissAt = Date.now();
           this.logger.warn(`تکمیل اختلاف یاهو: ${(e as Error).message.slice(0, 180)}`);
@@ -565,9 +565,7 @@ export class WorldMarketsService implements OnModuleInit {
     return markets;
   }
 
-  private async persistMissingYahooDiffs(
-    markets: Array<Prisma.WorldMarketCreateManyInput & { code: string }>,
-  ) {
+  private async persistMissingYahooDiffs(markets: YahooComparable[]) {
     const sourceApi = await readMarketSourceApi(this.prisma);
     const rows = await this.attachYahooDiffs(markets, sourceApi.yahooQuoteUrl);
     const priced = rows.filter((r) => r.yahooPriceNum != null && r.diffPct != null);
@@ -593,7 +591,7 @@ export class WorldMarketsService implements OnModuleInit {
     }
   }
 
-  private async attachYahooDiffs(rows: Prisma.WorldMarketCreateManyInput[], yahooQuoteUrl: string) {
+  private async attachYahooDiffs<T extends YahooComparable>(rows: T[], yahooQuoteUrl: string) {
     const symbols = [
       ...new Set(
         rows
