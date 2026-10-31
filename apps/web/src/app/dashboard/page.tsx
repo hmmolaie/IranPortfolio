@@ -22,6 +22,8 @@ type AppUser = {
 export default function DashboardPage() {
   const router = useRouter();
   const [portfolios, setPortfolios] = useState<Portfolio[]>([]);
+  const [usersReady, setUsersReady] = useState(false);
+  const [portfoliosReady, setPortfoliosReady] = useState(false);
   const [name, setName] = useState('');
   const [role, setRole] = useState<UserRole | null>(null);
   const [users, setUsers] = useState<AppUser[]>([]);
@@ -39,9 +41,13 @@ export default function DashboardPage() {
   } | null>(null);
 
   async function loadPortfolios(userId?: string) {
-    const q = userId ? `?userId=${encodeURIComponent(userId)}` : '';
-    const data = await api<Portfolio[]>(`/portfolios${q}`);
-    setPortfolios(data);
+    try {
+      const q = userId ? `?userId=${encodeURIComponent(userId)}` : '';
+      const data = await api<Portfolio[]>(`/portfolios${q}`);
+      setPortfolios(data);
+    } finally {
+      setPortfoliosReady(true);
+    }
   }
 
   useEffect(() => {
@@ -59,7 +65,9 @@ export default function DashboardPage() {
           return api<Array<AppUser & { role?: string }>>('/users').then((list) => {
             const people = list.filter((item) => item.role === 'USER');
             setUsers(people);
+            setUsersReady(true);
             if (people[0]) setSelectedUserId(people[0].id);
+            else setPortfoliosReady(true);
           });
         }
         return loadPortfolios();
@@ -107,7 +115,8 @@ export default function DashboardPage() {
               </option>
             ))}
           </select>
-          {users.length === 0 && (
+          {!usersReady && <p className="mt-2 text-sm text-navy-800/50">در حال بارگذاری...</p>}
+          {usersReady && users.length === 0 && (
             <p className="mt-2 text-sm text-navy-800/50">هنوز کاربری تعریف نشده.</p>
           )}
           {selectedUser && (
@@ -181,7 +190,8 @@ export default function DashboardPage() {
             : 'سبدهای اخیر'}
         </h2>
         <div className="mt-4 divide-y divide-navy-900/8">
-          {portfolios.length === 0 && (
+          {!portfoliosReady && <p className="py-4 text-sm text-navy-800/60">در حال بارگذاری...</p>}
+          {portfoliosReady && portfolios.length === 0 && (
             <p className="py-4 text-sm text-navy-800/60">سبدی ثبت نشده.</p>
           )}
           {portfolios.map((p) => (

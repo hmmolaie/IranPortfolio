@@ -3,6 +3,7 @@ import { ConfigModule } from '@nestjs/config';
 import { ScheduleModule } from '@nestjs/schedule';
 import { HealthController } from './health/health.controller';
 import { PrismaModule } from './prisma/prisma.module';
+import { ObservedErrorModule } from './common/observed-error.module';
 import { AuthModule } from './auth/auth.module';
 import { UsersModule } from './users/users.module';
 import { MarketModule } from './market/market.module';
@@ -29,6 +30,7 @@ import { AiUsageModule } from './ai-usage/ai-usage.module';
     ConfigModule.forRoot({ isGlobal: true, envFilePath: ['.env', '../../.env'] }),
     ScheduleModule.forRoot(),
     PrismaModule,
+    ObservedErrorModule,
     AuthModule,
     UsersModule,
     MarketModule,

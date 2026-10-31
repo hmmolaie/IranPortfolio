@@ -102,7 +102,7 @@ export default function OptionsMarketPage() {
         <div>
         <h1 className="text-3xl font-bold">بازار اختیار معامله</h1>
         <p className="mt-2 text-navy-800/70">
-          فقط اختیارهای فعال که سررسیدشان نگذشته و سودشان نسبت به قیمت دارایی پایه قابل توجه است. سود واقعی، همین سود را پس از تورمِ روزهای مانده تا سررسید نشان می‌دهد.
+          همهٔ اختیارهای سررسیدنشده، از سود بیشتر به کمتر. سود واقعی، همین سود را پس از تورمِ روزهای مانده تا سررسید نشان می‌دهد.
           {data?.inflationPct != null
             ? ` نرخ تورم سالانه: ${data.inflationPct.toLocaleString('fa-IR')}٪.`
             : data

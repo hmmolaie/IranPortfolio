@@ -11,6 +11,7 @@ type ChatMessage = {
 
 export function TehranMarketChat() {
   const [chat, setChat] = useState<ChatMessage[]>([]);
+  const [chatReady, setChatReady] = useState(false);
   const [chatInput, setChatInput] = useState('');
   const [chatBusy, setChatBusy] = useState(false);
   const [clearing, setClearing] = useState(false);
@@ -19,8 +20,12 @@ export function TehranMarketChat() {
   const chatEndRef = useRef<HTMLDivElement>(null);
 
   async function loadChat() {
-    const messages = await api<ChatMessage[]>('/market/chat');
-    setChat(messages);
+    try {
+      const messages = await api<ChatMessage[]>('/market/chat');
+      setChat(messages);
+    } finally {
+      setChatReady(true);
+    }
   }
 
   useEffect(() => {
@@ -71,14 +76,7 @@ export function TehranMarketChat() {
     }
   }
 
-  if (llmOn === false) {
-    return (
-      <section className="card">
-        <h2 className="text-lg font-semibold">گفتگو دربارهٔ بازار سهام تهران</h2>
-        <p className="mt-2 text-sm text-navy-800/60">استفاده از مدل زبانی برای این حساب خاموش است.</p>
-      </section>
-    );
-  }
+  if (llmOn !== true) return null;
 
   return (
     <section className="card flex flex-col gap-4">
@@ -102,7 +100,8 @@ export function TehranMarketChat() {
         </button>
       </div>
       <div className="max-h-80 space-y-3 overflow-y-auto rounded-lg bg-navy-50/60 p-4">
-        {chat.length === 0 && !chatBusy && (
+        {!chatReady && <p className="text-sm text-navy-800/50">در حال بارگذاری...</p>}
+        {chatReady && chat.length === 0 && !chatBusy && (
           <p className="text-sm text-navy-800/50">
             هنوز پیامی نیست. مثلاً بپرسید: «فولاد را کدام صندوق‌ها خریده‌اند؟» یا «شاخص کل در دادهٔ پیپ
             چند است؟»

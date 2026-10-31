@@ -3,7 +3,7 @@
 import { FormEvent, useEffect, useState } from 'react';
 import Link from 'next/link';
 import { useRouter } from 'next/navigation';
-import { api, formatNum, formatRial, getToken } from '@/lib/api';
+import { api, formatNum, formatRial, getToken, getUserRole, setUserRole } from '@/lib/api';
 import { useToast } from '@/components/Toast';
 import { formatShamsiDate, formatShamsiDateTime } from '@/lib/shamsi-date';
 
@@ -48,13 +48,20 @@ export default function MacroPage() {
       router.replace('/');
       return;
     }
+    const cached = getUserRole();
+    if (cached && cached !== 'ADMIN') {
+      router.replace('/dashboard');
+      return;
+    }
+    const latest = cached === 'ADMIN' ? api<Macro | null>('/macro/latest') : null;
     api<{ role?: string }>('/users/me')
       .then((u) => {
+        if (u.role) setUserRole(u.role);
         if (u.role !== 'ADMIN') {
           router.replace('/dashboard');
-          return;
+          return null;
         }
-        return api<Macro | null>('/macro/latest', { auth: false });
+        return latest ?? api<Macro | null>('/macro/latest');
       })
       .then((m) => {
         if (!m) return;

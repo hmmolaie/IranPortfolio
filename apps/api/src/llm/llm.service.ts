@@ -20,7 +20,40 @@ import {
   redactSocialNetworkBrandInFaFields,
 } from './social-source-wording';
 
-type LlmCreds = { baseUrl: string; model: string; apiKey: string; fallbackModels: string[] };
+type LlmCreds = {
+  baseUrl: string;
+  model: string;
+  apiKey: string;
+  fallbackModels: string[];
+  pinPrimary?: boolean;
+};
+
+/** گفتگوی زندهٔ کاربر. بقیهٔ فراخوانی‌ها کار سیستم‌اند و مدل system-one را می‌گیرند. */
+const INTERACTIVE_LLM_PURPOSES = new Set([
+  'portfolio_chat',
+  'market_symbol_qa',
+  'market_tehran_chat',
+  'macro_qa',
+  'telegram_assistant_qa',
+  'telegram_assistant_page',
+  'telegram_assistant_pdf',
+  'telegram_assistant_youtube',
+  'telegram_assistant_youtube_subs',
+  'llm_test',
+]);
+
+type GapGptWallet = {
+  ok: boolean;
+  gapgpt: boolean;
+  unlimited: boolean;
+  remainUsd: number | null;
+  usedUsd: number | null;
+  remainRial: number | null;
+  usedRial: number | null;
+  usdIrr: number | null;
+  nativeRial: boolean;
+  messageFa: string;
+};
 
 class LlmHttpError extends Error {
   constructor(
@@ -132,11 +165,18 @@ export class LlmService {
 
   async saveSettings(
     userId: string,
-    data: { baseUrl?: string; model?: string; apiToken?: string; usePlatformFallback?: boolean },
+    data: {
+      baseUrl?: string;
+      model?: string;
+      systemModel?: string;
+      apiToken?: string;
+      usePlatformFallback?: boolean;
+    },
   ) {
     const update: Record<string, unknown> = {};
     if (data.baseUrl !== undefined) update.baseUrl = data.baseUrl.trim().replace(/\/$/, '');
     if (data.model !== undefined) update.model = data.model.trim();
+    if (data.systemModel !== undefined) update.systemModel = data.systemModel.trim();
     if (data.usePlatformFallback !== undefined) update.usePlatformFallback = data.usePlatformFallback;
     if (data.apiToken) update.apiTokenEncrypted = this.encryptToken(data.apiToken.trim());
 
@@ -146,6 +186,7 @@ export class LlmService {
         userId,
         baseUrl: (data.baseUrl ?? 'https://api.openai.com/v1').trim().replace(/\/$/, ''),
         model: (data.model ?? 'gpt-4o-mini').trim(),
+        systemModel: data.systemModel?.trim() ?? '',
         apiTokenEncrypted: data.apiToken ? this.encryptToken(data.apiToken.trim()) : undefined,
         usePlatformFallback: data.usePlatformFallback ?? true,
       },
@@ -159,6 +200,7 @@ export class LlmService {
     return {
       baseUrl: s.baseUrl,
       model: s.model,
+      systemModel: s.systemModel,
       usePlatformFallback: s.usePlatformFallback,
       hasToken: Boolean(s.apiTokenEncrypted),
     };
@@ -224,7 +266,7 @@ export class LlmService {
     return admin?.id ?? null;
   }
 
-  private async resolveCredentials(userId?: string): Promise<LlmCreds> {
+  private async resolveCredentials(userId?: string, purpose?: string): Promise<LlmCreds> {
     const envFallbacks = parseModelList(this.config.get<string>('LLM_MODEL_FALLBACKS') ?? '');
     const settingsUserId = (await this.adminUserId()) ?? userId;
 
@@ -232,12 +274,16 @@ export class LlmService {
       const s = await this.prisma.llmSetting.findUnique({ where: { userId: settingsUserId } });
       if (s?.apiTokenEncrypted) {
         const models = parseModelList(s.model);
-        return {
-          baseUrl: s.baseUrl.replace(/\/$/, ''),
-          model: models[0] ?? s.model,
-          fallbackModels: [...models.slice(1), ...envFallbacks],
-          apiKey: this.decryptToken(s.apiTokenEncrypted),
-        };
+        return this.applySystemModel(
+          {
+            baseUrl: s.baseUrl.replace(/\/$/, ''),
+            model: models[0] ?? s.model,
+            fallbackModels: [...models.slice(1), ...envFallbacks],
+            apiKey: this.decryptToken(s.apiTokenEncrypted),
+          },
+          s.systemModel,
+          purpose,
+        );
       }
       if (s && !s.usePlatformFallback) {
         throw new Error('توکن LLM تنظیم نشده است');
@@ -247,15 +293,26 @@ export class LlmService {
     if (!apiKey) throw new Error('هیچ توکن LLM در دسترس نیست. در تنظیمات کلید خود را وارد کنید.');
     const primary = this.config.get<string>('PLATFORM_LLM_MODEL') ?? 'gpt-4o-mini';
     const models = parseModelList(primary);
-    return {
-      baseUrl: (this.config.get<string>('PLATFORM_LLM_BASE_URL') ?? 'https://api.openai.com/v1').replace(
-        /\/$/,
-        '',
-      ),
-      model: models[0] ?? primary,
-      fallbackModels: [...models.slice(1), ...envFallbacks],
-      apiKey,
-    };
+    return this.applySystemModel(
+      {
+        baseUrl: (this.config.get<string>('PLATFORM_LLM_BASE_URL') ?? 'https://api.openai.com/v1').replace(
+          /\/$/,
+          '',
+        ),
+        model: models[0] ?? primary,
+        fallbackModels: [...models.slice(1), ...envFallbacks],
+        apiKey,
+      },
+      '',
+      purpose,
+    );
+  }
+
+  private applySystemModel(creds: LlmCreds, systemModel: string, purpose?: string): LlmCreds {
+    const pinned = systemModel.trim();
+    if (!pinned || !purpose || INTERACTIVE_LLM_PURPOSES.has(purpose)) return creds;
+    const fallbackModels = [creds.model, ...creds.fallbackModels].filter((name) => name && name !== pinned);
+    return { ...creds, model: pinned, fallbackModels, pinPrimary: true };
   }
 
   private requestHeaders(creds: LlmCreds): Record<string, string> {
@@ -518,9 +575,10 @@ export class LlmService {
     search: LlmLiveSearch,
     preferGrok?: boolean,
   ): Promise<{ content: string; model: string; citations: string[]; usage: TokenUse }> {
-    const models = preferGrok
-      ? preferGrokFirst(uniqueStrings([creds.model, ...creds.fallbackModels]))
-      : uniqueStrings([creds.model, ...creds.fallbackModels]);
+    const models =
+      preferGrok && !creds.pinPrimary
+        ? preferGrokFirst(uniqueStrings([creds.model, ...creds.fallbackModels]))
+        : uniqueStrings([creds.model, ...creds.fallbackModels]);
     let lastErr: unknown;
     for (const model of models) {
       const toolSets = this.searchToolSets(creds, model, search);
@@ -614,7 +672,7 @@ export class LlmService {
     userId?: string,
     options?: LlmChatOptions,
   ): Promise<T> {
-    const creds = await this.resolveCredentials(userId);
+    const creds = await this.resolveCredentials(userId, purpose);
     const search = normalizeLiveSearch(options?.liveSearch);
     const hideNetworkBrand = NEWS_LLM_PURPOSES.has(purpose) || (Boolean(search) && search?.x !== false);
     const system = hideNetworkBrand ? appendSocialNetworkOutputRule(systemPrompt) : systemPrompt;
@@ -762,6 +820,124 @@ export class LlmService {
     return audio;
   }
 
+  private gapWalletCache: { at: number; value: GapGptWallet } | null = null;
+
+  /** موجودی کیف پول گپ از مسیر صورتحساب سازگار با OpenAI. گپ این عدد را ریال برنمی‌گرداند. */
+  async gapGptWallet(): Promise<GapGptWallet> {
+    const cached = this.gapWalletCache;
+    if (cached && Date.now() - cached.at < 30_000) return cached.value;
+    const value = await this.loadGapGptWallet();
+    this.gapWalletCache = { at: Date.now(), value };
+    return value;
+  }
+
+  private async loadGapGptWallet(): Promise<GapGptWallet> {
+    const empty = (messageFa: string, gapgpt = false): GapGptWallet => ({
+      ok: false,
+      gapgpt,
+      unlimited: false,
+      remainUsd: null,
+      usedUsd: null,
+      remainRial: null,
+      usedRial: null,
+      usdIrr: null,
+      nativeRial: false,
+      messageFa,
+    });
+    let creds: LlmCreds;
+    try {
+      creds = await this.resolveCredentials();
+    } catch (e) {
+      return empty((e as Error).message || 'توکن مدل مدیر در دسترس نیست.');
+    }
+    if (!isGapGptBase(creds.baseUrl)) {
+      return empty('نشانی مدل مدیر، گپ‌جی‌پی‌تی نیست. باقی‌مانده فقط برای همین سرویس خوانده می‌شود.');
+    }
+    const headers = { Authorization: `Bearer ${creds.apiKey}`, Accept: 'application/json' };
+    try {
+      const [subRes, useRes] = await Promise.all([
+        fetch(`${creds.baseUrl}/dashboard/billing/subscription`, {
+          headers,
+          signal: AbortSignal.timeout(20_000),
+        }),
+        fetch(`${creds.baseUrl}/dashboard/billing/usage`, {
+          headers,
+          signal: AbortSignal.timeout(20_000),
+        }),
+      ]);
+      const subText = await subRes.text();
+      const useText = await useRes.text();
+      if (!subRes.ok) {
+        return empty(`گپ موجودی را نداد (${subRes.status}).`, true);
+      }
+      const sub = parseJsonRecord(subText);
+      const use = useRes.ok ? parseJsonRecord(useText) : null;
+      const errorMessage = textOf(sub?.error);
+      if (errorMessage) return empty(errorMessage, true);
+      const native = firstRial(sub) ?? firstRial(use);
+      const spot = await this.prisma.spotPriceDaily.findFirst({
+        orderBy: { dateKey: 'desc' },
+        select: { usdIrr: true },
+      });
+      const usdIrr = spot?.usdIrr != null && spot.usdIrr > 0 ? spot.usdIrr : null;
+      if (native != null) {
+        return {
+          ok: true,
+          gapgpt: true,
+          unlimited: false,
+          remainUsd: null,
+          usedUsd: null,
+          remainRial: native.remain,
+          usedRial: native.used,
+          usdIrr,
+          nativeRial: true,
+          messageFa: 'موجودی ریالی مستقیم از پاسخ گپ خوانده شد.',
+        };
+      }
+      const limit = finiteNumber(sub?.hard_limit_usd ?? sub?.soft_limit_usd);
+      const unlimited = limit != null && limit >= 100_000_000;
+      if (unlimited) {
+        return {
+          ok: true,
+          gapgpt: true,
+          unlimited: true,
+          remainUsd: null,
+          usedUsd: null,
+          remainRial: null,
+          usedRial: null,
+          usdIrr,
+          nativeRial: false,
+          messageFa: 'سقف این کلید در گپ نامحدود است. باقی‌ماندهٔ کیف پول از این مسیر برنمی‌گردد.',
+        };
+      }
+      const usedRaw = finiteNumber(use?.total_usage);
+      if (limit == null || usedRaw == null) {
+        return empty('پاسخ صورتحساب گپ عدد باقی‌مانده نداشت.', true);
+      }
+      const usedUsd = usedRaw / 100;
+      const remainUsd = Math.max(0, limit - usedUsd);
+      const remainRial = usdIrr != null ? Math.round(remainUsd * usdIrr) : null;
+      const usedRial = usdIrr != null ? Math.round(usedUsd * usdIrr) : null;
+      return {
+        ok: true,
+        gapgpt: true,
+        unlimited: false,
+        remainUsd,
+        usedUsd,
+        remainRial,
+        usedRial,
+        usdIrr,
+        nativeRial: false,
+        messageFa:
+          usdIrr != null
+            ? 'گپ موجودی را به دلارِ اعتبار برمی‌گرداند. ریال با آخرین نرخ دلار ذخیره‌شده حساب شده است.'
+            : 'گپ موجودی را به دلارِ اعتبار برمی‌گرداند. نرخ دلار در اقتصاد ایران نیست، پس معادل ریالی حساب نشد.',
+      };
+    } catch (e) {
+      return empty(`خواندن موجودی گپ ناموفق بود: ${(e as Error).message}`, true);
+    }
+  }
+
   async speechAccess(userId?: string): Promise<{ baseUrl: string; apiKey: string }> {
     const creds = await this.resolveTtsCredentials(userId);
     return { baseUrl: creds.baseUrl, apiKey: creds.apiKey };
@@ -812,7 +988,7 @@ export class LlmService {
 
   async chatText(purpose: string, systemPrompt: string, userPrompt: string, userId?: string) {
     await this.aiUsage.assertAllowed(userId, purpose);
-    const creds = await this.resolveCredentials(userId);
+    const creds = await this.resolveCredentials(userId, purpose);
     try {
       const { content, model, usage } = await this.callWithModelFallback(creds, (m) => ({
         model: m,
@@ -1001,6 +1177,55 @@ function readTokenUse(json: unknown, promptChars: number, completionChars: numbe
 function finite(value: unknown): number {
   const n = Number(value);
   return Number.isFinite(n) && n > 0 ? Math.round(n) : 0;
+}
+
+function finiteNumber(value: unknown): number | null {
+  if (value == null || value === '') return null;
+  const n = typeof value === 'number' ? value : Number(value);
+  return Number.isFinite(n) ? n : null;
+}
+
+function parseJsonRecord(text: string): Record<string, unknown> | null {
+  try {
+    const parsed: unknown = JSON.parse(text);
+    return parsed && typeof parsed === 'object' && !Array.isArray(parsed)
+      ? (parsed as Record<string, unknown>)
+      : null;
+  } catch {
+    return null;
+  }
+}
+
+function textOf(value: unknown): string | null {
+  if (typeof value === 'string' && value.trim()) return value.trim();
+  if (value && typeof value === 'object' && 'message' in value) {
+    const message = (value as { message?: unknown }).message;
+    if (typeof message === 'string' && message.trim()) return message.trim();
+  }
+  return null;
+}
+
+function firstRial(row: Record<string, unknown> | null): { remain: number; used: number | null } | null {
+  if (!row) return null;
+  const remainKey = ['remain_rial', 'balance_rial', 'balance_irr', 'remaining_irr', 'quota_irr'].find(
+    (key) => finiteNumber(row[key]) != null,
+  );
+  if (remainKey) {
+    const remain = finiteNumber(row[remainKey]);
+    const used = finiteNumber(row.used_rial ?? row.used_irr);
+    return remain == null ? null : { remain: Math.max(0, Math.round(remain)), used: used == null ? null : Math.round(used) };
+  }
+  const tomanKey = ['remain_toman', 'balance_toman', 'balance_irt', 'remaining_irt'].find(
+    (key) => finiteNumber(row[key]) != null,
+  );
+  if (!tomanKey) return null;
+  const toman = finiteNumber(row[tomanKey]);
+  const usedToman = finiteNumber(row.used_toman ?? row.used_irt);
+  if (toman == null) return null;
+  return {
+    remain: Math.max(0, Math.round(toman * 10)),
+    used: usedToman == null ? null : Math.round(usedToman * 10),
+  };
 }
 
 function speechEndpointLabel(url: string): string {

@@ -94,6 +94,13 @@ function clockValue(hour: number, minute: number) {
   return `${String(hour).padStart(2, '0')}:${String(minute).padStart(2, '0')}`;
 }
 
+function errorPurposeFa(purpose: string): string {
+  if (purpose === 'market_ingest') return 'به‌روزرسانی بازار';
+  if (purpose === 'backend') return 'بک‌اند';
+  if (purpose === 'system') return 'سیستم';
+  return purpose;
+}
+
 const PROVIDERS: Record<
   ProviderId,
   { label: string; baseUrl: string; model: string; hint: string }
@@ -148,6 +155,7 @@ export default function SettingsPage() {
   const [llm, setLlm] = useState({
     baseUrl: 'https://openrouter.ai/api/v1',
     model: 'meta-llama/llama-3.3-70b-instruct:free',
+    systemModel: '',
     apiToken: '',
     usePlatformFallback: true,
     hasToken: false,
@@ -213,6 +221,7 @@ export default function SettingsPage() {
     worldMinute: 0,
     marketHour: 22,
     marketMinute: 0,
+    spotIntervalHours: 1,
   });
   const [refreshTimeBusy, setRefreshTimeBusy] = useState(false);
   const [refreshTimeFeedback, setRefreshTimeFeedback] = useState<{ ok: boolean; text: string } | null>(null);
@@ -286,6 +295,7 @@ export default function SettingsPage() {
       worldMinute: number;
       marketHour?: number;
       marketMinute?: number;
+      spotIntervalHours?: number;
     }>('/news/schedule');
     setRefreshTimes({
       iranNewsHour: cfg.iranNewsHour ?? 8,
@@ -294,6 +304,7 @@ export default function SettingsPage() {
       worldMinute: cfg.worldMinute ?? 0,
       marketHour: cfg.marketHour ?? 22,
       marketMinute: cfg.marketMinute ?? 0,
+      spotIntervalHours: cfg.spotIntervalHours ?? 1,
     });
   }
 
@@ -531,6 +542,7 @@ export default function SettingsPage() {
     api<{
       baseUrl: string;
       model: string;
+      systemModel?: string;
       usePlatformFallback: boolean;
       hasToken: boolean;
     } | null>('/llm/settings')
@@ -541,6 +553,7 @@ export default function SettingsPage() {
           ...prev,
           baseUrl: s.baseUrl,
           model: s.model,
+          systemModel: s.systemModel ?? '',
           usePlatformFallback: s.usePlatformFallback,
           hasToken: s.hasToken,
         }));
@@ -590,6 +603,7 @@ export default function SettingsPage() {
         worldMinute: number;
         marketHour: number;
         marketMinute: number;
+        spotIntervalHours: number;
       }>('/news/schedule', {
         method: 'PUT',
         body: JSON.stringify(refreshTimes),
@@ -902,6 +916,7 @@ export default function SettingsPage() {
         body: JSON.stringify({
           baseUrl: llm.baseUrl,
           model: llm.model,
+          systemModel: llm.systemModel,
           usePlatformFallback: llm.usePlatformFallback,
           ...(llm.apiToken ? { apiToken: llm.apiToken } : {}),
         }),
@@ -1662,6 +1677,19 @@ export default function SettingsPage() {
             />
           </div>
           <div>
+            <label className="label">مدل system-one</label>
+            <input
+              className="input"
+              value={llm.systemModel}
+              onChange={(e) => setLlm({ ...llm, systemModel: e.target.value })}
+              dir="ltr"
+              placeholder="gpt-4o-mini"
+            />
+            <p className="mt-1 text-xs text-navy-800/55">
+              اخبار، اقتصاد دنیا، پیشنهاد و آنالیز سبد، صندوق، درس و گفتار تلگرام از این مدل استفاده می‌کنند. گفتگوی کاربر روی مدل بالا می‌ماند. اگر خالی باشد همان مدل بالا استفاده می‌شود.
+            </p>
+          </div>
+          <div>
             <label className="label">API Token</label>
             <input
               className="input"
@@ -1735,8 +1763,9 @@ export default function SettingsPage() {
       {tab === 'spotPrices' && isAdmin && (
         <form onSubmit={saveSpotConfig} className="card grid max-w-2xl gap-4">
           <p className="text-sm leading-7 text-navy-800/75">
-            منبع پیش‌فرض روزانه بیت‌پین است (تتر برای دلار آزاد، انس طلای دیجیتال برای گرم ۱۸ عیار).
-            آدرس زیر فقط اگر بخواهید منبع دیگری بگذارید لازم است.
+            منبع پیش‌فرض بیت‌پین است (تتر برای دلار آزاد، انس طلای دیجیتال برای گرم ۱۸ عیار).
+            آدرس زیر فقط اگر بخواهید منبع دیگری بگذارید لازم است. خواندن در پس‌زمینه است و با باز شدن صفحه انجام نمی‌شود.
+            فاصله را در بخش ساعت به‌روزرسانی عوض کنید.
           </p>
           <div>
             <label className="label">آدرس API جایگزین (اختیاری)</label>
@@ -1931,7 +1960,7 @@ export default function SettingsPage() {
         <form onSubmit={saveRefreshTimes} className="card grid max-w-2xl gap-4">
           <p className="text-sm leading-7 text-navy-800/75">
             ساعت‌ها به وقت تهران است. اگر در همان روز خبر، اقتصاد دنیا یا بازار سهام خالی بماند، یک ساعت و دو ساعت
-            بعد دوباره تلاش می‌شود.
+            بعد دوباره تلاش می‌شود. دلار و طلا جدا از این ساعت‌ها، با فاصلهٔ ساعتی زیر و فقط در پس‌زمینه خوانده می‌شوند.
           </p>
           <div>
             <label className="label">ساعت اخبار ایران</label>
@@ -1974,6 +2003,26 @@ export default function SettingsPage() {
                 setRefreshTimes({ ...refreshTimes, marketHour: h, marketMinute: m });
               }}
             />
+          </div>
+          <div>
+            <label className="label">فاصلهٔ دلار و طلا (ساعت)</label>
+            <input
+              className="input max-w-[10rem]"
+              type="number"
+              min={1}
+              max={24}
+              step={1}
+              dir="ltr"
+              value={refreshTimes.spotIntervalHours}
+              onChange={(e) => {
+                const n = Number(e.target.value);
+                if (!Number.isInteger(n)) return;
+                setRefreshTimes({ ...refreshTimes, spotIntervalHours: n });
+              }}
+            />
+            <p className="mt-1 text-xs leading-6 text-navy-800/55">
+              ۱ یعنی هر ساعت. صفحهٔ اقتصاد فقط قیمت ذخیره‌شده را نشان می‌دهد.
+            </p>
           </div>
           <button type="submit" className="btn-primary w-fit" disabled={refreshTimeBusy}>
             {refreshTimeBusy ? 'در حال ذخیره...' : 'ذخیره ساعت‌ها'}
@@ -2138,7 +2187,7 @@ export default function SettingsPage() {
         <section className="card space-y-4">
           <h2 className="text-lg font-semibold">خطاهای مشاهده شده</h2>
           <p className="text-sm leading-7 text-navy-800/70">
-            خطای مدل زبانی و خطای به‌روزرسانی بازار، چه با دکمه و چه خودکار، با متن فنی اینجا می‌ماند.
+            خطای مدل زبانی، خطای بک‌اند و خطای سیستم، چه با دکمه و چه خودکار، با متن فنی اینجا می‌ماند.
           </p>
           <button
             type="button"
@@ -2153,7 +2202,12 @@ export default function SettingsPage() {
               <article key={row.id} className="rounded-lg border border-navy-900/10 bg-white px-3 py-3">
                 <p className="text-sm text-navy-900">
                   {formatShamsiDateTime(row.createdAt)}
-                  {row.purpose ? ` · ${row.purpose === 'market_ingest' ? 'به‌روزرسانی بازار' : row.purpose}` : ''}
+                  {row.purpose ? (
+                    <>
+                      {' · '}
+                      <span dir="ltr">{errorPurposeFa(row.purpose)}</span>
+                    </>
+                  ) : null}
                   {row.statusCode != null ? ` · ${row.statusCode}` : ''}
                 </p>
                 <pre

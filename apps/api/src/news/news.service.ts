@@ -64,6 +64,7 @@ export class NewsService implements OnModuleInit {
     worldMinute: number;
     marketHour: number;
     marketMinute: number;
+    spotIntervalHours: number;
   }) {
     return saveRefreshSchedule(this.prisma, data);
   }

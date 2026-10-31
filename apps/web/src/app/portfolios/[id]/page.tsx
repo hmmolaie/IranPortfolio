@@ -732,7 +732,6 @@ export default function PortfolioDetailPage() {
                   <th className="py-2 pe-4 font-medium">آخرین قیمت</th>
                   <th className="py-2 pe-4 font-medium">کارمزد</th>
                   <th className="py-2 pe-4 font-medium">سود/زیان</th>
-                  <th className="py-2 pe-4 font-medium">دلیل</th>
                   <th className="py-2 font-medium">عملیات</th>
                 </tr>
               </thead>
@@ -792,7 +791,6 @@ export default function PortfolioDetailPage() {
                       >
                         {formatRial(pnl)}
                       </td>
-                      <td className="py-3 pe-4 leading-6 text-navy-800/75">{i.reasonFa}</td>
                       <td className="py-3">
                         <div className="flex flex-col items-start gap-1">
                           <button
@@ -858,12 +856,34 @@ export default function PortfolioDetailPage() {
                   >
                     {formatRial(pnlTotal)}
                   </td>
-                  <td className="py-3 pe-4 text-xs text-navy-800/55" colSpan={2}>
-                    سقف سرمایه: {formatRial(p.capitalRial)}
-                  </td>
+                  <td className="py-3" />
                 </tr>
               </tfoot>
             </table>
+            <p className="mt-3 text-sm text-navy-800/70">
+              سقف سرمایه: {formatRial(p.capitalRial)}
+            </p>
+          </div>
+
+          <div className="space-y-3 border-t border-navy-900/10 pt-4">
+            <h3 className="text-sm font-semibold">چرایی هر نماد</h3>
+            <ul className="grid gap-3">
+              {latest.items.map((i) => (
+                <li key={`why-${i.id}`} className="rounded-xl border border-navy-900/10 bg-white px-4 py-3">
+                  <div className="flex flex-wrap items-baseline justify-between gap-2">
+                    <span className="font-semibold text-navy-900">{i.symbol}</span>
+                    <span className="text-xs text-navy-800/50">
+                      {ASSET_TYPE_LABELS_FA[i.assetType as AssetType] ?? i.assetType}
+                      {' · '}
+                      {formatNum(displayWeightPct(i.marketValueRial ?? i.amountRial, itemsTotal))}٪
+                    </span>
+                  </div>
+                  <p className="mt-2 text-sm leading-7 text-navy-800/80">
+                    {i.reasonFa?.trim() || 'دلیلی برای این نماد ثبت نشده است.'}
+                  </p>
+                </li>
+              ))}
+            </ul>
           </div>
 
           <form

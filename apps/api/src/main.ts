@@ -2,9 +2,42 @@ import { NestFactory } from '@nestjs/core';
 import { ValidationPipe } from '@nestjs/common';
 import { AppModule } from './app.module';
 import { publicSiteOrigins } from './common/public-sites';
+import { ObservedErrorService } from './common/observed-error.service';
+import { ObservedErrorLogger } from './common/observed-error.logger';
+import { ObservedExceptionFilter } from './common/observed-exception.filter';
 
 async function bootstrap() {
-  const app = await NestFactory.create(AppModule);
+  const app = await NestFactory.create(AppModule, { bufferLogs: true });
+  const observed = app.get(ObservedErrorService);
+  app.useLogger(new ObservedErrorLogger(observed));
+  app.useGlobalFilters(new ObservedExceptionFilter(observed));
+  process.on('unhandledRejection', (reason) => {
+    const error = reason instanceof Error ? reason : new Error(String(reason));
+    void observed
+      .record({
+        purpose: 'system',
+        message: error.message,
+        detail: error.stack ?? error.message,
+      })
+      .finally(() => {
+        // eslint-disable-next-line no-console
+        console.error(error);
+        process.exit(1);
+      });
+  });
+  process.on('uncaughtException', (error) => {
+    void observed
+      .record({
+        purpose: 'system',
+        message: error.message,
+        detail: error.stack ?? error.message,
+      })
+      .finally(() => {
+        // eslint-disable-next-line no-console
+        console.error(error);
+        process.exit(1);
+      });
+  });
   const allowedOrigins = new Set(
     [...(process.env.CORS_ORIGIN?.split(',') ?? ['http://localhost:3000']), ...publicSiteOrigins()]
       .map((s) => s.trim())

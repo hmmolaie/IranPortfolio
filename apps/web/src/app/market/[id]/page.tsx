@@ -456,7 +456,7 @@ export default function MarketInstrumentPage() {
           <div>
             <h2 className="text-base font-semibold text-navy-900">اختیار معامله این سهم</h2>
             <p className="mt-2 text-sm text-navy-800/70">
-              فقط اختیارهای فعال که سررسیدشان نگذشته و سودشان نسبت به قیمت دارایی پایه قابل توجه است. سود واقعی، همین سود را پس از تورمِ روزهای مانده تا سررسید نشان می‌دهد.
+              همهٔ اختیارهای سررسیدنشدهٔ این سهم، از سود بیشتر به کمتر. سود واقعی، همین سود را پس از تورمِ روزهای مانده تا سررسید نشان می‌دهد.
               {optionPack.inflationPct != null
                 ? ` نرخ تورم سالانه: ${optionPack.inflationPct.toLocaleString('fa-IR')}٪.`
                 : ' نرخ تورم سالانه در اقتصاد ایران ثبت نشده است.'}

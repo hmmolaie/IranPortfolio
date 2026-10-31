@@ -184,14 +184,55 @@ export class WorldMarketsService implements OnModuleInit {
       this.prisma.worldMarketRefresh.findUnique({ where: { id: REFRESH_ID } }),
       this.prisma.worldMarket.findMany({
         orderBy: [{ volumeNum: 'desc' }, { titleFa: 'asc' }],
+        select: {
+          id: true,
+          code: true,
+          title: true,
+          titleFa: true,
+          baseCode: true,
+          baseTitleFa: true,
+          baseImageUrl: true,
+          baseColor: true,
+          quoteCode: true,
+          quoteTitleFa: true,
+          price: true,
+          priceNum: true,
+          changePct: true,
+          high24h: true,
+          low24h: true,
+          volume24h: true,
+          volumeNum: true,
+          marketCap: true,
+          tradable: true,
+          suspended: true,
+          comingSoon: true,
+          tagsFa: true,
+          yahooSymbol: true,
+          yahooPriceNum: true,
+          diffAbs: true,
+          diffPct: true,
+        },
       }),
       this.prisma.worldMacroNews.findMany({
         orderBy: [{ sortOrder: 'asc' }, { createdAt: 'desc' }],
         take: MAX_MACRO_NEWS,
+        select: {
+          id: true,
+          dateKey: true,
+          titleFa: true,
+          summaryFa: true,
+          assetImpactFa: true,
+          iranImpactFa: true,
+          assetsFa: true,
+          impactDirection: true,
+          relevanceScore: true,
+          sourceHintFa: true,
+        },
       }),
       readMarketSourceApi(this.prisma),
     ]);
-    const markets = await this.ensureYahooDiffs(stored);
+    void this.ensureYahooDiffs(stored);
+    const markets = stored;
 
     const quoteCounts: Record<string, number> = {};
     for (const m of markets) {
@@ -496,29 +537,32 @@ export class WorldMarketsService implements OnModuleInit {
   }
 
   /** اگر اختلاف یاهو هنوز ذخیره نشده، یک‌بار قیمت جهانی را می‌خواند و روی همان ردیف‌ها می‌نویسد */
-  private async ensureYahooDiffs<T extends Prisma.WorldMarketCreateManyInput & { code: string }>(
-    markets: T[],
-  ): Promise<T[]> {
+  private async ensureYahooDiffs<
+    T extends {
+      code: string;
+      baseCode: string;
+      quoteCode: string;
+      priceNum?: number | null;
+      yahooPriceNum?: number | null;
+      diffPct?: number | null;
+    },
+  >(markets: T[]): Promise<T[]> {
     const comparable = markets.some((m) => yahooSymbolFor(String(m.baseCode), String(m.quoteCode)));
     const has = markets.some((m) => m.yahooPriceNum != null && m.diffPct != null);
     if (!comparable || has) return markets;
     if (Date.now() - this.yahooMissAt < 10 * 60_000) return markets;
 
-    try {
-      if (!this.yahooBackfill) {
-        this.yahooBackfill = this.persistMissingYahooDiffs(markets).finally(() => {
+    if (!this.yahooBackfill) {
+      this.yahooBackfill = this.persistMissingYahooDiffs(markets as Array<Prisma.WorldMarketCreateManyInput & { code: string }>)
+        .catch((e) => {
+          this.yahooMissAt = Date.now();
+          this.logger.warn(`تکمیل اختلاف یاهو: ${(e as Error).message.slice(0, 180)}`);
+        })
+        .finally(() => {
           this.yahooBackfill = null;
         });
-      }
-      await this.yahooBackfill;
-    } catch (e) {
-      this.yahooMissAt = Date.now();
-      this.logger.warn(`تکمیل اختلاف یاهو: ${(e as Error).message.slice(0, 180)}`);
-      return markets;
     }
-    return this.prisma.worldMarket.findMany({
-      orderBy: [{ volumeNum: 'desc' }, { titleFa: 'asc' }],
-    }) as Promise<T[]>;
+    return markets;
   }
 
   private async persistMissingYahooDiffs(

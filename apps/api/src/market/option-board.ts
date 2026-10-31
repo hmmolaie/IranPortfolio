@@ -94,20 +94,28 @@ export function marketNumber(value: unknown): number | null {
 
 export function parseOptionMeta(item: Record<string, unknown>, symbol: string, nameFa: string) {
   const side = optionSide(symbol, nameFa, item);
-  const underlyingSymbol =
-    text(
-      item.base_l18 ??
-        item.baseSymbol ??
-        item.namadPayeh ??
-        item.underlyingSymbol ??
-        item.underlying ??
-        underlyingFromName(nameFa),
-    ) || null;
-  const strike = marketNumber(
-    item.price_strike ?? item.qeymateEmal ?? item.strikePrice ?? item.gheymatEmal ?? strikeFromName(nameFa),
+  const underlyingSymbol = firstText(
+    item.underlyingSymbol,
+    item.base_l18,
+    item.baseSymbol,
+    item.namadPayeh,
+    item.underlying,
+    underlyingFromName(nameFa),
   );
-  const daysLeft = marketNumber(
-    item.day_remain ?? item.baghimandetasarresid ?? item.daysUntilExpiry ?? item.buyBaqimandeTaSarresId,
+  const strike = firstPositive(
+    item.strike,
+    item.price_strike,
+    item.qeymateEmal,
+    item.strikePrice,
+    item.gheymatEmal,
+    strikeFromName(nameFa),
+  );
+  const daysLeft = firstNumber(
+    item.daysLeft,
+    item.day_remain,
+    item.baghimandetasarresid,
+    item.daysUntilExpiry,
+    item.buyBaqimandeTaSarresId,
   );
   const contractSize = marketNumber(item.size_contract ?? item.buyAndazeyeQarardad ?? item.contractSize);
   const underlyingPrice = marketNumber(item.base_pl ?? item.base_pc ?? item.qeymateMabna);
@@ -375,10 +383,12 @@ export function optionBelongsToUnderlying(
   const parsed = parseOptionMeta({ ...raw, ...meta }, row.symbol, row.nameFa);
   const baseId = text(raw.base_id ?? meta.base_id ?? meta.baseId);
   const nameFa = fold(row.nameFa);
+  const root = optionSymbolRoot(row.symbol);
   return (
     Boolean(parsed.underlyingSymbol && fold(parsed.underlyingSymbol) === target) ||
     Boolean(underlyingInsCode && baseId && baseId === underlyingInsCode) ||
-    (target.length >= 2 && nameFa.includes(`${target}-`))
+    (target.length >= 2 && nameFa.includes(`${target}-`)) ||
+    (target.length >= 2 && root === target)
   );
 }
 
@@ -392,9 +402,17 @@ export function valuableOptionsForUnderlying(
     (row) => row.assetType === 'OPTION' && optionBelongsToUnderlying(underlying.symbol, insCode, row),
   );
   const live = mine.filter((row) => !optionMetaExpired(row.meta, 'OPTION'));
+  const target = fold(underlying.symbol);
+  const prepared = live.map((row) => {
+    const meta = asRecord(row.meta);
+    const known = text(meta.underlyingSymbol);
+    if (known && fold(known) === target) return row;
+    return { ...row, meta: { ...meta, underlyingSymbol: underlying.symbol } };
+  });
+  const items = listValuableOptions([underlying, ...prepared], inflationPct);
   return {
-    hasOptions: live.length > 0,
-    items: listValuableOptions([underlying, ...live], inflationPct),
+    hasOptions: items.length > 0,
+    items,
   };
 }
 
@@ -560,21 +578,18 @@ export type ValuableOption = {
   side: OptionSide;
   sideFa: string;
   underlyingSymbol: string;
-  underlyingPrice: number;
+  underlyingPrice: number | null;
   strike: number;
-  premium: number;
-  daysLeft: number;
+  premium: number | null;
+  daysLeft: number | null;
   contractSize: number | null;
-  profitPerUnit: number;
-  profitRial: number;
-  profitPct: number;
+  profitPerUnit: number | null;
+  profitRial: number | null;
+  profitPct: number | null;
   realProfitRial: number | null;
   realProfitPct: number | null;
   reasonFa: string;
 };
-
-/** سود هر واحد = ارزش ذاتی نسبت به قیمت دارایی پایه، منهای قیمت اختیار. کمتر از ۵ درصد قیمت اختیار، قابل توجه نیست. */
-const MIN_PROFIT_PCT = 5;
 
 /** سود واقعیِ همان بازه: سود دوره را با تورمِ روزهای مانده تا سررسید تعدیل می‌کند. */
 function realProfitForHolding(input: {
@@ -608,32 +623,33 @@ export function listValuableOptions(rows: BoardSource[], inflationPct: number | 
   const out: ValuableOption[] = [];
   for (const row of rows) {
     if (row.assetType !== 'OPTION') continue;
-    if (row.volume === 0) continue;
     const raw = asRecord(row.raw);
     const meta = asRecord(row.meta);
     const parsed = parseOptionMeta({ ...raw, ...meta }, row.symbol, row.nameFa);
     if (!parsed.side || !parsed.underlyingSymbol || parsed.strike == null || !(parsed.strike > 0)) continue;
-    if (parsed.daysLeft == null || optionExpired(parsed.daysLeft) || optionMetaExpired(row.meta, 'OPTION')) continue;
+    if (optionExpired(parsed.daysLeft) || optionMetaExpired(row.meta, 'OPTION')) continue;
     const premium = optionTradePrice(row).last ?? optionTradePrice(row).close;
-    if (premium == null || !(premium > 0)) continue;
     const spot =
       spotBySymbol.get(fold(parsed.underlyingSymbol)) ??
       (parsed.underlyingPrice != null && parsed.underlyingPrice > 0 ? parsed.underlyingPrice : null);
-    if (spot == null) continue;
-    const intrinsic = parsed.side === 'CALL' ? Math.max(0, spot - parsed.strike) : Math.max(0, parsed.strike - spot);
-    const profitPerUnit = intrinsic - premium;
-    if (!(profitPerUnit > 0)) continue;
-    const profitPct = (profitPerUnit / premium) * 100;
-    if (profitPct < MIN_PROFIT_PCT) continue;
     const contractSize = parsed.contractSize != null && parsed.contractSize > 0 ? parsed.contractSize : null;
     const sideFa = parsed.sideFa ?? (parsed.side === 'CALL' ? 'اختیار خرید' : 'اختیار فروش');
-    const real = realProfitForHolding({
-      profitPerUnit,
-      premium,
-      daysLeft: parsed.daysLeft,
-      contractSize,
-      inflationPct,
-    });
+    const intrinsic =
+      spot == null ? null : parsed.side === 'CALL' ? Math.max(0, spot - parsed.strike) : Math.max(0, parsed.strike - spot);
+    const profitPerUnit = intrinsic == null || premium == null ? null : intrinsic - premium;
+    const profitPct = profitPerUnit == null || premium == null || !(premium > 0) ? null : (profitPerUnit / premium) * 100;
+    const real =
+      profitPerUnit == null || premium == null || !(premium > 0) || parsed.daysLeft == null
+        ? null
+        : realProfitForHolding({
+            profitPerUnit,
+            premium,
+            daysLeft: parsed.daysLeft,
+            contractSize,
+            inflationPct,
+          });
+    const daysNote =
+      parsed.daysLeft == null ? '' : ` تا سررسید ${Math.round(parsed.daysLeft).toLocaleString('en-US')} روز مانده.`;
     out.push({
       id: row.id,
       symbol: row.symbol,
@@ -647,14 +663,14 @@ export function listValuableOptions(rows: BoardSource[], inflationPct: number | 
       daysLeft: parsed.daysLeft,
       contractSize,
       profitPerUnit,
-      profitRial: profitPerUnit * (contractSize ?? 1),
-      profitPct: Math.round(profitPct * 10) / 10,
+      profitRial: profitPerUnit == null ? null : profitPerUnit * (contractSize ?? 1),
+      profitPct: profitPct == null ? null : Math.round(profitPct * 10) / 10,
       realProfitRial: real?.realProfitRial ?? null,
       realProfitPct: real?.realProfitPct ?? null,
-      reasonFa: `ارزش ذاتی این ${sideFa} از قیمت اختیار بیشتر است و تا سررسید ${Math.round(parsed.daysLeft).toLocaleString('en-US')} روز مانده.`,
+      reasonFa: `${sideFa} سررسیدنشده.${daysNote}`,
     });
   }
-  out.sort((a, b) => b.profitRial - a.profitRial || b.profitPct - a.profitPct);
+  out.sort((a, b) => (b.profitRial ?? Number.NEGATIVE_INFINITY) - (a.profitRial ?? Number.NEGATIVE_INFINITY));
   return out;
 }
 
@@ -715,6 +731,34 @@ function asRecord(value: unknown): Record<string, unknown> {
 function text(value: unknown): string {
   const raw = unwrap(value);
   return raw == null ? '' : String(raw).trim();
+}
+
+function firstText(...values: unknown[]): string | null {
+  for (const value of values) {
+    const parsed = text(value);
+    if (parsed) return parsed;
+  }
+  return null;
+}
+
+function firstNumber(...values: unknown[]): number | null {
+  for (const value of values) {
+    const n = marketNumber(value);
+    if (n != null) return n;
+  }
+  return null;
+}
+
+function firstPositive(...values: unknown[]): number | null {
+  for (const value of values) {
+    const n = marketNumber(value);
+    if (n != null && n > 0) return n;
+  }
+  return null;
+}
+
+function optionSymbolRoot(symbol: string): string {
+  return fold(symbol).replace(/^[ضط]/, '').replace(/\d+$/g, '');
 }
 
 function fold(value: string): string {

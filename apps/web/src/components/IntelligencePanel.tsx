@@ -2,7 +2,6 @@
 
 import { FormEvent, useEffect, useState } from 'react';
 import { api, formatNum } from '@/lib/api';
-import { formatShamsiDate } from '@/lib/shamsi-date';
 
 type Level = 'LOW' | 'MEDIUM' | 'HIGH' | null;
 type Line = {
@@ -56,49 +55,132 @@ type Report = {
   };
 };
 
-type HistoryRow = {
-  id: string;
-  dateKey: string;
-  labelFa: string;
-  createdAt: string;
-  payload?: {
-    plan?: Array<{ labelFa: string; action: string; diffPct: number; reasonFa?: string }>;
-  } | null;
-};
-
 const ACTION_FA = { INCREASE: 'افزایش', DECREASE: 'کاهش', HOLD: 'بدون تغییر' };
 const HORIZON_FA = { SHORT: 'کوتاه', MEDIUM: 'میان‌مدت', LONG: 'بلند' };
 const LEVEL_FA: Record<string, string> = { LOW: 'کم', MEDIUM: 'متوسط', HIGH: 'زیاد' };
 
+type ShockDir = 'up' | 'down';
+type Shock = { dir: ShockDir; pct: string };
+type Shocks = { usdPct: Shock; equityPct: Shock; goldPct: Shock };
+
+const SHOCK_FIELDS: Array<{ key: keyof Shocks; title: string }> = [
+  { key: 'usdPct', title: 'دلار' },
+  { key: 'equityPct', title: 'سهام' },
+  { key: 'goldPct', title: 'طلا' },
+];
+
+const SCENARIO_PRESETS: Array<{ label: string; shocks: Shocks }> = [
+  {
+    label: 'دلار ۳۰ درصد بالا برود',
+    shocks: {
+      usdPct: { dir: 'up', pct: '30' },
+      equityPct: { dir: 'up', pct: '' },
+      goldPct: { dir: 'up', pct: '' },
+    },
+  },
+  {
+    label: 'دلار ۲۰ درصد پایین بیاید',
+    shocks: {
+      usdPct: { dir: 'down', pct: '20' },
+      equityPct: { dir: 'up', pct: '' },
+      goldPct: { dir: 'up', pct: '' },
+    },
+  },
+  {
+    label: 'سهام ۲۰ درصد پایین بیاید',
+    shocks: {
+      usdPct: { dir: 'up', pct: '' },
+      equityPct: { dir: 'down', pct: '20' },
+      goldPct: { dir: 'up', pct: '' },
+    },
+  },
+  {
+    label: 'سهام ۱۵ درصد بالا برود',
+    shocks: {
+      usdPct: { dir: 'up', pct: '' },
+      equityPct: { dir: 'up', pct: '15' },
+      goldPct: { dir: 'up', pct: '' },
+    },
+  },
+  {
+    label: 'طلا ۲۰ درصد بالا برود',
+    shocks: {
+      usdPct: { dir: 'up', pct: '' },
+      equityPct: { dir: 'up', pct: '' },
+      goldPct: { dir: 'up', pct: '20' },
+    },
+  },
+  {
+    label: 'طلا ۱۰ درصد پایین بیاید',
+    shocks: {
+      usdPct: { dir: 'up', pct: '' },
+      equityPct: { dir: 'up', pct: '' },
+      goldPct: { dir: 'down', pct: '10' },
+    },
+  },
+];
+
+function parsePct(raw: string): number | null {
+  const normalized = raw
+    .trim()
+    .replace(/[۰-۹]/g, (ch) => String('۰۱۲۳۴۵۶۷۸۹'.indexOf(ch)))
+    .replace(/[٠-٩]/g, (ch) => String('٠١٢٣٤٥٦٧٨٩'.indexOf(ch)))
+    .replace(/,/g, '.')
+    .replace(/٫/g, '.');
+  if (!normalized) return null;
+  const n = Number(normalized);
+  if (!Number.isFinite(n) || n < 0) return null;
+  return n;
+}
+
+function signedShock(shock: Shock): number | null {
+  const n = parsePct(shock.pct);
+  if (n == null || n === 0) return null;
+  const capped = shock.dir === 'down' ? Math.min(n, 80) : Math.min(n, 200);
+  return shock.dir === 'down' ? -capped : capped;
+}
+
+function assumptionFa(title: string, shock: Shock): string | null {
+  const n = parsePct(shock.pct);
+  if (n == null || n === 0) return null;
+  const amount = shock.dir === 'down' ? Math.min(n, 80) : Math.min(n, 200);
+  return `${title} ${formatNum(amount)} درصد ${shock.dir === 'up' ? 'بالا برود' : 'پایین بیاید'}`;
+}
+
 export function IntelligencePanel({ portfolioId }: { portfolioId: string }) {
   const [data, setData] = useState<Report | null>(null);
-  const [history, setHistory] = useState<HistoryRow[]>([]);
   const [open, setOpen] = useState<string | null>(null);
-  const [shocks, setShocks] = useState({ usdPct: '30', equityPct: '-20', goldPct: '20' });
-  const [scenario, setScenario] = useState<string>('');
+  const [shocks, setShocks] = useState<Shocks>({
+    usdPct: { dir: 'up', pct: '' },
+    equityPct: { dir: 'down', pct: '' },
+    goldPct: { dir: 'up', pct: '' },
+  });
+  const [scenario, setScenario] = useState<{ assumptions: string[]; impactFa: string } | null>(null);
+  const [scenarioError, setScenarioError] = useState('');
   const [error, setError] = useState('');
 
   useEffect(() => {
-    Promise.all([
-      api<Report>(`/intelligence/portfolios/${portfolioId}`),
-      api<HistoryRow[]>(`/intelligence/portfolios/${portfolioId}/history`),
-    ])
-      .then(([report, rows]) => {
-        setData(report);
-        setHistory(rows);
-      })
+    api<Report>(`/intelligence/portfolios/${portfolioId}`)
+      .then((report) => setData(report))
       .catch((e) => setError((e as Error).message));
   }, [portfolioId]);
 
-  async function runScenario(e: FormEvent) {
-    e.preventDefault();
-    setScenario('');
+  async function runScenario(next: Shocks) {
+    setScenario(null);
+    setScenarioError('');
+    const assumptions = SHOCK_FIELDS.map((field) => assumptionFa(field.title, next[field.key])).filter(
+      (line): line is string => Boolean(line),
+    );
+    if (!assumptions.length) {
+      setScenarioError('برای دلار، سهام یا طلا جهت و درصد را مشخص کنید.');
+      return;
+    }
+    const body: Record<string, number> = {};
+    for (const field of SHOCK_FIELDS) {
+      const signed = signedShock(next[field.key]);
+      if (signed != null) body[field.key] = signed;
+    }
     try {
-      const body: Record<string, number> = {};
-      for (const [key, raw] of Object.entries(shocks)) {
-        if (raw.trim() === '') continue;
-        body[key] = Number(raw);
-      }
       const res = await api<{
         enough: boolean;
         impactPct: number | null;
@@ -107,14 +189,25 @@ export function IntelligencePanel({ portfolioId }: { portfolioId: string }) {
         method: 'POST',
         body: JSON.stringify(body),
       });
-      setScenario(
-        res.enough && res.impactPct != null
-          ? `اثر مستقیم فرض شما حدود ${formatNum(res.impactPct)} درصد ارزش سبد است. ${res.noteFa}`
-          : res.noteFa,
-      );
+      if (!res.enough || res.impactPct == null) {
+        setScenarioError(res.noteFa);
+        return;
+      }
+      const impactFa =
+        res.impactPct > 0
+          ? `با این فرض، ارزش سبد حدود ${formatNum(res.impactPct)} درصد بالا می‌رود.`
+          : res.impactPct < 0
+            ? `با این فرض، ارزش سبد حدود ${formatNum(Math.abs(res.impactPct))} درصد پایین می‌آید.`
+            : 'با این فرض، اثر مستقیمی روی ارزش سبد دیده نمی‌شود.';
+      setScenario({ assumptions, impactFa });
     } catch (err) {
-      setScenario((err as Error).message);
+      setScenarioError((err as Error).message);
     }
+  }
+
+  function onScenarioSubmit(e: FormEvent) {
+    e.preventDefault();
+    void runScenario(shocks);
   }
 
   if (error) return <p className="text-sm text-red-700">{error}</p>;
@@ -259,50 +352,99 @@ export function IntelligencePanel({ portfolioId }: { portfolioId: string }) {
         )}
       </div>
 
-      <form onSubmit={runScenario} className="card space-y-3">
-        <h3 className="font-semibold">سناریو</h3>
-        <p className="text-sm text-navy-800/65">فرض شما روی همان کلاس، بدون همبستگی. نتیجه قطعی نیست.</p>
-        <div className="grid gap-3 sm:grid-cols-3">
-          <label className="text-sm">
-            دلار (درصد)
-            <input className="input mt-1" dir="ltr" value={shocks.usdPct} onChange={(e) => setShocks({ ...shocks, usdPct: e.target.value })} />
-          </label>
-          <label className="text-sm">
-            سهام (درصد)
-            <input className="input mt-1" dir="ltr" value={shocks.equityPct} onChange={(e) => setShocks({ ...shocks, equityPct: e.target.value })} />
-          </label>
-          <label className="text-sm">
-            طلا (درصد)
-            <input className="input mt-1" dir="ltr" value={shocks.goldPct} onChange={(e) => setShocks({ ...shocks, goldPct: e.target.value })} />
-          </label>
+      <form onSubmit={onScenarioSubmit} className="card space-y-4">
+        <div>
+          <h3 className="font-semibold">سناریو</h3>
+          <p className="mt-2 text-sm leading-7 text-navy-800/70">
+            برای هر دارایی مشخص کنید قیمت بالا برود یا پایین بیاید، و چند درصد. فیلد خالی در محاسبه نمی‌آید.
+            عدد منفی لازم نیست.
+          </p>
+        </div>
+        <div className="flex flex-wrap gap-2">
+          {SCENARIO_PRESETS.map((preset) => (
+            <button
+              key={preset.label}
+              type="button"
+              className="rounded-full border border-navy-900/15 px-3 py-1.5 text-sm text-navy-900 hover:bg-navy-50"
+              onClick={() => {
+                setShocks(preset.shocks);
+                void runScenario(preset.shocks);
+              }}
+            >
+              {preset.label}
+            </button>
+          ))}
+        </div>
+        <div className="grid gap-3 lg:grid-cols-3">
+          {SHOCK_FIELDS.map((field) => {
+            const shock = shocks[field.key];
+            const line = assumptionFa(field.title, shock);
+            return (
+              <div key={field.key} className="rounded-xl border border-navy-900/10 px-3 py-3">
+                <div className="font-medium">{field.title}</div>
+                <div className="mt-3 flex flex-wrap gap-2">
+                  <button
+                    type="button"
+                    className={`rounded-lg border px-3 py-1.5 text-sm ${
+                      shock.dir === 'up'
+                        ? 'border-emerald-700 bg-emerald-50 text-emerald-900'
+                        : 'border-navy-900/15 text-navy-800/70'
+                    }`}
+                    onClick={() => setShocks({ ...shocks, [field.key]: { ...shock, dir: 'up' } })}
+                  >
+                    بالا برود
+                  </button>
+                  <button
+                    type="button"
+                    className={`rounded-lg border px-3 py-1.5 text-sm ${
+                      shock.dir === 'down'
+                        ? 'border-red-700 bg-red-50 text-red-800'
+                        : 'border-navy-900/15 text-navy-800/70'
+                    }`}
+                    onClick={() => setShocks({ ...shocks, [field.key]: { ...shock, dir: 'down' } })}
+                  >
+                    پایین بیاید
+                  </button>
+                </div>
+                <label className="mt-3 block text-sm">
+                  چند درصد
+                  <input
+                    className="input mt-1"
+                    dir="ltr"
+                    inputMode="decimal"
+                    min={0}
+                    max={shock.dir === 'down' ? 80 : 200}
+                    value={shock.pct}
+                    placeholder="مثلاً ۲۰"
+                    onChange={(e) => setShocks({ ...shocks, [field.key]: { ...shock, pct: e.target.value } })}
+                  />
+                </label>
+                <p className="mt-2 text-sm leading-6 text-navy-800/70">
+                  {line ?? 'این مورد در سناریو نمی‌آید.'}
+                </p>
+              </div>
+            );
+          })}
         </div>
         <button className="btn-secondary w-fit" type="submit">
-          برآورد اثر مستقیم
+          برآورد اثر روی سبد
         </button>
-        {scenario && <p className="text-sm leading-7">{scenario}</p>}
+        {scenarioError && <p className="text-sm leading-7 text-red-700">{scenarioError}</p>}
+        {scenario && (
+          <div className="rounded-xl bg-navy-50 px-4 py-3 text-sm leading-7">
+            <p className="font-medium">فرض این سناریو</p>
+            <ul className="mt-1 list-disc pe-5">
+              {scenario.assumptions.map((line) => (
+                <li key={line}>{line}</li>
+              ))}
+            </ul>
+            <p className="mt-2">{scenario.impactFa}</p>
+            <p className="mt-1 text-navy-800/60">
+              این فقط اثر مستقیم همان فرض روی سهم همان دارایی در سبد است و آینده را تضمین نمی‌کند.
+            </p>
+          </div>
+        )}
       </form>
-
-      {history.length > 0 && (
-        <div className="card space-y-2">
-          <h3 className="font-semibold">تاریخچهٔ تشخیص</h3>
-          <ul className="space-y-1 text-sm">
-            {history.map((row) => {
-              const moves = (row.payload?.plan ?? []).filter((line) => line.action !== 'HOLD').slice(0, 2);
-              return (
-                <li key={row.id}>
-                  {formatShamsiDate(row.createdAt, 'medium')} — {row.labelFa}
-                  {moves.length > 0 && (
-                    <span className="text-navy-800/70">
-                      {' '}
-                      {moves.map((line) => `${line.labelFa} ${formatNum(line.diffPct)}`).join('، ')}
-                    </span>
-                  )}
-                </li>
-              );
-            })}
-          </ul>
-        </div>
-      )}
     </section>
   );
 }

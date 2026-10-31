@@ -15,6 +15,10 @@ class UpdateLlmDto {
 
   @IsOptional()
   @IsString()
+  systemModel?: string;
+
+  @IsOptional()
+  @IsString()
   apiToken?: string;
 
   @IsOptional()
@@ -45,6 +49,11 @@ class UpdatePromptDto {
 @UseGuards(JwtAuthGuard, AdminGuard)
 export class LlmController {
   constructor(private readonly llm: LlmService) {}
+
+  @Get('provider-wallet')
+  providerWallet() {
+    return this.llm.gapGptWallet();
+  }
 
   @Get('settings')
   get(@Req() req: { user: { userId: string } }) {

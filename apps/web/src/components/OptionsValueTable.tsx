@@ -1,6 +1,6 @@
 'use client';
 
-import { useMemo, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import { useRouter } from 'next/navigation';
 import { formatNum } from '@/lib/api';
 
@@ -11,14 +11,14 @@ export type OptionsTableRow = {
   side: 'CALL' | 'PUT';
   sideFa: string;
   underlyingSymbol: string;
-  underlyingPrice: number;
+  underlyingPrice: number | null;
   strike: number;
-  premium: number;
-  daysLeft: number;
+  premium: number | null;
+  daysLeft: number | null;
   contractSize: number | null;
-  profitPerUnit: number;
-  profitRial: number;
-  profitPct: number;
+  profitPerUnit: number | null;
+  profitRial: number | null;
+  profitPct: number | null;
   realProfitRial: number | null;
   realProfitPct: number | null;
   reasonFa: string;
@@ -71,6 +71,7 @@ export function OptionsValueTable({
   const [side, setSide] = useState<'' | 'CALL' | 'PUT'>('');
   const [sort, setSort] = useState<SortKey>('profit');
   const [sortDir, setSortDir] = useState<'asc' | 'desc'>('desc');
+  const [visible, setVisible] = useState(40);
 
   const rows = useMemo(() => {
     const text = q.trim();
@@ -96,6 +97,12 @@ export function OptionsValueTable({
     });
     return list;
   }, [items, q, side, sort, sortDir]);
+
+  useEffect(() => {
+    setVisible(40);
+  }, [items, q, side, sort, sortDir]);
+
+  const shown = rows.slice(0, visible);
 
   function toggleSort(column: SortKey) {
     if (sort === column) {
@@ -142,7 +149,7 @@ export function OptionsValueTable({
             </tr>
           </thead>
           <tbody>
-            {rows.map((row) => (
+            {shown.map((row) => (
               <tr
                 key={row.id}
                 className="cursor-pointer border-b border-navy-900/5 odd:bg-white even:bg-navy-50/40 hover:bg-gold-400/10"
@@ -151,16 +158,26 @@ export function OptionsValueTable({
                 <td className="px-3 py-2.5 font-medium">{row.symbol}</td>
                 <td className="px-3 py-2.5">{row.sideFa}</td>
                 <td className="px-3 py-2.5">{row.underlyingSymbol}</td>
-                <td className="px-3 py-2.5">{formatNum(row.underlyingPrice)}</td>
+                <td className="px-3 py-2.5">{row.underlyingPrice == null ? '—' : formatNum(row.underlyingPrice)}</td>
                 <td className="px-3 py-2.5">{formatNum(row.strike)}</td>
-                <td className="px-3 py-2.5">{formatNum(row.premium)}</td>
-                <td className="px-3 py-2.5">{Math.round(row.daysLeft).toLocaleString('fa-IR')}</td>
+                <td className="px-3 py-2.5">{row.premium == null || !(row.premium > 0) ? '—' : formatNum(row.premium)}</td>
                 <td className="px-3 py-2.5">
-                  <div className="font-medium text-emerald-700">{formatNum(row.profitRial)}</div>
-                  <div className="text-xs text-navy-800/55">
-                    {row.profitPct.toLocaleString('fa-IR')}٪ نسبت به قیمت اختیار
-                    {row.contractSize != null ? ` · اندازه ${formatNum(row.contractSize)}` : ''}
-                  </div>
+                  {row.daysLeft == null ? '—' : Math.round(row.daysLeft).toLocaleString('fa-IR')}
+                </td>
+                <td className="px-3 py-2.5">
+                  {row.profitRial == null || row.profitPct == null ? (
+                    <span className="text-navy-800/45">—</span>
+                  ) : (
+                    <>
+                      <div className={row.profitRial >= 0 ? 'font-medium text-emerald-700' : 'font-medium text-red-700'}>
+                        {Math.round(row.profitRial).toLocaleString('fa-IR')}
+                      </div>
+                      <div className="text-xs text-navy-800/55">
+                        {row.profitPct.toLocaleString('fa-IR')}٪ نسبت به قیمت اختیار
+                        {row.contractSize != null ? ` · اندازه ${formatNum(row.contractSize)}` : ''}
+                      </div>
+                    </>
+                  )}
                 </td>
                 <td className="px-3 py-2.5">
                   {row.realProfitRial == null || row.realProfitPct == null ? (
@@ -171,7 +188,8 @@ export function OptionsValueTable({
                         {Math.round(row.realProfitRial).toLocaleString('fa-IR')}
                       </div>
                       <div className="text-xs text-navy-800/55">
-                        {Math.round(row.realProfitPct).toLocaleString('fa-IR')}٪ پس از تورم {Math.round(row.daysLeft).toLocaleString('fa-IR')} روز
+                        {Math.round(row.realProfitPct).toLocaleString('fa-IR')}٪ پس از تورم{' '}
+                        {row.daysLeft == null ? '—' : Math.round(row.daysLeft).toLocaleString('fa-IR')} روز
                       </div>
                     </>
                   )}
@@ -182,11 +200,18 @@ export function OptionsValueTable({
         </table>
         {items && items.length === 0 && (
           <p className="p-6 text-sm text-navy-800/60">
-            اختیار ارزشمندی با سود قابل توجه و سررسید باقی‌مانده در دادهٔ امروز نیست.
+            اختیار سررسیدنشده‌ای در دادهٔ امروز نیست.
           </p>
         )}
         {items && items.length > 0 && rows.length === 0 && (
           <p className="p-6 text-sm text-navy-800/60">نمادی با این فیلتر پیدا نشد.</p>
+        )}
+        {shown.length < rows.length && (
+          <div className="flex justify-center p-4">
+            <button type="button" className="btn-secondary" onClick={() => setVisible((count) => count + 40)}>
+              نمایش {Math.min(40, rows.length - shown.length).toLocaleString('fa-IR')} ردیف دیگر
+            </button>
+          </div>
         )}
         {!items && loading && <p className="p-6 text-sm text-navy-800/60">در حال بارگذاری...</p>}
       </section>

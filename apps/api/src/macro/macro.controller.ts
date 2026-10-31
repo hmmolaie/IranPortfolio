@@ -61,6 +61,14 @@ export class MacroController {
       this.prisma.macroSnapshot.findMany({
         orderBy: { asOfDate: 'desc' },
         take: 120,
+        select: {
+          asOfDate: true,
+          inflationPct: true,
+          interestRatePct: true,
+          usdIrr: true,
+          geoRiskScore: true,
+          summaryFa: true,
+        },
       }),
       this.prices.latest(),
     ]);

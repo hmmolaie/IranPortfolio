@@ -1,10 +1,10 @@
 'use client';
 
-import { useEffect, useMemo, useState } from 'react';
+import { memo, useEffect, useMemo, useState } from 'react';
 import Link from 'next/link';
 import { useRouter } from 'next/navigation';
 import clsx from 'clsx';
-import { api, formatNum, getToken } from '@/lib/api';
+import { api, formatNum, getToken, getUserRole, setUserRole } from '@/lib/api';
 import { useToast } from '@/components/Toast';
 import { WaitingOverlay } from '@/components/WaitingOverlay';
 import { formatShamsiDateTime } from '@/lib/shamsi-date';
@@ -168,7 +168,7 @@ function MacroNewsCard({ item }: { item: MacroNews }) {
   );
 }
 
-function MarketCard({ m, featured }: { m: WorldMarket; featured?: boolean }) {
+const MarketCard = memo(function MarketCard({ m, featured }: { m: WorldMarket; featured?: boolean }) {
   const change = m.changePct ?? null;
   const up = (change ?? 0) >= 0;
   const pct = formatChange(change);
@@ -181,6 +181,7 @@ function MarketCard({ m, featured }: { m: WorldMarket; featured?: boolean }) {
         'relative block overflow-hidden rounded-2xl border border-navy-900/10 bg-white/95 shadow-soft transition hover:border-navy-900/25',
         featured ? 'p-5' : 'p-4',
       )}
+      style={{ contentVisibility: 'auto', containIntrinsicSize: '9rem' }}
     >
       <span
         className="absolute inset-y-0 start-0 w-1.5"
@@ -199,6 +200,10 @@ function MarketCard({ m, featured }: { m: WorldMarket; featured?: boolean }) {
             <img
               src={m.baseImageUrl}
               alt=""
+              width={48}
+              height={48}
+              loading="lazy"
+              decoding="async"
               className="h-full w-full object-cover"
               onError={() => setImgOk(false)}
             />
@@ -264,7 +269,7 @@ function MarketCard({ m, featured }: { m: WorldMarket; featured?: boolean }) {
       </div>
     </Link>
   );
-}
+});
 
 export default function WorldEconomyPage() {
   const router = useRouter();
@@ -275,7 +280,7 @@ export default function WorldEconomyPage() {
   const [query, setQuery] = useState('');
   const [quote, setQuote] = useState<QuoteFilter>('ALL');
   const [sort, setSort] = useState<SortKey>('volume');
-  const [visible, setVisible] = useState(48);
+  const [visible, setVisible] = useState(24);
 
   async function load() {
     const res = await api<WorldList>('/world-markets');
@@ -287,16 +292,31 @@ export default function WorldEconomyPage() {
       router.replace('/');
       return;
     }
-    api<{ role?: string }>('/users/me')
-      .then((u) => {
-        if (u.role !== 'ADMIN') {
-          router.replace('/dashboard');
-          return;
-        }
-        return load();
+    const cached = getUserRole();
+    if (cached && cached !== 'ADMIN') {
+      router.replace('/dashboard');
+      return;
+    }
+    let cancel = false;
+    const me = api<{ role?: string }>('/users/me').then((u) => {
+      if (u.role) setUserRole(u.role);
+      return u.role === 'ADMIN';
+    });
+    const data = cached === 'ADMIN' ? load() : me.then((ok) => (ok ? load() : undefined));
+    Promise.all([me, data])
+      .then(([ok]) => {
+        if (cancel) return;
+        if (!ok) router.replace('/dashboard');
       })
-      .catch(() => router.replace('/'))
-      .finally(() => setLoading(false));
+      .catch(() => {
+        if (!cancel) router.replace('/');
+      })
+      .finally(() => {
+        if (!cancel) setLoading(false);
+      });
+    return () => {
+      cancel = true;
+    };
   }, [router]);
 
   async function refresh() {
@@ -334,7 +354,7 @@ export default function WorldEconomyPage() {
   }, [data, query, quote, sort]);
 
   useEffect(() => {
-    setVisible(48);
+    setVisible(24);
   }, [query, quote, sort]);
 
   const gainers = useMemo(
@@ -554,7 +574,7 @@ export default function WorldEconomyPage() {
           </div>
           {visible < gridItems.length && (
             <div className="flex justify-center pt-2">
-              <button className="btn-secondary" onClick={() => setVisible((v) => v + 48)}>
+              <button className="btn-secondary" onClick={() => setVisible((v) => v + 24)}>
                 نمایش نمادهای بیشتر
               </button>
             </div>

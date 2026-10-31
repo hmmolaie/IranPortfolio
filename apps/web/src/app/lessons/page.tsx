@@ -24,6 +24,7 @@ const UPLOAD_STEPS = [
 export default function LessonsPage() {
   const router = useRouter();
   const [lessons, setLessons] = useState<Lesson[]>([]);
+  const [ready, setReady] = useState(false);
   const [file, setFile] = useState<File | null>(null);
   const [loading, setLoading] = useState(false);
   const [msg, setMsg] = useState('');
@@ -31,8 +32,12 @@ export default function LessonsPage() {
   const [saving, setSaving] = useState(false);
 
   async function load() {
-    const list = await api<Lesson[]>('/lessons');
-    setLessons(list);
+    try {
+      const list = await api<Lesson[]>('/lessons');
+      setLessons(list);
+    } finally {
+      setReady(true);
+    }
   }
 
   useEffect(() => {
@@ -177,7 +182,8 @@ export default function LessonsPage() {
             </div>
           </article>
         ))}
-        {lessons.length === 0 && (
+        {!ready && <p className="card text-sm text-navy-800/60">در حال بارگذاری...</p>}
+        {ready && lessons.length === 0 && (
           <p className="card text-sm text-navy-800/60">هنوز درس‌آموخته‌ای ثبت نشده است.</p>
         )}
       </div>

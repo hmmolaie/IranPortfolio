@@ -3,6 +3,7 @@ import { Cron } from '@nestjs/schedule';
 import { Prisma } from '@prisma/client';
 import { PrismaService } from '../prisma/prisma.service';
 import { tehranDateKey } from '../news/tehran-date';
+import { readRefreshSchedule } from '../content-refresh/refresh-schedule';
 import { extractBitpinSpot } from './bitpin-spot';
 import { readMarketSourceApi } from '../market-source/market-source-api';
 import { MarketService } from '../market/market.service';
@@ -113,6 +114,8 @@ function extractSpotPrices(payload: unknown): ParsedSpot {
 @Injectable()
 export class PricesService {
   private readonly logger = new Logger(PricesService.name);
+  private spotRefreshInFlight = false;
+  private spotRetryAfter = 0;
 
   constructor(
     private readonly prisma: PrismaService,
@@ -183,10 +186,26 @@ export class PricesService {
     });
   }
 
+  /** فقط ردیف ذخیره‌شده. API بیرونی با باز شدن صفحه صدا زده نمی‌شود. */
   async latest() {
-    const row = await this.prisma.spotPriceDaily.findFirst({ orderBy: { dateKey: 'desc' } });
+    const row = await this.prisma.spotPriceDaily.findFirst({
+      orderBy: { dateKey: 'desc' },
+      select: {
+        dateKey: true,
+        updatedAt: true,
+        usdIrr: true,
+        goldGramRial: true,
+        sourceRaw: true,
+      },
+    });
     if (!row) return null;
-    return { ...row, sourceNoteFa: this.sourceNoteFa(row.sourceRaw) };
+    return {
+      dateKey: row.dateKey,
+      updatedAt: row.updatedAt,
+      usdIrr: row.usdIrr,
+      goldGramRial: row.goldGramRial,
+      sourceNoteFa: this.sourceNoteFa(row.sourceRaw),
+    };
   }
 
   /** ثبت دستی نرخ دلار (و اختیاری طلا) برای امروز به وقت ایران */
@@ -240,18 +259,38 @@ export class PricesService {
     const rows = await this.prisma.spotPriceDaily.findMany({
       orderBy: { dateKey: 'desc' },
       take,
+      select: {
+        id: true,
+        dateKey: true,
+        asOfDate: true,
+        usdIrr: true,
+        goldGramRial: true,
+      },
     });
     return rows.reverse();
   }
 
-  /** هر روز ۱۲:۰۰ ظهر تهران — دلار و طلا از بیت‌پین */
-  @Cron('0 0 12 * * *', { timeZone: 'Asia/Tehran', name: 'spot-prices-1200' })
+  /** هر دقیقه سن آخرین قیمت را با فاصلهٔ ذخیره‌شده مقایسه می‌کند */
+  @Cron('* * * * *', { timeZone: 'Asia/Tehran', name: 'spot-prices-tick' })
   async scheduledRefresh() {
-    this.logger.log('بروزرسانی زمان‌بندی‌شده قیمت دلار و طلا از بیت‌پین (۱۲ ظهر ایران)');
+    if (this.spotRefreshInFlight || Date.now() < this.spotRetryAfter) return;
+    const schedule = await readRefreshSchedule(this.prisma);
+    const intervalMs = schedule.spotIntervalHours * 60 * 60 * 1000;
+    const latest = await this.prisma.spotPriceDaily.findFirst({
+      orderBy: { updatedAt: 'desc' },
+      select: { updatedAt: true },
+    });
+    if (latest && Date.now() - latest.updatedAt.getTime() < intervalMs) return;
+    this.spotRefreshInFlight = true;
+    this.logger.log(`بروزرسانی قیمت دلار و طلا (هر ${schedule.spotIntervalHours} ساعت)`);
     try {
       await this.refreshFromApi();
+      this.spotRetryAfter = 0;
     } catch (e) {
+      this.spotRetryAfter = Date.now() + Math.min(intervalMs, 15 * 60 * 1000);
       this.logger.error(`خطا در بروزرسانی قیمت: ${(e as Error).message}`);
+    } finally {
+      this.spotRefreshInFlight = false;
     }
   }
 

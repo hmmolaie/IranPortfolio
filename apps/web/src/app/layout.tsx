@@ -11,6 +11,9 @@ export const metadata: Metadata = {
     title: 'پیپ',
     statusBarStyle: 'black-translucent',
   },
+  icons: {
+    icon: [{ url: '/favicon.ico', sizes: '32x32', type: 'image/x-icon' }],
+  },
 };
 
 export default function RootLayout({ children }: { children: React.ReactNode }) {

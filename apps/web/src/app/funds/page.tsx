@@ -122,6 +122,7 @@ export default function FundsPage() {
   const router = useRouter();
   const [definitions, setDefinitions] = useState<FundDefinition[]>([]);
   const [funds, setFunds] = useState<Fund[]>([]);
+  const [listsReady, setListsReady] = useState(false);
   const [fundDefinitionId, setFundDefinitionId] = useState('');
   const [reportYear, setReportYear] = useState(() => String(getCurrentShamsiParts().year));
   const [reportMonthNum, setReportMonthNum] = useState(() => String(getCurrentShamsiParts().month));
@@ -157,7 +158,11 @@ export default function FundsPage() {
   }
 
   async function load() {
-    await Promise.all([loadDefinitions(), loadReports()]);
+    try {
+      await Promise.all([loadDefinitions(), loadReports()]);
+    } finally {
+      setListsReady(true);
+    }
   }
 
   useEffect(() => {
@@ -310,7 +315,8 @@ export default function FundsPage() {
         </p>
       </div>
 
-      {definitions.length === 0 && (
+      {!listsReady && <p className="text-sm text-navy-800/60">در حال بارگذاری...</p>}
+      {listsReady && definitions.length === 0 && (
         <p className="rounded-lg bg-gold-400/15 px-4 py-3 text-sm">
           هنوز صندوقی تعریف نشده. از بخش «صندوق‌ها» در{' '}
           <Link href="/settings" className="font-medium underline">
@@ -646,7 +652,8 @@ export default function FundsPage() {
             );
           })}
 
-          {filteredSorted.length === 0 && (
+          {!listsReady && <p className="text-sm text-navy-800/50">در حال بارگذاری...</p>}
+          {listsReady && filteredSorted.length === 0 && (
             <p className="text-sm text-navy-800/50">
               {funds.length === 0
                 ? 'هنوز گزارشی بارگذاری نشده.'

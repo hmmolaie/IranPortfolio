@@ -32,6 +32,7 @@ export default function ResellerPage() {
   const router = useRouter();
   const toast = useToast();
   const [users, setUsers] = useState<MineUser[]>([]);
+  const [usersReady, setUsersReady] = useState(false);
   const [form, setForm] = useState({ email: '', password: '', name: '' });
   const [passwordFor, setPasswordFor] = useState<MineUser | null>(null);
   const [password, setPassword] = useState('');
@@ -41,7 +42,11 @@ export default function ResellerPage() {
   const [report, setReport] = useState<ReportRow | null>(null);
 
   async function load() {
-    setUsers(await api<MineUser[]>('/users/mine'));
+    try {
+      setUsers(await api<MineUser[]>('/users/mine'));
+    } finally {
+      setUsersReady(true);
+    }
   }
 
   async function loadReport(e?: FormEvent) {
@@ -282,7 +287,14 @@ export default function ResellerPage() {
                 </td>
               </tr>
             ))}
-            {users.length === 0 && (
+            {!usersReady && (
+              <tr>
+                <td className="px-4 py-4 text-navy-800/50" colSpan={8}>
+                  در حال بارگذاری...
+                </td>
+              </tr>
+            )}
+            {usersReady && users.length === 0 && (
               <tr>
                 <td className="px-4 py-4 text-navy-800/50" colSpan={8}>
                   هنوز کاربری نساخته‌اید.

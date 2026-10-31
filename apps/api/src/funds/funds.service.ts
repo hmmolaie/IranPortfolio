@@ -159,13 +159,20 @@ export class FundsService {
     return this.prisma.fundReport.findMany({
       where: { userId },
       orderBy: [{ reportYear: 'desc' }, { reportMonthNum: 'desc' }, { createdAt: 'desc' }],
-      include: {
-        lessons: true,
-        fundDefinition: true,
-        holdings: {
-          orderBy: [{ action: 'asc' }, { weightPct: 'desc' }],
-          take: 60,
-        },
+      select: {
+        id: true,
+        fundName: true,
+        reportMonth: true,
+        reportYear: true,
+        reportMonthNum: true,
+        fundDefinitionId: true,
+        guessedStrategyFa: true,
+        rating: true,
+        managerTechnicalScore: true,
+        riskAppetiteScore: true,
+        professionalismScore: true,
+        useInSuggestions: true,
+        lessons: { select: { id: true, titleFa: true } },
         _count: { select: { holdings: true } },
       },
     });

@@ -44,6 +44,19 @@ type Report = {
   sections: UsageSection[];
 };
 
+type GapWallet = {
+  ok: boolean;
+  gapgpt: boolean;
+  unlimited: boolean;
+  remainUsd: number | null;
+  usedUsd: number | null;
+  remainRial: number | null;
+  usedRial: number | null;
+  usdIrr: number | null;
+  nativeRial: boolean;
+  messageFa: string;
+};
+
 export default function AiCostPage() {
   const router = useRouter();
   const [report, setReport] = useState<Report | null>(null);
@@ -54,8 +67,25 @@ export default function AiCostPage() {
   const [completionRate, setCompletionRate] = useState('0');
   const [defaultQuota, setDefaultQuota] = useState('0');
   const [quotaDraft, setQuotaDraft] = useState<Record<string, string>>({});
+  const [wallet, setWallet] = useState<GapWallet | null>(null);
 
   const load = useCallback(() => {
+    void api<GapWallet>('/llm/provider-wallet')
+      .then(setWallet)
+      .catch((e) =>
+        setWallet({
+          ok: false,
+          gapgpt: false,
+          unlimited: false,
+          remainUsd: null,
+          usedUsd: null,
+          remainRial: null,
+          usedRial: null,
+          usdIrr: null,
+          nativeRial: false,
+          messageFa: (e as Error).message,
+        }),
+      );
     return api<Report>('/ai-usage/admin')
       .then((data) => {
         setReport(data);
@@ -144,7 +174,7 @@ export default function AiCostPage() {
         <div>
           <h1 className="text-3xl font-bold">هزینه هوش مصنوعی</h1>
           <p className="mt-2 text-navy-800/70">
-            توکن و هزینهٔ هر کاربر و هر بخش، از آخرین ریست. صفر در سهمیه یعنی بدون سقف.
+            توکن و مبلغ ریالی هر کاربر و هر بخش، از آخرین ریست. صفر در سهمیه یعنی بدون سقف.
           </p>
         </div>
         <button type="button" className="btn-secondary text-red-700" disabled={busy} onClick={() => void resetCounters()}>
@@ -154,6 +184,28 @@ export default function AiCostPage() {
 
       {error && <p className="text-sm text-red-700">{error}</p>}
       {notice && <p className="text-sm text-emerald-700">{notice}</p>}
+
+      <section className="card space-y-2">
+        <h2 className="text-lg font-bold">باقی‌ماندهٔ گپ‌جی‌پی‌تی</h2>
+        {!wallet && <p className="text-sm text-navy-800/60">در حال خواندن موجودی...</p>}
+        {wallet && (
+          <>
+            <p className="text-sm leading-7 text-navy-800/70">{wallet.messageFa}</p>
+            {wallet.unlimited && <p className="text-2xl font-semibold">سقف کلید نامحدود</p>}
+            {wallet.remainRial != null && (
+              <p className="text-2xl font-semibold">{formatRial(wallet.remainRial)}</p>
+            )}
+            {wallet.remainUsd != null && (
+              <p className="text-sm text-navy-800/60" dir="ltr">
+                {wallet.remainUsd.toLocaleString('en-US', { maximumFractionDigits: 4 })} USD
+              </p>
+            )}
+            {wallet.usedRial != null && (
+              <p className="text-sm text-navy-800/70">مصرف ثبت‌شده در گپ: {formatRial(wallet.usedRial)}</p>
+            )}
+          </>
+        )}
+      </section>
 
       <form className="card grid gap-4 sm:grid-cols-3" onSubmit={(event) => void saveConfig(event)}>
         <label className="block">
@@ -229,7 +281,8 @@ export default function AiCostPage() {
       <div className="space-y-4">
         <h2 className="text-lg font-bold">بخش‌های سیستم</h2>
         <p className="text-sm text-navy-800/60">نمودار هر بخش، توکن چهارده روز اخیر به وقت تهران است.</p>
-        {(report?.sections ?? []).length === 0 && (
+        {!report && <p className="text-sm text-navy-800/60">در حال بارگذاری...</p>}
+        {report && report.sections.length === 0 && (
           <p className="text-sm text-navy-800/60">هنوز مصرفی ثبت نشده است.</p>
         )}
         {(report?.sections ?? []).map((section) => (
@@ -259,7 +312,7 @@ function DailyBars({ daily }: { daily: DailyBar[] }) {
             <div
               className="w-full rounded-t bg-navy-800/80"
               style={{ height: `${height}%` }}
-              title={`${formatShamsiDate(day.dateKey, 'short')} — ${formatNum(day.totalTokens)} توکن`}
+              title={`${formatShamsiDate(day.dateKey, 'short')} — ${formatNum(day.totalTokens)} توکن — ${formatRial(day.costRial)}`}
             />
             <span className="w-full truncate text-center text-[10px] text-navy-800/45">
               {formatShamsiDate(day.dateKey, 'short')}

@@ -74,6 +74,7 @@ async function waitForBackup(): Promise<string> {
 export default function SupportPage() {
   const router = useRouter();
   const [items, setItems] = useState<BackupItem[]>([]);
+  const [itemsReady, setItemsReady] = useState(false);
   const [error, setError] = useState('');
   const [notice, setNotice] = useState('');
   const [busy, setBusy] = useState(false);
@@ -81,8 +82,12 @@ export default function SupportPage() {
   const [file, setFile] = useState<File | null>(null);
 
   async function load() {
-    const data = await api<{ items: BackupItem[] }>('/admin/backup');
-    setItems(data.items);
+    try {
+      const data = await api<{ items: BackupItem[] }>('/admin/backup');
+      setItems(data.items);
+    } finally {
+      setItemsReady(true);
+    }
   }
 
   useEffect(() => {
@@ -194,7 +199,14 @@ export default function SupportPage() {
                   </td>
                 </tr>
               ))}
-              {items.length === 0 && (
+              {!itemsReady && (
+                <tr>
+                  <td className="py-3 text-navy-800/50" colSpan={4}>
+                    در حال بارگذاری...
+                  </td>
+                </tr>
+              )}
+              {itemsReady && items.length === 0 && (
                 <tr>
                   <td className="py-3 text-navy-800/50" colSpan={4}>
                     هنوز نسخه‌ای روی سرور نیست.

@@ -10,6 +10,7 @@ export type ContentRefreshSchedule = {
   worldMinute: number;
   marketHour: number;
   marketMinute: number;
+  spotIntervalHours: number;
 };
 
 const DEFAULTS: ContentRefreshSchedule = {
@@ -19,6 +20,7 @@ const DEFAULTS: ContentRefreshSchedule = {
   worldMinute: 0,
   marketHour: 22,
   marketMinute: 0,
+  spotIntervalHours: 1,
 };
 
 function clock(hour: number | null | undefined, minute: number | null | undefined, fallbackH: number, fallbackM: number) {
@@ -40,6 +42,7 @@ export async function readRefreshSchedule(prisma: PrismaService): Promise<Conten
     worldMinute: world.minute,
     marketHour: market.hour,
     marketMinute: market.minute,
+    spotIntervalHours: row?.spotIntervalHours ?? DEFAULTS.spotIntervalHours,
   };
 }
 
@@ -56,6 +59,13 @@ export async function saveRefreshSchedule(
   assertClock(data.iranNewsHour, data.iranNewsMinute, 'اخبار ایران');
   assertClock(data.worldHour, data.worldMinute, 'اقتصاد دنیا');
   assertClock(data.marketHour, data.marketMinute, 'بازار سهام');
+  if (
+    !Number.isInteger(data.spotIntervalHours) ||
+    data.spotIntervalHours < 1 ||
+    data.spotIntervalHours > 24
+  ) {
+    throw new BadRequestException('فاصلهٔ دلار و طلا باید بین ۱ و ۲۴ ساعت باشد');
+  }
   await prisma.contentRefreshSchedule.upsert({
     where: { id: CONFIG_ID },
     create: { id: CONFIG_ID, ...data },

@@ -55,6 +55,7 @@ export default function AdminUsersPage() {
   const router = useRouter();
   const toast = useToast();
   const [users, setUsers] = useState<AppUser[]>([]);
+  const [usersReady, setUsersReady] = useState(false);
   const [newUser, setNewUser] = useState({ email: '', password: '', name: '' });
   const [loading, setLoading] = useState(false);
   const [selected, setSelected] = useState<AppUser | null>(null);
@@ -68,8 +69,12 @@ export default function AdminUsersPage() {
   const [report, setReport] = useState<ResellerReport | null>(null);
 
   async function loadUsers() {
-    const list = await api<AppUser[]>('/users');
-    setUsers(list);
+    try {
+      const list = await api<AppUser[]>('/users');
+      setUsers(list);
+    } finally {
+      setUsersReady(true);
+    }
   }
 
   useEffect(() => {
@@ -523,7 +528,8 @@ export default function AdminUsersPage() {
             ))}
           </tbody>
         </table>
-        {users.length === 0 && (
+        {!usersReady && <p className="p-6 text-sm text-navy-800/60">در حال بارگذاری...</p>}
+        {usersReady && users.length === 0 && (
           <p className="p-6 text-sm text-navy-800/60">کاربری ثبت نشده.</p>
         )}
       </section>

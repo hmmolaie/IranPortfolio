@@ -358,6 +358,14 @@ export class MarketService implements OnModuleInit {
           priceBars: {
             orderBy: { tradeDate: 'desc' },
             take: 1,
+            select: {
+              lastPrice: true,
+              closePrice: true,
+              eps: true,
+              pe: true,
+              volume: true,
+              tradeDate: true,
+            },
           },
         },
       }),
@@ -385,7 +393,7 @@ export class MarketService implements OnModuleInit {
         lastPrice: bar?.lastPrice ?? null,
         closePrice: bar?.closePrice ?? null,
         volume: bar?.volume ?? null,
-        raw: bar?.raw ?? null,
+        raw: null,
         meta: i.meta,
       };
       const extra = describeQuote(source);
@@ -434,7 +442,13 @@ export class MarketService implements OnModuleInit {
   async getUnderlyingOptions(id: string) {
     const inst = await this.prisma.instrument.findUnique({
       where: { id },
-      include: { priceBars: { orderBy: { tradeDate: 'desc' }, take: 1 } },
+      include: {
+        priceBars: {
+          orderBy: { tradeDate: 'desc' },
+          take: 1,
+          select: { lastPrice: true, closePrice: true, volume: true },
+        },
+      },
     });
     if (!inst) return null;
     const spot = inst.priceBars[0]?.lastPrice ?? inst.priceBars[0]?.closePrice ?? null;
@@ -452,21 +466,32 @@ export class MarketService implements OnModuleInit {
         items: [],
       };
     }
-    const options = await this.prisma.instrument.findMany({
-      where: { isActive: true, assetType: AssetType.OPTION },
-      select: {
-        id: true,
-        symbol: true,
-        nameFa: true,
-        assetType: true,
-        meta: true,
-        priceBars: {
-          orderBy: { tradeDate: 'desc' },
-          take: 1,
-          select: { lastPrice: true, closePrice: true, volume: true, raw: true },
-        },
-      },
-    });
+    const options = await this.prisma.$queryRaw<
+      Array<{
+        id: string;
+        symbol: string;
+        nameFa: string;
+        meta: unknown;
+        lastPrice: number | null;
+        closePrice: number | null;
+        volume: number | null;
+        baseId: string | null;
+      }>
+    >`
+      SELECT i.id, i.symbol, i."nameFa", i.meta,
+             b."lastPrice", b."closePrice", b.volume,
+             NULLIF(b.raw->>'base_id', '') AS "baseId"
+      FROM "Instrument" i
+      LEFT JOIN LATERAL (
+        SELECT "lastPrice", "closePrice", volume, raw
+        FROM "PriceBar"
+        WHERE "instrumentId" = i.id
+        ORDER BY "tradeDate" DESC
+        LIMIT 1
+      ) b ON true
+      WHERE i."isActive" = true
+        AND i."assetType" = 'OPTION'::"AssetType"
+    `;
     const inflationPct = await this.latestInflationPct();
     const bar = inst.priceBars[0];
     const valued = valuableOptionsForUnderlying(
@@ -478,21 +503,28 @@ export class MarketService implements OnModuleInit {
         lastPrice: bar?.lastPrice ?? null,
         closePrice: bar?.closePrice ?? null,
         volume: bar?.volume ?? null,
-        raw: bar?.raw ?? null,
+        raw: null,
         meta: inst.meta,
       },
       inst.insCode,
-      options.map((row) => ({
-        id: row.id,
-        symbol: row.symbol,
-        nameFa: row.nameFa,
-        assetType: row.assetType,
-        lastPrice: row.priceBars[0]?.lastPrice ?? null,
-        closePrice: row.priceBars[0]?.closePrice ?? null,
-        volume: row.priceBars[0]?.volume ?? null,
-        raw: row.priceBars[0]?.raw ?? null,
-        meta: row.meta,
-      })),
+      options.map((row) => {
+        const meta =
+          row.meta && typeof row.meta === 'object' && !Array.isArray(row.meta)
+            ? { ...(row.meta as Record<string, unknown>) }
+            : {};
+        if (row.baseId) meta.base_id = row.baseId;
+        return {
+          id: row.id,
+          symbol: row.symbol,
+          nameFa: row.nameFa,
+          assetType: 'OPTION' as const,
+          lastPrice: row.lastPrice,
+          closePrice: row.closePrice,
+          volume: row.volume,
+          raw: null,
+          meta,
+        };
+      }),
       inflationPct,
     );
     return {
@@ -609,7 +641,18 @@ export class MarketService implements OnModuleInit {
     const i = await this.prisma.instrument.findUnique({
       where: { id },
       include: {
-        priceBars: { orderBy: { tradeDate: 'desc' }, take: 1 },
+        priceBars: {
+          orderBy: { tradeDate: 'desc' },
+          take: 1,
+          select: {
+            lastPrice: true,
+            closePrice: true,
+            eps: true,
+            pe: true,
+            volume: true,
+            tradeDate: true,
+          },
+        },
       },
     });
     if (!i || optionMetaExpired(i.meta, i.assetType)) return null;
@@ -634,6 +677,14 @@ export class MarketService implements OnModuleInit {
       where: { instrumentId: id },
       orderBy: { tradeDate: 'desc' },
       take: Math.min(Math.max(limit, 1), 2000),
+      select: {
+        tradeDate: true,
+        lastPrice: true,
+        closePrice: true,
+        eps: true,
+        pe: true,
+        volume: true,
+      },
     });
     return bars
       .reverse()
@@ -1291,6 +1342,7 @@ export class MarketService implements OnModuleInit {
         where: { instrumentId: instrument.id },
         orderBy: { tradeDate: 'desc' },
         take,
+        select: { tradeDate: true, closePrice: true, lastPrice: true },
       });
       const chronological = [...bars].reverse();
       const history = chronological

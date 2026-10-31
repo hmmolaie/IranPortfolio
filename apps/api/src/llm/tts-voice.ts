@@ -40,7 +40,7 @@ export function isGeminiSpeechModel(model: string): boolean {
 }
 
 export function isGapGptBase(baseUrl: string): boolean {
-  return /gapgpt\.app/i.test(baseUrl);
+  return /gapgpt\.app|gapapi\.com/i.test(baseUrl);
 }
 
 /**

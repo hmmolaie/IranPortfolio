@@ -3,7 +3,7 @@
 import Link from 'next/link';
 import { usePathname, useRouter } from 'next/navigation';
 import { getToken, clearSession, api, getUserRole, setUserRole, UserRole, touchSession, refreshSessionIfNeeded, sessionTimedOut, formatNum, formatRial } from '@/lib/api';
-import { useCallback, useEffect, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import clsx from 'clsx';
 import { ToastProvider, useToast } from '@/components/Toast';
 import { InstallAppPrompt } from '@/components/InstallAppPrompt';
@@ -36,6 +36,7 @@ export function AppShell({ children }: { children: React.ReactNode }) {
   const [role, setRole] = useState<UserRole | null>(null);
   const [optionsAccess, setOptionsAccess] = useState(false);
   const [userLabel, setUserLabel] = useState('');
+  const meLoaded = useRef(false);
   const isAuthPage = pathname === '/login' || pathname === '/login2' || pathname === '/register' || pathname === '/';
 
   useEffect(() => {
@@ -50,6 +51,7 @@ export function AppShell({ children }: { children: React.ReactNode }) {
     }
 
     if (!hasToken) {
+      meLoaded.current = false;
       setRole(null);
       setOptionsAccess(false);
       setUserLabel('');
@@ -58,6 +60,7 @@ export function AppShell({ children }: { children: React.ReactNode }) {
 
     const cached = getUserRole();
     if (cached) setRole(cached);
+    if (meLoaded.current) return;
     api<{ role?: UserRole; email?: string; name?: string | null; optionsMarketAccess?: boolean }>('/users/me')
       .then((u) => {
         if (u.role) {
@@ -66,8 +69,10 @@ export function AppShell({ children }: { children: React.ReactNode }) {
         }
         setOptionsAccess(u.role === 'ADMIN' || Boolean(u.optionsMarketAccess));
         setUserLabel(u.name?.trim() || u.email || '');
+        meLoaded.current = true;
       })
       .catch(() => {
+        meLoaded.current = false;
         clearSession();
         setAuthed(false);
         setRole(null);

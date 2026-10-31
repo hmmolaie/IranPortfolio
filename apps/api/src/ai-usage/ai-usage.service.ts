@@ -27,8 +27,23 @@ export type TokenUse = {
 
 const ZERO_RATES = { promptRialPer1k: 0, completionRialPer1k: 0, defaultQuotaTokens: 0, resetAt: null as Date | null };
 
+type UsageSums = {
+  promptTokens: number;
+  completionTokens: number;
+  totalTokens: number;
+  costRial: number;
+};
+
+type MeSnapshot = UsageSums & {
+  limitTokens: number;
+  unlimited: boolean;
+};
+
 @Injectable()
 export class AiUsageService {
+  private readonly meCache = new Map<string, { at: number; value: MeSnapshot }>();
+  private readonly meFlight = new Map<string, Promise<MeSnapshot>>();
+
   constructor(
     private readonly prisma: PrismaService,
     private readonly users: UsersService,
@@ -96,11 +111,34 @@ export class AiUsageService {
     } catch {
       /* ثبت مصرف نباید پاسخ مدل را خراب کند */
     }
+    if (userId) this.meCache.delete(userId);
     aiUsageStore.getStore()?.hits.push(hit);
     return hit;
   }
 
-  async me(userId: string) {
+  async me(userId: string): Promise<MeSnapshot> {
+    const cached = this.meCache.get(userId);
+    if (cached && Date.now() - cached.at < 8_000) return cached.value;
+    const pending = this.meFlight.get(userId);
+    if (pending) return pending;
+    const job = this.loadMe(userId)
+      .then((value) => {
+        this.meCache.set(userId, { at: Date.now(), value });
+        return value;
+      })
+      .catch((err: unknown) => {
+        const stale = this.meCache.get(userId);
+        if (stale) return stale.value;
+        throw err;
+      })
+      .finally(() => {
+        this.meFlight.delete(userId);
+      });
+    this.meFlight.set(userId, job);
+    return job;
+  }
+
+  private async loadMe(userId: string): Promise<MeSnapshot> {
     const [limit, sums] = await Promise.all([this.limitFor(userId), this.sumsForUser(userId)]);
     return {
       limitTokens: limit,
@@ -124,17 +162,7 @@ export class AiUsageService {
           aiQuota: { select: { limitTokens: true } },
         },
       }),
-      this.prisma.aiUsageLog.groupBy({
-        where: counted,
-        by: ['userId', 'section'],
-        _sum: {
-          promptTokens: true,
-          completionTokens: true,
-          totalTokens: true,
-          costRial: true,
-        },
-        _count: { _all: true },
-      }),
+      this.groupedUsage(config.resetAt),
       this.prisma.aiUsageLog.findMany({
         where: { ...counted, dateKey: { gte: since } },
         select: { section: true, dateKey: true, totalTokens: true, costRial: true },
@@ -151,11 +179,11 @@ export class AiUsageService {
     >();
     for (const row of logs) {
       const add = {
-        promptTokens: row._sum.promptTokens ?? 0,
-        completionTokens: row._sum.completionTokens ?? 0,
-        totalTokens: row._sum.totalTokens ?? 0,
-        costRial: row._sum.costRial ?? 0,
-        calls: row._count._all,
+        promptTokens: asCount(row.promptTokens),
+        completionTokens: asCount(row.completionTokens),
+        totalTokens: asCount(row.totalTokens),
+        costRial: asCount(row.costRial),
+        calls: asCount(row.calls),
       };
       if (row.userId) {
         const prev = userTotals.get(row.userId) ?? emptySums();
@@ -365,29 +393,79 @@ export class AiUsageService {
 
   private async usedTokens(userId: string) {
     const config = await this.rates();
-    const sum = await this.prisma.aiUsageLog.aggregate({
-      where: { userId, ...this.countedFilter(config.resetAt) },
-      _sum: { totalTokens: true },
-    });
-    return sum._sum.totalTokens ?? 0;
+    const sums = await this.sumUsage(userId, config.resetAt);
+    return sums.totalTokens;
   }
 
   private async sumsForUser(userId: string) {
     const config = await this.rates();
-    const sum = await this.prisma.aiUsageLog.aggregate({
-      where: { userId, ...this.countedFilter(config.resetAt) },
-      _sum: {
-        promptTokens: true,
-        completionTokens: true,
-        totalTokens: true,
-        costRial: true,
-      },
-    });
+    return this.sumUsage(userId, config.resetAt);
+  }
+
+  /**
+   * جمع SQL از نوع bigint است. aggregateٔ پریزما اگر از حد عدد ۳۲بیتی بگذرد
+   * اتصال را می‌بندد و nginx برای همین درخواست ۵۰۲ برمی‌گرداند.
+   */
+  private async groupedUsage(resetAt: Date | null) {
+    const rows = resetAt
+      ? await this.prisma.$queryRaw<Array<Record<string, unknown>>>`
+          SELECT "userId", section,
+            COALESCE(SUM("promptTokens"), 0)::float8 AS "promptTokens",
+            COALESCE(SUM("completionTokens"), 0)::float8 AS "completionTokens",
+            COALESCE(SUM("totalTokens"), 0)::float8 AS "totalTokens",
+            COALESCE(SUM("costRial"), 0)::float8 AS "costRial",
+            COUNT(*)::float8 AS calls
+          FROM "AiUsageLog"
+          WHERE "createdAt" > ${resetAt}
+          GROUP BY "userId", section
+        `
+      : await this.prisma.$queryRaw<Array<Record<string, unknown>>>`
+          SELECT "userId", section,
+            COALESCE(SUM("promptTokens"), 0)::float8 AS "promptTokens",
+            COALESCE(SUM("completionTokens"), 0)::float8 AS "completionTokens",
+            COALESCE(SUM("totalTokens"), 0)::float8 AS "totalTokens",
+            COALESCE(SUM("costRial"), 0)::float8 AS "costRial",
+            COUNT(*)::float8 AS calls
+          FROM "AiUsageLog"
+          GROUP BY "userId", section
+        `;
+    return rows.map((row) => ({
+      userId: typeof row.userId === 'string' ? row.userId : null,
+      section: typeof row.section === 'string' ? row.section : '',
+      promptTokens: row.promptTokens,
+      completionTokens: row.completionTokens,
+      totalTokens: row.totalTokens,
+      costRial: row.costRial,
+      calls: row.calls,
+    }));
+  }
+
+  private async sumUsage(userId: string, resetAt: Date | null): Promise<UsageSums> {
+    const rows = resetAt
+      ? await this.prisma.$queryRaw<Array<Record<string, unknown>>>`
+          SELECT
+            COALESCE(SUM("promptTokens"), 0)::float8 AS "promptTokens",
+            COALESCE(SUM("completionTokens"), 0)::float8 AS "completionTokens",
+            COALESCE(SUM("totalTokens"), 0)::float8 AS "totalTokens",
+            COALESCE(SUM("costRial"), 0)::float8 AS "costRial"
+          FROM "AiUsageLog"
+          WHERE "userId" = ${userId} AND "createdAt" > ${resetAt}
+        `
+      : await this.prisma.$queryRaw<Array<Record<string, unknown>>>`
+          SELECT
+            COALESCE(SUM("promptTokens"), 0)::float8 AS "promptTokens",
+            COALESCE(SUM("completionTokens"), 0)::float8 AS "completionTokens",
+            COALESCE(SUM("totalTokens"), 0)::float8 AS "totalTokens",
+            COALESCE(SUM("costRial"), 0)::float8 AS "costRial"
+          FROM "AiUsageLog"
+          WHERE "userId" = ${userId}
+        `;
+    const row = rows[0] ?? {};
     return {
-      promptTokens: sum._sum.promptTokens ?? 0,
-      completionTokens: sum._sum.completionTokens ?? 0,
-      totalTokens: sum._sum.totalTokens ?? 0,
-      costRial: sum._sum.costRial ?? 0,
+      promptTokens: asCount(row.promptTokens),
+      completionTokens: asCount(row.completionTokens),
+      totalTokens: asCount(row.totalTokens),
+      costRial: asCount(row.costRial),
     };
   }
 }
@@ -428,4 +506,10 @@ function clampNum(value: number): number {
 
 function clampInt(value: number): number {
   return Math.round(clampNum(value));
+}
+
+function asCount(value: unknown): number {
+  const n = typeof value === 'number' ? value : Number(value);
+  if (!Number.isFinite(n) || n <= 0) return 0;
+  return Math.round(n);
 }

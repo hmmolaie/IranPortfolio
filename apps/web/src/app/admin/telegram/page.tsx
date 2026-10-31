@@ -63,6 +63,7 @@ export default function TelegramNotifyPage() {
     } | null,
   });
   const [links, setLinks] = useState<TelegramLink[]>([]);
+  const [linksReady, setLinksReady] = useState(false);
   const [busy, setBusy] = useState(false);
   const [feedback, setFeedback] = useState<{ ok: boolean; text: string } | null>(null);
 
@@ -109,7 +110,11 @@ export default function TelegramNotifyPage() {
   }
 
   async function loadLinks() {
-    setLinks(await api<TelegramLink[]>('/telegram/links'));
+    try {
+      setLinks(await api<TelegramLink[]>('/telegram/links'));
+    } finally {
+      setLinksReady(true);
+    }
   }
 
   useEffect(() => {
@@ -492,7 +497,8 @@ export default function TelegramNotifyPage() {
             ))}
           </tbody>
         </table>
-        {links.length === 0 && <p className="p-6 text-sm text-navy-800/60">کسی به ربات وصل نیست.</p>}
+        {!linksReady && <p className="p-6 text-sm text-navy-800/60">در حال بارگذاری...</p>}
+        {linksReady && links.length === 0 && <p className="p-6 text-sm text-navy-800/60">کسی به ربات وصل نیست.</p>}
       </section>
     </div>
   );

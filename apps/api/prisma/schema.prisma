@@ -294,6 +294,8 @@ model LlmSetting {
   userId               String  @unique
   baseUrl              String  @default("https://api.openai.com/v1")
   model                String  @default("gpt-4o-mini")
+  /// مدل کارهای خودکار سیستم. خالی یعنی همان مدل اصلی.
+  systemModel          String  @default("")
   apiTokenEncrypted    String?
   usePlatformFallback  Boolean @default(true)
   user                 User    @relation(fields: [userId], references: [id], onDelete: Cascade)
@@ -642,7 +644,7 @@ model AiTrace {
   @@index([purpose])
 }
 
-/** خطای فنی مدل زبانی برای نمایش کامل در تنظیمات ادمین */
+/** خطای مدل زبانی، بک‌اند و سیستم برای نمایش در تنظیمات ادمین */
 model LlmErrorLog {
   id         String   @id @default(cuid())
   userId     String?
@@ -744,6 +746,8 @@ model ContentRefreshSchedule {
   /// پیش‌فرض ۲۲:۰۰ تهران، همان زمان قبلی به‌روزرسانی بازار
   marketHour      Int      @default(22)
   marketMinute    Int      @default(0)
+  /// فاصلهٔ خواندن قیمت دلار و طلا در پس‌زمینه، به ساعت
+  spotIntervalHours Int    @default(1)
   createdAt       DateTime @default(now())
   updatedAt       DateTime @updatedAt
 }

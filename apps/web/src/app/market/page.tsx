@@ -143,6 +143,7 @@ function IndexSparkline({ index, onOpen }: { index: MarketIndex; onOpen?: () => 
 export default function MarketPage() {
   const router = useRouter();
   const [quotes, setQuotes] = useState<Quote[]>([]);
+  const [quotesReady, setQuotesReady] = useState(false);
   const [indices, setIndices] = useState<MarketIndex[]>([]);
   const [q, setQ] = useState('');
   const [assetType, setAssetType] = useState('');
@@ -171,23 +172,27 @@ export default function MarketPage() {
     direction = sortDirRef.current,
   ) {
     const seq = ++requestSeq.current;
-    const params = new URLSearchParams();
-    const text = query.trim();
-    if (text) params.set('q', text);
-    if (type) params.set('assetType', type);
-    if (sortBy) {
-      params.set('sort', sortBy);
-      params.set('dir', direction);
+    try {
+      const params = new URLSearchParams();
+      const text = query.trim();
+      if (text) params.set('q', text);
+      if (type) params.set('assetType', type);
+      if (sortBy) {
+        params.set('sort', sortBy);
+        params.set('dir', direction);
+      }
+      params.set('take', String(PAGE_SIZE));
+      params.set('page', String(nextPage));
+      const data = await api<QuotesPage>(`/market/quotes?${params}`);
+      if (seq !== requestSeq.current) return;
+      setQuotes(data.items ?? []);
+      setTotal(data.total ?? 0);
+      setTotalPages(data.totalPages ?? 1);
+      setPage(data.page ?? nextPage);
+      setUpdatedAt(data.updatedAt ?? null);
+    } finally {
+      if (seq === requestSeq.current) setQuotesReady(true);
     }
-    params.set('take', String(PAGE_SIZE));
-    params.set('page', String(nextPage));
-    const data = await api<QuotesPage>(`/market/quotes?${params}`);
-    if (seq !== requestSeq.current) return;
-    setQuotes(data.items ?? []);
-    setTotal(data.total ?? 0);
-    setTotalPages(data.totalPages ?? 1);
-    setPage(data.page ?? nextPage);
-    setUpdatedAt(data.updatedAt ?? null);
   }
 
   async function loadIndices() {
@@ -304,7 +309,7 @@ export default function MarketPage() {
             </button>
           )}
           <p className="text-xs text-navy-800/50">
-            آخرین به‌روزرسانی: {updatedLabel ?? 'هنوز انجام نشده'}
+            آخرین به‌روزرسانی: {!quotesReady ? 'در حال بارگذاری...' : updatedLabel ?? 'هنوز انجام نشده'}
           </p>
         </div>
       </div>
@@ -388,7 +393,10 @@ export default function MarketPage() {
             ))}
           </tbody>
         </table>
-        {quotes.length === 0 && (
+        {!quotesReady && (
+          <p className="p-6 text-sm text-navy-800/60">در حال بارگذاری...</p>
+        )}
+        {quotesReady && quotes.length === 0 && (
           <p className="p-6 text-sm text-navy-800/60">
             {q.trim() || assetType
               ? 'نمادی با این جستجو پیدا نشد.'

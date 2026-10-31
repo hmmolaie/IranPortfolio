@@ -43,7 +43,7 @@ services:
       API_PORT: 3001
       # فقط شبکهٔ داخلی داکر؛ روی کارت شبکهٔ هاست publish نمی‌شود
       API_LISTEN_HOST: 0.0.0.0
-      DATABASE_URL: postgresql://${POSTGRES_USER:-sabadyar}:${POSTGRES_PASSWORD:-sabadyar}@db:5432/${POSTGRES_DB:-sabadyar}?schema=public
+      DATABASE_URL: postgresql://${POSTGRES_USER:-sabadyar}:${POSTGRES_PASSWORD:-sabadyar}@db:5432/${POSTGRES_DB:-sabadyar}?schema=public&connection_limit=10&pool_timeout=15
       JWT_SECRET: ${JWT_SECRET:-change-me-to-a-long-random-string}
       LLM_TOKEN_ENCRYPTION_KEY: ${LLM_TOKEN_ENCRYPTION_KEY:-0123456789abcdef0123456789abcdef}
       CORS_ORIGIN: ${CORS_ORIGIN:-https://sabad-yar.ir,http://sabad-yar.ir,http://46.249.100.230}

@@ -35,6 +35,11 @@ class SaveRefreshScheduleDto {
   @Min(0)
   @Max(59)
   marketMinute!: number;
+
+  @IsInt()
+  @Min(1)
+  @Max(24)
+  spotIntervalHours!: number;
 }
 
 class ListQueryDto {
