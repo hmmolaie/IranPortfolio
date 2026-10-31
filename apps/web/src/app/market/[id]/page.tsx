@@ -365,8 +365,11 @@ export default function MarketInstrumentPage() {
 
   return (
     <div className="space-y-6 bg-transparent">
-      <Link href="/market" className="text-sm text-navy-800/50 transition hover:text-navy-900">
-        ← بازگشت به بازار سهام تهران
+      <Link
+        href={inst.assetType === 'OPTION' ? '/options' : '/market'}
+        className="text-sm text-navy-800/50 transition hover:text-navy-900"
+      >
+        {inst.assetType === 'OPTION' ? '← بازگشت به بازار اختیار معامله' : '← بازگشت به بازار سهام تهران'}
       </Link>
 
       <div>

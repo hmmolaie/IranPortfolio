@@ -1,6 +1,7 @@
 import { ForbiddenException, Injectable, NotFoundException } from '@nestjs/common';
 import { Prisma } from '@prisma/client';
 import { PrismaService } from '../prisma/prisma.service';
+import { optionMetaExpired } from '../market/option-board';
 import { tehranDateKey } from '../news/tehran-date';
 import {
   CLASS_KEYS,
@@ -303,10 +304,12 @@ export class IntelligenceService {
       optionIds.length
         ? (
             await this.prisma.instrument.findMany({
-              where: { id: { in: optionIds }, meta: { path: ['daysLeft'], lte: 0 } },
-              select: { id: true },
+              where: { id: { in: optionIds } },
+              select: { id: true, nameFa: true, symbol: true, meta: true, assetType: true },
             })
-          ).map((row) => row.id)
+          )
+            .filter((row) => optionMetaExpired(row.meta, row.assetType, { nameFa: row.nameFa, symbol: row.symbol }))
+            .map((row) => row.id)
         : [],
     );
     const items = held.filter((item) => !(item.assetType === 'OPTION' && item.instrumentId && expiredIds.has(item.instrumentId)));

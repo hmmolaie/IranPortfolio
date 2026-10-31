@@ -23,6 +23,7 @@ import {
   optionMetaExpired,
   optionTradePrice,
   parseOptionMeta,
+  tehranJalaliCompact,
   valuableOptionsForUnderlying,
   type BoardSource,
   type OptionBoard,
@@ -45,6 +46,63 @@ export function excludeExpiredOptions(): Prisma.InstrumentWhereInput {
       AND: [{ assetType: AssetType.OPTION }, { meta: { path: ['daysLeft'], lte: 0 } }],
     },
   };
+}
+
+const expiredNameIds = new Map<string, string[]>();
+
+/** اختیارهایی که تاریخ سررسید عنوانشان گذشته است، حتی اگر روز ماندهٔ ذخیره‌شده مثبت باشد. */
+export async function nameExpiredOptionIds(prisma: PrismaService): Promise<string[]> {
+  const today = tehranJalaliCompact();
+  const cached = expiredNameIds.get(today);
+  if (cached) return cached;
+  const rows = await prisma.$queryRaw<{ id: string }[]>`
+    SELECT id
+    FROM "Instrument"
+    WHERE "assetType" = 'OPTION'::"AssetType"
+      AND substring(
+        translate(btrim("nameFa"), '۰۱۲۳۴۵۶۷۸۹٠١٢٣٤٥٦٧٨٩', '01234567890123456789')
+        from '([12][0-9]{7})$'
+      ) IS NOT NULL
+      AND substring(
+        translate(btrim("nameFa"), '۰۱۲۳۴۵۶۷۸۹٠١٢٣٤٥٦٧٨٩', '01234567890123456789')
+        from '([12][0-9]{7})$'
+      ) <= ${today}
+  `;
+  const ids = rows.map((row) => row.id);
+  expiredNameIds.clear();
+  expiredNameIds.set(today, ids);
+  return ids;
+}
+
+export async function visibleInstrumentsWhere(prisma: PrismaService): Promise<Prisma.InstrumentWhereInput> {
+  const ids = await nameExpiredOptionIds(prisma);
+  if (!ids.length) return excludeExpiredOptions();
+  return { AND: [excludeExpiredOptions(), { id: { notIn: ids } }] };
+}
+
+function listedOptionSql(): Prisma.Sql {
+  const today = tehranJalaliCompact();
+  return Prisma.sql`
+    NOT (
+      i."assetType" = 'OPTION'::"AssetType"
+      AND (
+        (
+          jsonb_typeof(i.meta->'daysLeft') = 'number'
+          AND (i.meta->>'daysLeft')::double precision <= 0
+        )
+        OR (
+          substring(
+            translate(btrim(i."nameFa"), '۰۱۲۳۴۵۶۷۸۹٠١٢٣٤٥٦٧٨٩', '01234567890123456789')
+            from '([12][0-9]{7})$'
+          ) IS NOT NULL
+          AND substring(
+            translate(btrim(i."nameFa"), '۰۱۲۳۴۵۶۷۸۹٠١٢٣٤٥٦٧٨٩', '01234567890123456789')
+            from '([12][0-9]{7})$'
+          ) <= ${today}
+        )
+      )
+    )
+  `;
 }
 
 const FETCH_HEADERS: Record<string, string> = {
@@ -304,11 +362,7 @@ export class MarketService implements OnModuleInit {
         LIMIT 1
       ) latest ON true
       WHERE i."isActive" = true
-      AND NOT (
-        i."assetType" = 'OPTION'::"AssetType"
-        AND jsonb_typeof(i.meta->'daysLeft') = 'number'
-        AND (i.meta->>'daysLeft')::double precision <= 0
-      )
+      AND ${listedOptionSql()}
       ${assetSql}
       ${symbolSql}
       ORDER BY ${metric}, i.symbol ASC
@@ -334,7 +388,7 @@ export class MarketService implements OnModuleInit {
       isActive: true,
       assetType: params.assetType ? params.assetType : { not: AssetType.INDEX },
       ...(params.q ? { symbol: { contains: params.q } } : {}),
-      ...excludeExpiredOptions(),
+      ...(await visibleInstrumentsWhere(this.prisma)),
     };
 
     const orderedIds = sort
@@ -491,6 +545,7 @@ export class MarketService implements OnModuleInit {
       ) b ON true
       WHERE i."isActive" = true
         AND i."assetType" = 'OPTION'::"AssetType"
+        AND ${listedOptionSql()}
     `;
     const inflationPct = await this.latestInflationPct();
     const bar = inst.priceBars[0];
@@ -589,6 +644,7 @@ export class MarketService implements OnModuleInit {
           'FUND'::"AssetType",
           'OPTION'::"AssetType"
         )
+        AND ${listedOptionSql()}
     `;
     return rows.map((row) => ({
       id: row.id,
@@ -655,7 +711,7 @@ export class MarketService implements OnModuleInit {
         },
       },
     });
-    if (!i || optionMetaExpired(i.meta, i.assetType)) return null;
+    if (!i || optionMetaExpired(i.meta, i.assetType, { nameFa: i.nameFa, symbol: i.symbol })) return null;
     return {
       id: i.id,
       symbol: i.symbol,
@@ -670,9 +726,9 @@ export class MarketService implements OnModuleInit {
   async getPriceHistory(id: string, limit = 90) {
     const inst = await this.prisma.instrument.findUnique({
       where: { id },
-      select: { assetType: true, meta: true },
+      select: { assetType: true, meta: true, nameFa: true, symbol: true },
     });
-    if (inst && optionMetaExpired(inst.meta, inst.assetType)) return [];
+    if (inst && optionMetaExpired(inst.meta, inst.assetType, { nameFa: inst.nameFa, symbol: inst.symbol })) return [];
     const bars = await this.prisma.priceBar.findMany({
       where: { instrumentId: id },
       orderBy: { tradeDate: 'desc' },
@@ -833,7 +889,7 @@ export class MarketService implements OnModuleInit {
           where: {
             isActive: true,
             assetType: { in: [AssetType.STOCK, AssetType.INDEX, AssetType.FUND, AssetType.GOLD_ETF, AssetType.OPTION] },
-            ...excludeExpiredOptions(),
+            ...(await visibleInstrumentsWhere(this.prisma)),
             OR: or,
           },
           take: 24,

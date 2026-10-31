@@ -73,8 +73,35 @@ export function optionExpired(daysLeft: number | null | undefined): boolean {
   return daysLeft != null && Number.isFinite(daysLeft) && daysLeft <= 0;
 }
 
-export function optionMetaExpired(meta: unknown, assetType?: string): boolean {
+/** تاریخ شمسی امروز به شکل 14050809، از تاریخ میلادی تهران. */
+export function tehranJalaliCompact(d = new Date()): string {
+  const key = new Intl.DateTimeFormat('en-CA', { timeZone: 'Asia/Tehran' }).format(d);
+  const [gy, gm, gd] = key.split('-').map(Number);
+  const jalali = gregorianToJalali(gy, gm, gd);
+  return `${jalali.jy}${String(jalali.jm).padStart(2, '0')}${String(jalali.jd).padStart(2, '0')}`;
+}
+
+/**
+ * روز مانده تا سررسیدِ نوشته‌شده در عنوان، مثل اختیارخ اطلس-100000-14050803.
+ * تاریخ عنوان بر روزِ ماندهٔ منبع اولویت دارد.
+ */
+export function daysLeftFromLabels(nameFa: string, symbol = ''): number | null {
+  const expiry = expiryFromLabels(nameFa, symbol);
+  if (!expiry) return null;
+  const key = new Intl.DateTimeFormat('en-CA', { timeZone: 'Asia/Tehran' }).format(new Date());
+  const [gy, gm, gd] = key.split('-').map(Number);
+  const today = gregorianToJalali(gy, gm, gd);
+  return jalaliToJulianDay(expiry.jy, expiry.jm, expiry.jd) - jalaliToJulianDay(today.jy, today.jm, today.jd);
+}
+
+export function optionMetaExpired(
+  meta: unknown,
+  assetType?: string,
+  label?: { nameFa?: string | null; symbol?: string | null },
+): boolean {
   if (assetType && assetType !== 'OPTION') return false;
+  const named = daysLeftFromLabels(label?.nameFa ?? '', label?.symbol ?? '');
+  if (named != null) return optionExpired(named);
   return optionExpired(marketNumber(asRecord(meta).daysLeft));
 }
 
@@ -110,13 +137,16 @@ export function parseOptionMeta(item: Record<string, unknown>, symbol: string, n
     item.gheymatEmal,
     strikeFromName(nameFa),
   );
-  const daysLeft = firstNumber(
-    item.daysLeft,
-    item.day_remain,
-    item.baghimandetasarresid,
-    item.daysUntilExpiry,
-    item.buyBaqimandeTaSarresId,
-  );
+  const namedDays = daysLeftFromLabels(nameFa, symbol);
+  const daysLeft =
+    namedDays ??
+    firstNumber(
+      item.daysLeft,
+      item.day_remain,
+      item.baghimandetasarresid,
+      item.daysUntilExpiry,
+      item.buyBaqimandeTaSarresId,
+    );
   const contractSize = marketNumber(item.size_contract ?? item.buyAndazeyeQarardad ?? item.contractSize);
   const underlyingPrice = marketNumber(item.base_pl ?? item.base_pc ?? item.qeymateMabna);
   return {
@@ -401,7 +431,9 @@ export function valuableOptionsForUnderlying(
   const mine = optionRows.filter(
     (row) => row.assetType === 'OPTION' && optionBelongsToUnderlying(underlying.symbol, insCode, row),
   );
-  const live = mine.filter((row) => !optionMetaExpired(row.meta, 'OPTION'));
+  const live = mine.filter(
+    (row) => !optionMetaExpired(row.meta, 'OPTION', { nameFa: row.nameFa, symbol: row.symbol }),
+  );
   const target = fold(underlying.symbol);
   const prepared = live.map((row) => {
     const meta = asRecord(row.meta);
@@ -715,6 +747,86 @@ function underlyingFromName(name: string): string | null {
 function strikeFromName(name: string): number | null {
   const match = name.match(/(\d{3,})/);
   return match ? Number(match[1]) : null;
+}
+
+function expiryFromLabels(nameFa: string, symbol: string): { jy: number; jm: number; jd: number } | null {
+  const source = `${latinDigits(nameFa)} ${latinDigits(symbol)}`;
+  const matches = [...source.matchAll(/(?:^|\D)(1[34]\d{2})(0[1-9]|1[0-2])(0[1-9]|[12]\d|3[01])(?!\d)/g)];
+  const last = matches.at(-1);
+  if (!last) return null;
+  return { jy: Number(last[1]), jm: Number(last[2]), jd: Number(last[3]) };
+}
+
+function latinDigits(value: string): string {
+  return value
+    .replace(/[۰-۹]/g, (ch) => String('۰۱۲۳۴۵۶۷۸۹'.indexOf(ch)))
+    .replace(/[٠-٩]/g, (ch) => String('٠١٢٣٤٥٦٧٨٩'.indexOf(ch)));
+}
+
+function div(a: number, b: number): number {
+  return Math.trunc(a / b);
+}
+
+function mod(a: number, b: number): number {
+  return a - Math.trunc(a / b) * b;
+}
+
+/** تبدیل جلالی، همان قاعدهٔ رایج سال کبیسه. */
+function jalCal(jy: number): { leap: number; gy: number; march: number } {
+  const breaks = [-61, 9, 38, 199, 426, 686, 756, 818, 1111, 1181, 1210, 1635, 2060, 2097, 2192, 2262, 2324, 2394, 2456, 3178];
+  const gy = jy + 621;
+  let leapJ = -14;
+  let jp = breaks[0];
+  let jump = 0;
+  if (jy < jp || jy >= breaks[breaks.length - 1]) {
+    return { leap: 0, gy, march: 20 };
+  }
+  for (let i = 1; i < breaks.length; i += 1) {
+    const jm = breaks[i];
+    jump = jm - jp;
+    if (jy < jm) break;
+    leapJ = leapJ + div(jump, 33) * 8 + div(mod(jump, 33), 4);
+    jp = jm;
+  }
+  let n = jy - jp;
+  leapJ = leapJ + div(n, 33) * 8 + div(mod(n, 33) + 3, 4);
+  if (mod(jump, 33) === 4 && jump - n === 4) leapJ += 1;
+  const leapG = div(gy, 4) - div((div(gy, 100) + 1) * 3, 4) - 150;
+  const march = 20 + leapJ - leapG;
+  if (jump - n < 6) n = n - jump + div(jump + 4, 33) * 33;
+  let leap = mod(mod(n + 1, 33) - 1, 4);
+  if (leap === -1) leap = 4;
+  return { leap, gy, march };
+}
+
+function gregorianToJulianDay(gy: number, gm: number, gd: number): number {
+  let day =
+    div((gy + div(gm - 8, 6) + 100100) * 1461, 4) + div(153 * mod(gm + 9, 12) + 2, 5) + gd - 34840408;
+  day = day - div(div(gy + 100100 + div(gm - 8, 6), 100) * 3, 4) + 752;
+  return day;
+}
+
+function gregorianToJalali(gy: number, gm: number, gd: number): { jy: number; jm: number; jd: number } {
+  const jdn = gregorianToJulianDay(gy, gm, gd);
+  let jy = gy - 621;
+  const r = jalCal(jy);
+  let k = jdn - gregorianToJulianDay(gy, 3, r.march);
+  if (k >= 0) {
+    if (k <= 185) {
+      return { jy, jm: 1 + div(k, 31), jd: mod(k, 31) + 1 };
+    }
+    k -= 186;
+  } else {
+    jy -= 1;
+    k += 179;
+    if (r.leap === 1) k += 1;
+  }
+  return { jy, jm: 7 + div(k, 30), jd: mod(k, 30) + 1 };
+}
+
+function jalaliToJulianDay(jy: number, jm: number, jd: number): number {
+  const r = jalCal(jy);
+  return gregorianToJulianDay(r.gy, 3, r.march) + (jm - 1) * 31 - div(jm, 7) * (jm - 7) + jd - 1;
 }
 
 function unwrap(value: unknown): unknown {

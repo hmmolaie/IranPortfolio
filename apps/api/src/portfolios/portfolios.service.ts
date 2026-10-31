@@ -22,7 +22,7 @@ import {
 } from '../trade-fees/trade-fees';
 import { daysAgoDateKey } from '../news/tehran-date';
 import { foldFa, tokenizeMarketQuestion } from '../market/tehran-chat';
-import { excludeExpiredOptions, MarketService } from '../market/market.service';
+import { visibleInstrumentsWhere, MarketService } from '../market/market.service';
 import { optionBoardForPrompt, optionMetaExpired, redirectAnalysisSuggestion, redirectQueuedSymbol } from '../market/option-board';
 
 type PortfolioNewsRow = {
@@ -184,11 +184,12 @@ export class PortfoliosService {
               where: {
                 assetType: AssetType.OPTION,
                 symbol: { in: optionSymbols },
-                meta: { path: ['daysLeft'], lte: 0 },
               },
-              select: { symbol: true },
+              select: { symbol: true, nameFa: true, meta: true, assetType: true },
             })
-          ).map((row) => row.symbol.trim())
+          )
+            .filter((row) => optionMetaExpired(row.meta, row.assetType, { nameFa: row.nameFa, symbol: row.symbol }))
+            .map((row) => row.symbol.trim())
         : [],
     );
 
@@ -1237,7 +1238,7 @@ ${historyText}`,
       where: {
         isActive: true,
         symbol: { equals: key, mode: 'insensitive' },
-        ...excludeExpiredOptions(),
+        ...(await visibleInstrumentsWhere(this.prisma)),
       },
       include: { priceBars: { orderBy: { tradeDate: 'desc' }, take: 1 } },
     });
@@ -1251,9 +1252,9 @@ ${historyText}`,
           assetType: AssetType.OPTION,
           symbol: { equals: key, mode: 'insensitive' },
         },
-        select: { meta: true, assetType: true },
+        select: { meta: true, assetType: true, nameFa: true, symbol: true },
       });
-      if (expired && optionMetaExpired(expired.meta, expired.assetType)) {
+      if (expired && optionMetaExpired(expired.meta, expired.assetType, { nameFa: expired.nameFa, symbol: expired.symbol })) {
         throw new BadRequestException('سررسید این اختیار معامله گذشته است و در سبد نمی‌آید.');
       }
     }
@@ -2186,7 +2187,7 @@ summaryFa و نقاط قوت و ضعف گزارش وضعیت سبد هستند �
 
   private async buildUniverse() {
     const instruments = await this.prisma.instrument.findMany({
-      where: { isActive: true, assetType: { not: AssetType.INDEX }, ...excludeExpiredOptions() },
+      where: { isActive: true, assetType: { not: AssetType.INDEX }, ...(await visibleInstrumentsWhere(this.prisma)) },
       take: 200,
       include: { priceBars: { orderBy: { tradeDate: 'desc' }, take: 1 } },
     });
