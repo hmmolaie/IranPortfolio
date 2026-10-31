@@ -86,14 +86,11 @@ function bookVolumeSql(prefix: 'qd' | 'qo'): Prisma.Sql {
       CASE
         WHEN COALESCE(b.raw->>${`${prefix}${level}`}, '') ~ '^[0-9]+([.][0-9]+)?$'
         THEN (b.raw->>${`${prefix}${level}`})::double precision
-        ELSE NULL
+        ELSE 0
       END
     `,
   );
-  return Prisma.sql`(SELECT SUM(v) FROM (VALUES ${Prisma.join(
-    levels.map((level) => Prisma.sql`(${level})`),
-    ', ',
-  )}) AS book(v))`;
+  return Prisma.sql`CASE WHEN b.raw IS NULL THEN NULL ELSE ${Prisma.join(levels, ' + ')} END`;
 }
 
 function listedOptionSql(): Prisma.Sql {
