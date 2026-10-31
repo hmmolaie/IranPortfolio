@@ -132,10 +132,13 @@ export function setToken(token: string | null) {
 
 export type UserRole = 'ADMIN' | 'USER' | 'RESELLER';
 
-export function setUserRole(role: UserRole | null) {
+export function setUserRole(role: string | null) {
   if (typeof window === 'undefined') return;
-  if (role) localStorage.setItem(ROLE_KEY, role);
-  else localStorage.removeItem(ROLE_KEY);
+  if (role === 'ADMIN' || role === 'USER' || role === 'RESELLER') {
+    localStorage.setItem(ROLE_KEY, role);
+    return;
+  }
+  if (role == null) localStorage.removeItem(ROLE_KEY);
 }
 
 export function getUserRole(): UserRole | null {
