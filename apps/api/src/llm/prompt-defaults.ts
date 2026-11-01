@@ -65,7 +65,7 @@ export const LLM_PROMPT_DEFAULTS: Record<string, PromptDefinition> = {
   },
   portfolio_suggest_multi: {
     labelFa: 'پیشنهاد چند استراتژی سبد',
-    descriptionFa: 'تولید ۲ تا ۴ استراتژی متفاوت برای سبد سرمایه‌گذاری',
+    descriptionFa: 'دیگر برای تشکیل سبد خوانده نمی‌شود. تشکیل سبد با مدل System One انجام می‌شود.',
     systemPrompt: `مشاور تخصیص دارایی بازار ایران. چند استراتژی متفاوت پیشنهاد بده.
 قوانین سخت:
 - capitalRial سقف مطلق بودجه است؛ ارزش کل هر استراتژی نباید از capitalRial بیشتر شود.

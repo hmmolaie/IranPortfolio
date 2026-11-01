@@ -16,14 +16,31 @@ import { WalletService } from '../wallet/wallet.service';
 import { TradeFeesService } from '../trade-fees/trade-fees.service';
 import {
   feeInstructionFa,
-  filterStrategyItems,
   holdingFeeRial,
   suggestionClearsFees,
 } from '../trade-fees/trade-fees';
 import { daysAgoDateKey } from '../news/tehran-date';
 import { foldFa, tokenizeMarketQuestion } from '../market/tehran-chat';
 import { visibleInstrumentsWhere, MarketService } from '../market/market.service';
-import { optionBoardForPrompt, optionMetaExpired, redirectAnalysisSuggestion, redirectQueuedSymbol } from '../market/option-board';
+import { detectQueue, optionBoardForPrompt, optionMetaExpired, redirectAnalysisSuggestion } from '../market/option-board';
+import {
+  CLASS_LABEL_FA,
+  type ClassId,
+  type InvestorState,
+  type MarketState,
+  type StockFact,
+  SIZE_LEVELS,
+  STOCKS_PER_CALL,
+  allocationState,
+  classQuestions,
+  faPct,
+  fillStockSleeve,
+  normalizeClassWeights,
+  readLevelPct,
+  readNoul,
+  stockQuestions,
+  stockState,
+} from './suggest-system-one';
 
 type PortfolioNewsRow = {
   batch: { newsDateKey: string };
@@ -312,206 +329,282 @@ export class PortfoliosService {
   private async buildStrategySuggestions(
     userId: string,
     portfolioId: string,
-    options?: { initialCreate?: boolean; skipBilling?: boolean },
+    _options?: { initialCreate?: boolean; skipBilling?: boolean },
   ) {
     const portfolio = await this.get(userId, portfolioId);
+    if (!(portfolio.capitalRial > 0)) {
+      throw new BadRequestException('سرمایهٔ سبد برای پیشنهاد کافی نیست.');
+    }
     const profile = await this.prisma.userProfile.findUnique({ where: { userId } });
-    const platformUserId = (await this.users.getAdminUserId()) ?? userId;
-    const universe = await this.buildUniverse();
-    const macro = await this.prisma.macroSnapshot.findFirst({ orderBy: { asOfDate: 'desc' } });
-    const funds = await this.prisma.fundReport.findMany({
-      where: { userId: platformUserId, useInSuggestions: true },
-      orderBy: { rating: 'desc' },
-      take: 8,
-    });
-    const fundInsights = await this.prisma.fundTimelineInsight.findMany({
-      where: { userId: platformUserId },
-      orderBy: { createdAt: 'desc' },
-      take: 10,
-    });
-    const lessons = await this.prisma.lesson.findMany({
-      where: { userId: platformUserId },
-      orderBy: { createdAt: 'desc' },
-      take: 30,
-    });
-    const economicNews = await this.news.getForPortfolioContext(userId, 40, 30);
-    const worldMacroNews = await this.worldMarkets.recentMacroNews();
-    const fxHistory = await this.prisma.spotPriceDaily.findMany({
-      where: { dateKey: { gte: daysAgoDateKey(30) } },
-      orderBy: { dateKey: 'asc' },
-      select: { dateKey: true, usdIrr: true, goldGramRial: true },
-      take: 35,
-    });
-    const fundReportIds = funds.map((f) => f.id);
-    const fundHoldingsRaw =
-      fundReportIds.length > 0
-        ? await this.prisma.fundHolding.findMany({
-            where: { fundReportId: { in: fundReportIds } },
-            orderBy: [{ weightPct: 'desc' }, { amountRial: 'desc' }],
-            take: 120,
-            include: {
-              fundReport: { select: { fundName: true, reportMonth: true } },
-            },
-          })
-        : [];
-
-    const fees = await this.tradeFees.read();
-    const optionBoard = await this.market.getOptionBoard().catch(() => null);
-    const system =
-      (await this.llm.getSystemPrompt(userId, 'portfolio_suggest_multi')) +
-      `\n\n${feeInstructionFa(fees)}`;
-
-    const userPrompt = JSON.stringify(
-      {
-        capitalRial: portfolio.capitalRial,
-        capitalRialFormatted: portfolio.capitalRial.toLocaleString('en-US'),
-        strategy: portfolio.strategy,
-        preferencesNoteFa: portfolio.preferencesNoteFa,
-        userProfile: profile,
-        hardConstraints: {
-          maxTotalRial: portfolio.capitalRial,
-          weightPctMeaning:
-            'weightPct درصد از سرمایه (capitalRial) است؛ مجموع weightPct هر استراتژی باید دقیقاً حدود ۱۰۰ باشد',
-          doNotExceedCapital: true,
-          quantityRule:
-            'تعداد سهم را خودت حساب نکن؛ فقط وزن درصدی بده. سیستم بر اساس قیمت و سرمایه تعداد قابل‌خرید می‌سازد و جمع مبلغ از سرمایه بیشتر نمی‌شود',
-        },
-        universe: universe.slice(0, 80).map((u) => ({
-          symbol: u.symbol,
-          nameFa: u.nameFa,
-          assetType: u.assetType,
-          lastPrice: u.lastPrice,
-          pe: u.pe,
-        })),
-        macro,
-        ...splitNewsForPortfolio(economicNews),
-        worldMacroNews,
-        fxHistory,
-        topFunds: funds.map((f) => ({
-          fundName: f.fundName,
-          month: f.reportMonth,
-          rating: f.rating,
-          managerTechnicalScore: f.managerTechnicalScore,
-          riskAppetiteScore: f.riskAppetiteScore,
-          professionalismScore: f.professionalismScore,
-          guessedStrategyFa: f.guessedStrategyFa,
-        })),
-        fundHoldings: fundHoldingsRaw.map((h) => ({
-          fundName: h.fundReport.fundName,
-          month: h.fundReport.reportMonth,
-          symbol: h.symbol,
-          nameFa: h.nameFa,
-          assetKind: h.assetKind,
-          action: h.action,
-          weightPct: h.weightPct,
-          amountRial: h.amountRial,
-        })),
-        fundTimelineInsights: fundInsights.map((i) => ({
-          summaryFa: i.summaryFa,
-          strategyChangeFa: i.strategyChangeFa,
-          holdingsDiffFa: i.holdingsDiffFa,
-          llmReasoningFa: i.llmReasoningFa,
-        })),
-        lessons: lessons.map((l) => ({ title: l.titleFa, body: l.bodyFa })),
-        tradeFees: fees,
-        optionBoard: optionBoard ? optionBoardForPrompt(optionBoard) : null,
-        instruction: options?.initialCreate
-          ? `این ایجاد اولیه سبد است. سرمایه کل ${portfolio.capitalRial} ریال و استراتژی ${portfolio.strategy} است.
-فقط weightPct بده (جمع ≈ ۱۰۰). جمع ارزش سبد نباید از ${portfolio.capitalRial} ریال بیشتر شود.
-سهامی پیشنهاد نکن که قیمت یک واحدش از سهم بودجه‌اش بیشتر باشد.
-حتماً lessons، fundHoldings (موجودی/خرید/فروش صندوق‌ها)، economicNews (حداکثر ۷ خبر اثرگذار بر اقتصاد ایران از شبکه اجتماعی)، investmentOpportunities (حداکثر ۳ فرصت)، worldMacroNews (اثر اقتصاد جهان و آمریکا بر ایران)، fxHistory و optionBoard را در تصمیم و در reasonFa/strategySummaryFa منعکس کن.
-اگر نمادی در optionBoard صف خرید یا صف فروش است، خرید خود آن سهم را ننویس. جایگزین را از replacements یا worthwhileOptions بردار و assetType آن اختیار OPTION است.
-PHYSICAL_GOLD / PHYSICAL_USD در صورت مناسب بودن مجاز است.`
-          : `چند استراتژی متفاوت پیشنهاد بده. سرمایه کل ${portfolio.capitalRial} ریال است.
-weightPct فقط درصد از همین سرمایه است (جمع هر استراتژی ≈ ۱۰۰). ارزش کل هر استراتژی مساوی همین سرمایه است و نباید بیشتر شود.
-حتماً lessons، fundHoldings، economicNews، investmentOpportunities، worldMacroNews (اثر اقتصاد جهان و آمریکا بر ایران)، fxHistory و optionBoard را لحاظ کن و در توضیحات ارجاع بده.
-اگر نمادی در optionBoard صف خرید یا صف فروش است، خرید خود آن سهم را ننویس. جایگزین را از replacements یا worthwhileOptions بردار و assetType آن اختیار OPTION است.`,
-      },
-      null,
-      2,
+    const investor = this.investorState(portfolio, profile);
+    const market = await this.decisionMarket(userId);
+    const classAnswers = await this.llm.systemOne(
+      userId,
+      'portfolio_suggest_multi',
+      allocationState(investor, market),
+      classQuestions(),
     );
-
-    type Out = {
-      strategies: Array<{
-        labelFa: string;
-        strategySummaryFa: string;
-        items: Array<{
-          symbol: string;
-          assetType: AssetType;
-          weightPct: number;
-          reasonFa: string;
-          expectedProfitPct?: number | null;
-        }>;
-      }>;
-    };
-
-    try {
-      const out = await this.llm.chatJson<Out>('portfolio_suggest_multi', system, userPrompt, userId);
-      if (out.strategies?.length) {
-        const strategies = out.strategies
-          .map((strategy) => ({
-            ...strategy,
-            items: filterStrategyItems(strategy.items ?? [], fees).map((item) => {
-              const queued = optionBoard
-                ? redirectQueuedSymbol(
-                    {
-                      symbol: item.symbol,
-                      assetType: item.assetType || AssetType.STOCK,
-                      reasonFa: item.reasonFa ?? '',
-                    },
-                    optionBoard,
-                  )
-                : {
-                    symbol: item.symbol,
-                    assetType: item.assetType || AssetType.STOCK,
-                    reasonFa: item.reasonFa ?? '',
-                  };
-              return {
-                symbol: queued.symbol,
-                assetType: queued.assetType as AssetType,
-                weightPct: Number(item.weightPct) || 0,
-                reasonFa: queued.reasonFa ?? '',
-              };
-            }),
-          }))
-          .filter((strategy) => strategy.items.length > 0);
-        if (strategies.length) return { strategies };
-        return {
-          strategies: [
-            {
-              labelFa: 'بدون معامله',
-              strategySummaryFa:
-                'سود پیش‌بینی‌شده از کارمزد خرید و فروش بیشتر نبود؛ پیشنهادی برای معامله ثبت نشد.',
-              items: [],
-            },
-          ],
-        };
-      }
-    } catch (e) {
-      if (e instanceof AiQuotaExceededException) throw e;
+    const weights = normalizeClassWeights(classAnswers);
+    const stocks = weights.stock > 0 ? await this.tradableOnLatest(AssetType.STOCK) : [];
+    const picks: Array<{
+      symbol: string;
+      nameFa: string;
+      price: number;
+      noul: number;
+      sizePct: number;
+    }> = [];
+    for (let offset = 0; offset < stocks.length; offset += STOCKS_PER_CALL) {
+      const batch = stocks.slice(offset, offset + STOCKS_PER_CALL);
+      const answers = await this.llm.systemOne(
+        userId,
+        'portfolio_suggest_multi',
+        stockState(investor, market, batch),
+        stockQuestions(batch),
+      );
+      batch.forEach((stock, index) => {
+        picks.push({
+          symbol: stock.symbol,
+          nameFa: stock.nameFa,
+          price: stock.price,
+          noul: readNoul(answers[`p${index}`]),
+          sizePct: readLevelPct(answers[`s${index}`], SIZE_LEVELS),
+        });
+      });
     }
 
-    const single = this.fallbackSuggest(universe, portfolio.strategy);
+    const capital = portfolio.capitalRial;
+    const stockItems = fillStockSleeve(capital, (capital * weights.stock) / 100, picks);
+    const goldEtf = weights.gold_etf > 0 ? await this.busiestTradable(AssetType.GOLD_ETF) : null;
+    const fund = weights.fund > 0 ? await this.busiestTradable(AssetType.FUND) : null;
+    const items: Array<{
+      symbol: string;
+      assetType: AssetType;
+      weightPct: number;
+      reasonFa: string;
+    }> = [];
+    const pushClass = (id: ClassId, symbol: string, assetType: AssetType, reasonFa: string) => {
+      if (weights[id] <= 0) return;
+      items.push({ symbol, assetType, weightPct: weights[id], reasonFa });
+    };
+    pushClass('deposit', 'سپرده', AssetType.DEPOSIT, 'سهم سپرده از سرمایه، بعد از نرمال‌سازی امتیاز کلاس‌ها.');
+    pushClass('physical_gold', 'PHYSICAL_GOLD', AssetType.PHYSICAL_GOLD, 'سهم طلای فیزیکی از سرمایه، بعد از نرمال‌سازی امتیاز کلاس‌ها.');
+    pushClass('physical_usd', 'PHYSICAL_USD', AssetType.PHYSICAL_USD, 'سهم دلار فیزیکی از سرمایه، بعد از نرمال‌سازی امتیاز کلاس‌ها.');
+    if (goldEtf) {
+      pushClass(
+        'gold_etf',
+        goldEtf.symbol,
+        AssetType.GOLD_ETF,
+        'پرمعامله‌ترین صندوق طلای بدون صف برای همان درصد کلاس صندوق طلا.',
+      );
+    }
+    if (fund) {
+      pushClass(
+        'fund',
+        fund.symbol,
+        AssetType.FUND,
+        'پرمعامله‌ترین صندوق بدون صف برای همان درصد کلاس صندوق.',
+      );
+    }
+    for (const stock of stockItems) {
+      items.push({
+        symbol: stock.symbol,
+        assetType: AssetType.STOCK,
+        weightPct: stock.weightPct,
+        reasonFa: stock.reasonFa,
+      });
+    }
+    const used = items.reduce((sum, item) => sum + item.weightPct, 0);
+    const cashPct = Math.max(0, 100 - used);
+    if (cashPct > 0.05) {
+      items.push({
+        symbol: 'CASH',
+        assetType: AssetType.CASH,
+        weightPct: cashPct,
+        reasonFa:
+          'نقدِ خودِ کلاس نقد، به‌علاوه ماندهٔ سهامی که احتمالش به ۵۰٪ نرسید یا یک واحدش از بودجه گران‌تر بود.',
+      });
+    }
+    const mix = (Object.keys(weights) as ClassId[])
+      .map((id) => `${CLASS_LABEL_FA[id]} ${faPct(weights[id])}٪`)
+      .join('، ');
     return {
       strategies: [
         {
-          labelFa: 'پیشنهاد قاعده‌محور',
-          strategySummaryFa: single.strategySummaryFa,
-          items: single.items,
-        },
-        {
-          labelFa: 'محافظه‌کار با سپرده بیشتر',
-          strategySummaryFa: 'کاهش ریسک سهام و افزایش سپرده/طلا',
-          items: single.items.map((i) =>
-            i.assetType === AssetType.STOCK
-              ? { ...i, weightPct: i.weightPct * 0.7, reasonFa: i.reasonFa + ' (کاهش ریسک)' }
-              : i,
-          ),
+          labelFa: 'پیشنهاد System One',
+          strategySummaryFa: `تخصیص: ${mix}. سهم‌ها از آخرین معاملات بدون صف و با احتمال دست‌کم ۵۰٪ آمده‌اند. قیمت طلا و دلار، آخرین درس‌آموخته‌ها و اخبار ایران و جهان در انتخاب سهم لحاظ شده‌اند. این خروجی تصمیم‌یار است.`,
+          items,
         },
       ],
     };
   }
 
+  private investorState(
+    portfolio: { strategy: string; capitalRial: number; preferencesNoteFa: string | null },
+    profile: {
+      riskTolerance: number;
+      horizonMonths: number;
+      investmentPreferencesFa: string | null;
+      constraintsFa: string | null;
+      objectiveFa: string | null;
+      notes: string | null;
+      liquidityNeed: string | null;
+      maxDrawdownPct: number | null;
+      inflationSensitivity: string | null;
+      fxSensitivity: string | null;
+    } | null,
+  ): InvestorState {
+    const strategyFa: Record<string, string> = {
+      GROWTH: 'رشدی',
+      VALUE: 'ارزشی',
+      INCOME: 'درآمدی',
+      HEDGED: 'پوششی',
+      CONSERVATIVE: 'محافظه‌کار',
+      CUSTOM: 'سفارشی',
+    };
+    return {
+      strategy: portfolio.strategy,
+      strategyFa: strategyFa[portfolio.strategy] ?? portfolio.strategy,
+      capitalRial: portfolio.capitalRial,
+      noteFa: clipText(portfolio.preferencesNoteFa, 400),
+      profile: profile
+        ? {
+            riskTolerance: profile.riskTolerance,
+            horizonMonths: profile.horizonMonths,
+            preferencesFa: clipText(profile.investmentPreferencesFa, 400),
+            constraintsFa: clipText(profile.constraintsFa, 300),
+            objectiveFa: clipText(profile.objectiveFa, 240),
+            notesFa: clipText(profile.notes, 300),
+            liquidityNeed: profile.liquidityNeed,
+            maxDrawdownPct: profile.maxDrawdownPct,
+            inflationSensitivity: profile.inflationSensitivity,
+            fxSensitivity: profile.fxSensitivity,
+          }
+        : null,
+    };
+  }
+
+  private async decisionMarket(userId: string): Promise<MarketState> {
+    const platformUserId = (await this.users.getAdminUserId()) ?? userId;
+    const [lessons, economicNews, worldMacroNews, fxHistory, spot] = await Promise.all([
+      this.prisma.lesson.findMany({
+        where: { userId: platformUserId },
+        orderBy: { createdAt: 'desc' },
+        take: 10,
+        select: { titleFa: true, bodyFa: true },
+      }),
+      this.news.getForPortfolioContext(userId, 20, 14),
+      this.worldMarkets.recentMacroNews(),
+      this.prisma.spotPriceDaily.findMany({
+        orderBy: { dateKey: 'desc' },
+        take: 8,
+        select: { dateKey: true, usdIrr: true, goldGramRial: true },
+      }),
+      this.prisma.spotPriceDaily.findFirst({ orderBy: { dateKey: 'desc' } }),
+    ]);
+    const news = splitNewsForPortfolio(economicNews);
+    return {
+      usdIrr: spot?.usdIrr && spot.usdIrr > 0 ? spot.usdIrr : null,
+      goldGramRial: spot?.goldGramRial && spot.goldGramRial > 0 ? spot.goldGramRial : null,
+      recent: [...fxHistory].reverse().map((row) => ({
+        dateKey: row.dateKey,
+        usdIrr: row.usdIrr,
+        goldGramRial: row.goldGramRial,
+      })),
+      lessons: lessons.map((lesson) => ({
+        title: lesson.titleFa,
+        body: clipText(lesson.bodyFa, 400) ?? '',
+      })),
+      iranNews: news.economicNews.map((item) => ({
+        date: item.date,
+        title: item.title,
+        summary: clipText(item.summary, 240) ?? '',
+        impact: clipText(item.marketImpact, 160),
+      })),
+      opportunities: news.investmentOpportunities.map((item) => ({
+        title: item.title,
+        summary: clipText(item.summary, 200) ?? '',
+        how: clipText(item.participateHow, 160),
+      })),
+      worldNews: worldMacroNews.map((item) => ({
+        date: item.dateKey,
+        title: item.titleFa,
+        summary: clipText(item.summaryFa, 200) ?? '',
+        iranImpact: clipText(item.iranImpactFa, 200),
+      })),
+    };
+  }
+
+  private async tradableOnLatest(assetType: AssetType): Promise<StockFact[]> {
+    const visible = await visibleInstrumentsWhere(this.prisma);
+    const latest = await this.prisma.priceBar.findFirst({
+      where: {
+        instrument: { isActive: true, assetType, ...visible },
+        OR: [{ lastPrice: { gt: 0 } }, { closePrice: { gt: 0 } }],
+      },
+      orderBy: { tradeDate: 'desc' },
+      select: { tradeDate: true },
+    });
+    if (!latest) return [];
+    const bars = await this.prisma.priceBar.findMany({
+      where: {
+        tradeDate: latest.tradeDate,
+        instrument: { isActive: true, assetType, ...visible },
+        OR: [{ lastPrice: { gt: 0 } }, { closePrice: { gt: 0 } }],
+      },
+      select: {
+        lastPrice: true,
+        closePrice: true,
+        volume: true,
+        pe: true,
+        raw: true,
+        instrument: { select: { symbol: true, nameFa: true } },
+      },
+    });
+    const rows: StockFact[] = [];
+    for (const bar of bars) {
+      const price = bar.lastPrice != null && bar.lastPrice > 0 ? bar.lastPrice : bar.closePrice;
+      if (price == null || !(price > 0)) continue;
+      if (bar.volume != null && !(bar.volume > 0)) continue;
+      if (detectQueue(bar.raw, price)) continue;
+      rows.push({
+        symbol: bar.instrument.symbol,
+        nameFa: bar.instrument.nameFa,
+        price,
+        volume: bar.volume,
+        pe: bar.pe,
+      });
+    }
+    rows.sort((a, b) => a.symbol.localeCompare(b.symbol, 'fa'));
+    return rows;
+  }
+
+  private async busiestTradable(assetType: AssetType): Promise<StockFact | null> {
+    const rows = await this.tradableOnLatest(assetType);
+    rows.sort((a, b) => (b.volume ?? 0) - (a.volume ?? 0));
+    return rows[0] ?? null;
+  }
+
+  private async attachMissingPrices<T extends { symbol: string }>(
+    universe: Array<{ id: string; symbol: string; assetType: AssetType; lastPrice: number | null }>,
+    items: T[],
+  ) {
+    const have = new Set(universe.map((row) => row.symbol));
+    const missing = [...new Set(items.map((item) => item.symbol).filter((symbol) => symbol && !have.has(symbol)))];
+    if (!missing.length) return universe;
+    const rows = await this.prisma.instrument.findMany({
+      where: { isActive: true, symbol: { in: missing } },
+      include: { priceBars: { orderBy: { tradeDate: 'desc' }, take: 1 } },
+    });
+    return [
+      ...rows.map((row) => ({
+        id: row.id,
+        symbol: row.symbol,
+        assetType: row.assetType,
+        lastPrice: row.priceBars[0]?.lastPrice ?? row.priceBars[0]?.closePrice ?? null,
+      })),
+      ...universe,
+    ];
+  }
   async applyStrategy(
     userId: string,
     portfolioId: string,
@@ -549,7 +642,7 @@ weightPct فقط درصد از همین سرمایه است (جمع هر است�
     },
   ) {
     const portfolio = await this.get(userId, portfolioId);
-    const universe = await this.buildUniverse();
+    const universe = await this.attachMissingPrices(await this.buildUniverse(), out.items ?? []);
     const items = this.materializeItems(out.items ?? [], portfolio.capitalRial, universe);
     const totalValueRial = items.reduce((s, i) => s + i.amountRial, 0);
     return this.prisma.portfolioSnapshot.create({

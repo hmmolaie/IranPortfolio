@@ -156,9 +156,12 @@ export default function SettingsPage() {
     baseUrl: 'https://openrouter.ai/api/v1',
     model: 'meta-llama/llama-3.3-70b-instruct:free',
     systemModel: '',
+    systemOneBaseUrl: 'https://system-one.dev/v1',
+    systemOneApiToken: '',
     apiToken: '',
     usePlatformFallback: true,
     hasToken: false,
+    hasSystemOneToken: false,
   });
   const [fundDefs, setFundDefs] = useState<FundDefinition[]>([]);
   const [newFund, setNewFund] = useState({ nameFa: '', symbolCode: '', description: '', websiteUrl: '' });
@@ -543,8 +546,10 @@ export default function SettingsPage() {
       baseUrl: string;
       model: string;
       systemModel?: string;
+      systemOneBaseUrl?: string;
       usePlatformFallback: boolean;
       hasToken: boolean;
+      hasSystemOneToken?: boolean;
     } | null>('/llm/settings')
       .then((s) => {
         if (!s) return;
@@ -554,8 +559,10 @@ export default function SettingsPage() {
           baseUrl: s.baseUrl,
           model: s.model,
           systemModel: s.systemModel ?? '',
+          systemOneBaseUrl: s.systemOneBaseUrl || 'https://system-one.dev/v1',
           usePlatformFallback: s.usePlatformFallback,
           hasToken: s.hasToken,
+          hasSystemOneToken: Boolean(s.hasSystemOneToken),
         }));
       })
       .catch(() => undefined);
@@ -917,11 +924,19 @@ export default function SettingsPage() {
           baseUrl: llm.baseUrl,
           model: llm.model,
           systemModel: llm.systemModel,
+          systemOneBaseUrl: llm.systemOneBaseUrl,
           usePlatformFallback: llm.usePlatformFallback,
           ...(llm.apiToken ? { apiToken: llm.apiToken } : {}),
+          ...(llm.systemOneApiToken ? { systemOneApiToken: llm.systemOneApiToken } : {}),
         }),
       });
-      setLlm((prev) => ({ ...prev, apiToken: '', hasToken: prev.hasToken || Boolean(llm.apiToken) }));
+      setLlm((prev) => ({
+        ...prev,
+        apiToken: '',
+        systemOneApiToken: '',
+        hasToken: prev.hasToken || Boolean(llm.apiToken),
+        hasSystemOneToken: prev.hasSystemOneToken || Boolean(llm.systemOneApiToken),
+      }));
       toast.success('تنظیمات LLM ذخیره شد.');
     } catch (err) {
       toast.error((err as Error).message);
@@ -1683,13 +1698,32 @@ export default function SettingsPage() {
               value={llm.systemModel}
               onChange={(e) => setLlm({ ...llm, systemModel: e.target.value })}
               dir="ltr"
-              placeholder="gpt-4o-mini"
+              placeholder="jev"
             />
             <p className="mt-1 text-xs leading-6 text-navy-800/55">
-              فقط برای آنالیز سبد و پیشنهاد سبد. مدل بالا برای اخبار، اقتصاد دنیا، صندوق و درس است. گفتار
-              تلگرام از بخش اطلاع‌رسانی تلگرام می‌آید. اگر این کادر خالی باشد، آنالیز و پیشنهاد هم از مدل بالا
-              استفاده می‌کنند.
+              فقط برای تشکیل سبد. این مدل متن نمی‌سازد؛ آنالیز سبد، اخبار و بقیه از مدل بالا می‌آیند. اگر خالی
+              باشد تشکیل سبد انجام نمی‌شود.
             </p>
+          </div>
+          <div>
+            <label className="label">نشانی System One</label>
+            <input
+              className="input"
+              value={llm.systemOneBaseUrl}
+              onChange={(e) => setLlm({ ...llm, systemOneBaseUrl: e.target.value })}
+              dir="ltr"
+            />
+          </div>
+          <div>
+            <label className="label">کلید System One</label>
+            <input
+              className="input"
+              type="password"
+              value={llm.systemOneApiToken}
+              onChange={(e) => setLlm({ ...llm, systemOneApiToken: e.target.value })}
+              placeholder={llm.hasSystemOneToken ? 'برای جایگزینی کلید جدید وارد کنید' : ''}
+              dir="ltr"
+            />
           </div>
           <div>
             <label className="label">API Token</label>

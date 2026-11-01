@@ -295,8 +295,10 @@ model LlmSetting {
   userId               String  @unique
   baseUrl              String  @default("https://api.openai.com/v1")
   model                String  @default("gpt-4o-mini")
-  /// مدل کارهای خودکار سیستم. خالی یعنی همان مدل اصلی.
+  /// شناسهٔ مدل System One برای تشکیل سبد. این مدل چت نیست.
   systemModel          String  @default("")
+  systemOneBaseUrl     String  @default("https://system-one.dev/v1")
+  systemOneTokenEncrypted String?
   apiTokenEncrypted    String?
   usePlatformFallback  Boolean @default(true)
   user                 User    @relation(fields: [userId], references: [id], onDelete: Cascade)

@@ -735,7 +735,7 @@ function queueBookVolume(row: BoardSource, side: 'buy' | 'sell'): number | null 
   return any ? sum : null;
 }
 
-function detectQueue(raw: unknown, lastPrice: number | null): QueueSide | null {
+export function detectQueue(raw: unknown, lastPrice: number | null): QueueSide | null {
   if (lastPrice == null || !(lastPrice > 0)) return null;
   const row = asRecord(raw);
   const status = text(row.statename ?? row.state ?? row.status ?? row.cEtavalTitle);

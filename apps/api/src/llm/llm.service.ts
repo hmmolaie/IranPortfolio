@@ -1,4 +1,4 @@
-import { createCipheriv, createDecipheriv, randomBytes, scryptSync } from 'crypto';
+import { createCipheriv, createDecipheriv, randomBytes, randomUUID, scryptSync } from 'crypto';
 import { Injectable, Logger, BadRequestException } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import { UserRole } from '@prisma/client';
@@ -28,26 +28,11 @@ type LlmCreds = {
   pinPrimary?: boolean;
 };
 
-/** گفتگوی زندهٔ کاربر روی مدل اصلی می‌ماند. */
-const INTERACTIVE_LLM_PURPOSES = new Set([
-  'portfolio_chat',
-  'market_symbol_qa',
-  'market_tehran_chat',
-  'macro_qa',
-  'telegram_assistant_qa',
-  'telegram_assistant_page',
-  'telegram_assistant_pdf',
-  'telegram_assistant_youtube',
-  'telegram_assistant_youtube_subs',
-  'llm_test',
-]);
-
-/** فقط آنالیز و پیشنهاد سبد. اخبار، اقتصاد دنیا، صندوق و درس روی مدل اصلی می‌مانند. */
-const SYSTEM_MODEL_PURPOSES = new Set([
-  'portfolio_suggest_multi',
-  'portfolio_analyze',
-  'monthly_eval',
-]);
+export type SystemOneQuestion = {
+  type: 'choice' | 'score' | 'noul';
+  instructions: string;
+  criteria?: Record<string, string> | string[];
+};
 
 type GapGptWallet = {
   ok: boolean;
@@ -178,6 +163,8 @@ export class LlmService {
       baseUrl?: string;
       model?: string;
       systemModel?: string;
+      systemOneBaseUrl?: string;
+      systemOneApiToken?: string;
       apiToken?: string;
       usePlatformFallback?: boolean;
     },
@@ -186,8 +173,12 @@ export class LlmService {
     if (data.baseUrl !== undefined) update.baseUrl = data.baseUrl.trim().replace(/\/$/, '');
     if (data.model !== undefined) update.model = data.model.trim();
     if (data.systemModel !== undefined) update.systemModel = data.systemModel.trim();
+    if (data.systemOneBaseUrl !== undefined) {
+      update.systemOneBaseUrl = data.systemOneBaseUrl.trim().replace(/\/$/, '') || 'https://system-one.dev/v1';
+    }
     if (data.usePlatformFallback !== undefined) update.usePlatformFallback = data.usePlatformFallback;
     if (data.apiToken) update.apiTokenEncrypted = this.encryptToken(data.apiToken.trim());
+    if (data.systemOneApiToken) update.systemOneTokenEncrypted = this.encryptToken(data.systemOneApiToken.trim());
 
     return this.prisma.llmSetting.upsert({
       where: { userId },
@@ -196,7 +187,12 @@ export class LlmService {
         baseUrl: (data.baseUrl ?? 'https://api.openai.com/v1').trim().replace(/\/$/, ''),
         model: (data.model ?? 'gpt-4o-mini').trim(),
         systemModel: data.systemModel?.trim() ?? '',
+        systemOneBaseUrl:
+          data.systemOneBaseUrl?.trim().replace(/\/$/, '') || 'https://system-one.dev/v1',
         apiTokenEncrypted: data.apiToken ? this.encryptToken(data.apiToken.trim()) : undefined,
+        systemOneTokenEncrypted: data.systemOneApiToken
+          ? this.encryptToken(data.systemOneApiToken.trim())
+          : undefined,
         usePlatformFallback: data.usePlatformFallback ?? true,
       },
       update,
@@ -210,8 +206,10 @@ export class LlmService {
       baseUrl: s.baseUrl,
       model: s.model,
       systemModel: s.systemModel,
+      systemOneBaseUrl: s.systemOneBaseUrl,
       usePlatformFallback: s.usePlatformFallback,
       hasToken: Boolean(s.apiTokenEncrypted),
+      hasSystemOneToken: Boolean(s.systemOneTokenEncrypted),
     };
   }
 
@@ -283,16 +281,12 @@ export class LlmService {
       const s = await this.prisma.llmSetting.findUnique({ where: { userId: settingsUserId } });
       if (s?.apiTokenEncrypted) {
         const models = parseModelList(s.model);
-        return this.applySystemModel(
-          {
-            baseUrl: s.baseUrl.replace(/\/$/, ''),
-            model: models[0] ?? s.model,
-            fallbackModels: [...models.slice(1), ...envFallbacks],
-            apiKey: this.decryptToken(s.apiTokenEncrypted),
-          },
-          s.systemModel,
-          purpose,
-        );
+        return {
+          baseUrl: s.baseUrl.replace(/\/$/, ''),
+          model: models[0] ?? s.model,
+          fallbackModels: [...models.slice(1), ...envFallbacks],
+          apiKey: this.decryptToken(s.apiTokenEncrypted),
+        };
       }
       if (s && !s.usePlatformFallback) {
         throw new Error('توکن LLM تنظیم نشده است');
@@ -302,27 +296,114 @@ export class LlmService {
     if (!apiKey) throw new Error('هیچ توکن LLM در دسترس نیست. در تنظیمات کلید خود را وارد کنید.');
     const primary = this.config.get<string>('PLATFORM_LLM_MODEL') ?? 'gpt-4o-mini';
     const models = parseModelList(primary);
-    return this.applySystemModel(
-      {
-        baseUrl: (this.config.get<string>('PLATFORM_LLM_BASE_URL') ?? 'https://api.openai.com/v1').replace(
-          /\/$/,
-          '',
-        ),
-        model: models[0] ?? primary,
-        fallbackModels: [...models.slice(1), ...envFallbacks],
-        apiKey,
-      },
-      '',
+    return {
+      baseUrl: (this.config.get<string>('PLATFORM_LLM_BASE_URL') ?? 'https://api.openai.com/v1').replace(
+        /\/$/,
+        '',
+      ),
+      model: models[0] ?? primary,
+      fallbackModels: [...models.slice(1), ...envFallbacks],
+      apiKey,
+    };
+  }
+
+  /** تصمیم System One. خروجی متن نیست؛ هر سؤال choice یا score یا noul است. */
+  async systemOne(
+    userId: string | undefined,
+    purpose: string,
+    state: unknown,
+    questions: Record<string, SystemOneQuestion>,
+  ): Promise<Record<string, unknown>> {
+    await this.aiUsage.assertAllowed(userId, purpose);
+    const creds = await this.systemOneCreds();
+    const body = JSON.stringify({ model: creds.model, state, questions });
+    if (Buffer.byteLength(body, 'utf8') > 65_000) {
+      throw new BadRequestException('حجم زمینهٔ System One از سقف مدل بیشتر است.');
+    }
+    const url = `${creds.baseUrl}/systemone`;
+    let lastStatus = 0;
+    let lastText = '';
+    for (let attempt = 0; attempt < 2; attempt++) {
+      try {
+        const controller = new AbortController();
+        const timer = setTimeout(() => controller.abort(), 45_000);
+        const response = await fetch(url, {
+          method: 'POST',
+          headers: {
+            Authorization: `Bearer ${creds.apiKey}`,
+            'Content-Type': 'application/json',
+            'Idempotency-Key': randomUUID(),
+          },
+          body,
+          signal: controller.signal,
+        }).finally(() => clearTimeout(timer));
+        lastStatus = response.status;
+        lastText = await response.text();
+        if (response.status === 429 && attempt === 0) {
+          await sleep(2000);
+          continue;
+        }
+        if (!response.ok) break;
+        const json = JSON.parse(lastText) as {
+          model?: string;
+          answers?: Record<string, unknown>;
+          usage?: { input_tokens?: number | null; output_tokens?: number | null };
+        };
+        if (!json.answers || typeof json.answers !== 'object') {
+          throw new BadRequestException('پاسخ System One جواب تصمیم نداشت.');
+        }
+        const promptTokens = finite(json.usage?.input_tokens);
+        const completionTokens = finite(json.usage?.output_tokens);
+        const estimated = !(promptTokens > 0);
+        const promptCount = estimated ? Math.max(1, Math.ceil(Buffer.byteLength(body, 'utf8') / 4)) : promptTokens;
+        await this.aiUsage.record(
+          userId,
+          purpose,
+          json.model || creds.model,
+          {
+            promptTokens: promptCount,
+            completionTokens,
+            totalTokens: promptCount + completionTokens,
+            estimated,
+          },
+          {
+            prompt: body.slice(0, 12000),
+            response: JSON.stringify(json.answers).slice(0, 12000),
+          },
+        );
+        return json.answers;
+      } catch (e) {
+        if (e instanceof BadRequestException) throw e;
+        lastText = e instanceof Error ? e.message : String(e);
+        break;
+      }
+    }
+    const detail = redactSecrets(lastText).slice(0, 4000);
+    await this.aiUsage.record(
+      userId,
       purpose,
+      creds.model,
+      { promptTokens: 0, completionTokens: 0, totalTokens: 0, estimated: false },
+      { prompt: body.slice(0, 4000), response: detail, ok: false },
+    );
+    throw new BadRequestException(
+      lastStatus
+        ? `فراخوانی System One ناموفق بود (${lastStatus.toLocaleString('fa-IR')}).`
+        : 'فراخوانی System One ناموفق بود.',
     );
   }
 
-  private applySystemModel(creds: LlmCreds, systemModel: string, purpose?: string): LlmCreds {
-    const pinned = systemModel.trim();
-    if (!pinned || !purpose || !SYSTEM_MODEL_PURPOSES.has(purpose)) return creds;
-    if (INTERACTIVE_LLM_PURPOSES.has(purpose)) return creds;
-    const fallbackModels = [creds.model, ...creds.fallbackModels].filter((name) => name && name !== pinned);
-    return { ...creds, model: pinned, fallbackModels, pinPrimary: true };
+  private async systemOneCreds(): Promise<{ baseUrl: string; model: string; apiKey: string }> {
+    const adminId = await this.adminUserId();
+    const row = adminId
+      ? await this.prisma.llmSetting.findUnique({ where: { userId: adminId } })
+      : null;
+    const model = row?.systemModel?.trim() ?? '';
+    const token = row?.systemOneTokenEncrypted ? this.decryptToken(row.systemOneTokenEncrypted) : '';
+    if (!model) throw new BadRequestException('مدل system-one در تنظیمات ادمین خالی است.');
+    if (!token) throw new BadRequestException('کلید System One در تنظیمات ادمین ذخیره نشده است.');
+    const baseUrl = (row?.systemOneBaseUrl?.trim() || 'https://system-one.dev/v1').replace(/\/$/, '');
+    return { baseUrl, model, apiKey: token };
   }
 
   private requestHeaders(creds: LlmCreds): Record<string, string> {

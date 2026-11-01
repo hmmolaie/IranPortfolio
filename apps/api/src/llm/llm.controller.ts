@@ -19,6 +19,14 @@ class UpdateLlmDto {
 
   @IsOptional()
   @IsString()
+  systemOneBaseUrl?: string;
+
+  @IsOptional()
+  @IsString()
+  systemOneApiToken?: string;
+
+  @IsOptional()
+  @IsString()
   apiToken?: string;
 
   @IsOptional()
