@@ -3,7 +3,13 @@
 import { useEffect, useState } from 'react';
 import Link from 'next/link';
 import { useRouter } from 'next/navigation';
+import { PortfolioStrategy, STRATEGY_LABELS_FA } from '@sabadyar/shared';
 import { api, formatNum, formatRial, getToken, getUserRole, setUserRole, UserRole } from '@/lib/api';
+
+function strategyLabel(value: string): string {
+  if (value in STRATEGY_LABELS_FA) return STRATEGY_LABELS_FA[value as PortfolioStrategy];
+  return value;
+}
 
 type Portfolio = {
   id: string;
@@ -25,6 +31,7 @@ export default function DashboardPage() {
   const [usersReady, setUsersReady] = useState(false);
   const [portfoliosReady, setPortfoliosReady] = useState(false);
   const [name, setName] = useState('');
+  const [selfId, setSelfId] = useState('');
   const [role, setRole] = useState<UserRole | null>(null);
   const [users, setUsers] = useState<AppUser[]>([]);
   const [selectedUserId, setSelectedUserId] = useState('');
@@ -56,19 +63,20 @@ export default function DashboardPage() {
       router.replace('/');
       return;
     }
-    api<{ name?: string; role?: UserRole }>('/users/me')
+    api<{ id?: string; name?: string; role?: UserRole }>('/users/me')
       .then((u) => {
         setName(u.name || (u.role === 'ADMIN' ? 'مدیر' : 'کاربر'));
+        if (u.id) setSelfId(u.id);
         const r = u.role ?? getUserRole();
         if (r) setUserRole(r);
         setRole(r ?? null);
         if (r === 'ADMIN') {
+          if (u.id) setSelectedUserId(u.id);
           return api<Array<AppUser & { role?: string }>>('/users').then((list) => {
             const people = list.filter((item) => item.role === 'USER');
             setUsers(people);
             setUsersReady(true);
-            if (people[0]) setSelectedUserId(people[0].id);
-            else setPortfoliosReady(true);
+            if (!u.id) setPortfoliosReady(true);
           });
         }
         return loadPortfolios();
@@ -123,6 +131,7 @@ export default function DashboardPage() {
             value={selectedUserId}
             onChange={(e) => setSelectedUserId(e.target.value)}
           >
+            {selfId && <option value={selfId}>سبدهای من</option>}
             {users.map((u) => (
               <option key={u.id} value={u.id}>
                 {u.name || u.email}
@@ -199,9 +208,11 @@ export default function DashboardPage() {
 
       <section className="card">
         <h2 className="text-lg font-semibold">
-          {role === 'ADMIN' && selectedUser
-            ? `سبدهای ${selectedUser.name || selectedUser.email}`
-            : 'سبدهای اخیر'}
+          {role === 'ADMIN' && selectedUserId === selfId
+            ? 'سبدهای من'
+            : role === 'ADMIN' && selectedUser
+              ? `سبدهای ${selectedUser.name || selectedUser.email}`
+              : 'سبدهای اخیر'}
         </h2>
         <div className="mt-4 divide-y divide-navy-900/8">
           {!portfoliosReady && <p className="py-4 text-sm text-navy-800/60">در حال بارگذاری...</p>}
@@ -216,7 +227,7 @@ export default function DashboardPage() {
             >
               <div>
                 <div className="font-medium">{p.name}</div>
-                <div className="text-xs text-navy-800/50">{p.strategy}</div>
+                <div className="text-xs text-navy-800/50">{strategyLabel(p.strategy)}</div>
               </div>
               <div className="text-sm">{formatRial(p.capitalRial)}</div>
             </Link>

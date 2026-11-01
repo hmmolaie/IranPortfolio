@@ -22,19 +22,32 @@ import {
 import { daysAgoDateKey } from '../news/tehran-date';
 import { foldFa, tokenizeMarketQuestion } from '../market/tehran-chat';
 import { visibleInstrumentsWhere, MarketService } from '../market/market.service';
-import { detectQueue, optionBoardForPrompt, optionMetaExpired, redirectAnalysisSuggestion } from '../market/option-board';
+import {
+  detectQueue,
+  optionBelongsToUnderlying,
+  optionBoardForPrompt,
+  optionExpired,
+  optionMetaExpired,
+  parseOptionMeta,
+  redirectAnalysisSuggestion,
+} from '../market/option-board';
 import {
   CLASS_LABEL_FA,
   type ClassId,
   type InvestorState,
   type MarketState,
+  type HedgeCandidate,
   type StockFact,
   SIZE_LEVELS,
   STOCKS_PER_CALL,
   allocationState,
+  buildStockFact,
   classQuestions,
   faPct,
+  fillHedge,
   fillStockSleeve,
+  hedgeQuestions,
+  hedgeState,
   normalizeClassWeights,
   readLevelPct,
   readNoul,
@@ -312,6 +325,139 @@ export class PortfoliosService {
     }
   }
 
+  async suggestHedge(userId: string, portfolioId: string) {
+    const portfolio = await this.get(userId, portfolioId);
+    const latest = portfolio.snapshots[0];
+    if (!latest) throw new BadRequestException('برای پوشش ریسک ابتدا باید سبد تشکیل شده باشد.');
+    const prepared = await this.livePutsForHoldings(latest.items);
+    if (!prepared.candidates.length) {
+      return {
+        noteFa: prepared.held
+          ? 'برای سهم‌های فعلی سبد، اختیار فروش سررسیدنشده و بدون صف پیدا نشد.'
+          : 'سهمی در سبد نیست.',
+        items: [],
+        uncovered: prepared.uncovered,
+      };
+    }
+    const charged = await this.wallet.charge(userId, 'suggest');
+    try {
+      const profile = await this.prisma.userProfile.findUnique({ where: { userId } });
+      const investor = this.investorState(portfolio, profile);
+      const market = await this.decisionMarket(userId);
+      const picks: Array<HedgeCandidate & { noul: number; sizePct: number }> = [];
+      for (let offset = 0; offset < prepared.candidates.length; offset += STOCKS_PER_CALL) {
+        const batch = prepared.candidates.slice(offset, offset + STOCKS_PER_CALL);
+        const answers = await this.llm.systemOne(
+          userId,
+          'portfolio_hedge',
+          hedgeState(investor, market, batch),
+          hedgeQuestions(batch),
+        );
+        batch.forEach((option, index) => {
+          picks.push({
+            ...option,
+            noul: readNoul(answers[`p${index}`]),
+            sizePct: readLevelPct(answers[`s${index}`], SIZE_LEVELS),
+          });
+        });
+      }
+      const items = fillHedge(picks);
+      return {
+        noteFa: items.length
+          ? 'این اختیارها فقط برای پوشش سهم‌های موجود پیشنهاد شده‌اند و به سبد اضافه نمی‌شوند.'
+          : 'اختیارهای سررسیدنشده بررسی شدند، ولی اندازه یا احتمال هیچ‌کدام برای یک قرارداد کامل کافی نبود.',
+        items,
+        uncovered: prepared.uncovered,
+      };
+    } catch (e) {
+      await this.wallet.refund(userId, charged, 'suggest');
+      throw e;
+    }
+  }
+
+  private async livePutsForHoldings(
+    items: Array<{
+      symbol: string;
+      assetType: string;
+      quantity: number;
+      lastPrice?: number | null;
+      unitPrice?: number | null;
+    }>,
+  ) {
+    const held = items.filter((item) => item.assetType === AssetType.STOCK && item.quantity > 0);
+    if (!held.length) return { held: false, candidates: [] as HedgeCandidate[], uncovered: [] as string[] };
+    const symbols = [...new Set(held.map((item) => item.symbol))];
+    const underlyings = await this.prisma.instrument.findMany({
+      where: { isActive: true, assetType: AssetType.STOCK, symbol: { in: symbols } },
+      select: { symbol: true, insCode: true },
+    });
+    const insBySymbol = new Map(underlyings.map((row) => [row.symbol, row.insCode]));
+    const options = await this.prisma.instrument.findMany({
+      where: { isActive: true, assetType: AssetType.OPTION },
+      select: {
+        id: true,
+        symbol: true,
+        nameFa: true,
+        meta: true,
+        priceBars: {
+          orderBy: { tradeDate: 'desc' },
+          take: 1,
+          select: { lastPrice: true, closePrice: true, volume: true, raw: true },
+        },
+      },
+    });
+    const optionRows = options.map((row) => ({
+      id: row.id,
+      symbol: row.symbol,
+      nameFa: row.nameFa,
+      assetType: AssetType.OPTION,
+      lastPrice: row.priceBars[0]?.lastPrice ?? null,
+      closePrice: row.priceBars[0]?.closePrice ?? null,
+      volume: row.priceBars[0]?.volume ?? null,
+      raw: row.priceBars[0]?.raw ?? null,
+      meta: row.meta,
+    }));
+    const candidates: HedgeCandidate[] = [];
+    const uncovered: string[] = [];
+    const asRecord = (value: unknown): Record<string, unknown> =>
+      value && typeof value === 'object' && !Array.isArray(value) ? (value as Record<string, unknown>) : {};
+    for (const stock of held) {
+      const spot = stock.lastPrice != null && stock.lastPrice > 0 ? stock.lastPrice : stock.unitPrice;
+      if (spot == null || !(spot > 0)) {
+        uncovered.push(stock.symbol);
+        continue;
+      }
+      let added = 0;
+      for (const row of optionRows) {
+        if (!optionBelongsToUnderlying(stock.symbol, insBySymbol.get(stock.symbol), row)) continue;
+        const parsed = parseOptionMeta({ ...asRecord(row.raw), ...asRecord(row.meta) }, row.symbol, row.nameFa);
+        if (parsed.side !== 'PUT') continue;
+        if (parsed.strike == null || !(parsed.strike > 0)) continue;
+        if (parsed.daysLeft == null || !(parsed.daysLeft > 0) || optionExpired(parsed.daysLeft)) continue;
+        if (optionMetaExpired(row.meta, AssetType.OPTION, { nameFa: row.nameFa, symbol: row.symbol })) continue;
+        const premium = row.lastPrice != null && row.lastPrice > 0 ? row.lastPrice : row.closePrice;
+        if (premium == null || !(premium > 0)) continue;
+        if (row.volume != null && !(row.volume > 0)) continue;
+        if (detectQueue(row.raw, premium)) continue;
+        candidates.push({
+          symbol: row.symbol,
+          nameFa: row.nameFa,
+          underlying: stock.symbol,
+          strike: parsed.strike,
+          premium,
+          daysLeft: parsed.daysLeft,
+          contractSize: parsed.contractSize != null && parsed.contractSize > 0 ? parsed.contractSize : 1,
+          volume: row.volume,
+          spot,
+          heldQty: stock.quantity,
+        });
+        added += 1;
+      }
+      if (!added) uncovered.push(stock.symbol);
+    }
+    return { held: true, candidates, uncovered };
+  }
+
   async suggestStrategies(
     userId: string,
     portfolioId: string,
@@ -431,7 +577,7 @@ export class PortfoliosService {
       strategies: [
         {
           labelFa: 'پیشنهاد System One',
-          strategySummaryFa: `تخصیص: ${mix}. سهم‌ها از آخرین معاملات بدون صف و با احتمال دست‌کم ۵۰٪ آمده‌اند. قیمت طلا و دلار، آخرین درس‌آموخته‌ها و اخبار ایران و جهان در انتخاب سهم لحاظ شده‌اند. این خروجی تصمیم‌یار است.`,
+          strategySummaryFa: `استراتژی ${investor.strategyFa}. تخصیص: ${mix}. سهم‌ها از آخرین معاملات بدون صف و با احتمال دست‌کم ۵۰٪ آمده‌اند. آخرین قیمت، EPS، نسبت سود به قیمت و ارقام موجود نماد، به‌همراه طلا، دلار، درس‌آموخته‌ها و اخبار در انتخاب سهم لحاظ شده‌اند. این خروجی تصمیم‌یار است.`,
           items,
         },
       ],
@@ -555,6 +701,7 @@ export class PortfoliosService {
         lastPrice: true,
         closePrice: true,
         volume: true,
+        eps: true,
         pe: true,
         raw: true,
         instrument: { select: { symbol: true, nameFa: true } },
@@ -566,13 +713,18 @@ export class PortfoliosService {
       if (price == null || !(price > 0)) continue;
       if (bar.volume != null && !(bar.volume > 0)) continue;
       if (detectQueue(bar.raw, price)) continue;
-      rows.push({
-        symbol: bar.instrument.symbol,
-        nameFa: bar.instrument.nameFa,
-        price,
-        volume: bar.volume,
-        pe: bar.pe,
-      });
+      rows.push(
+        buildStockFact({
+          symbol: bar.instrument.symbol,
+          nameFa: bar.instrument.nameFa,
+          price,
+          close: bar.closePrice,
+          eps: bar.eps,
+          pe: bar.pe,
+          volume: bar.volume,
+          raw: bar.raw,
+        }),
+      );
     }
     rows.sort((a, b) => a.symbol.localeCompare(b.symbol, 'fa'));
     return rows;

@@ -292,6 +292,11 @@ export class PortfoliosController {
     return this.portfolios.analyzeCurrent(req.user.userId, id, { bill: true });
   }
 
+  @Post(':id/hedge')
+  hedge(@Req() req: { user: { userId: string } }, @Param('id') id: string) {
+    return this.portfolios.suggestHedge(req.user.userId, id);
+  }
+
   @Post(':id/apply-suggestion')
   applySuggestion(
     @Req() req: { user: { userId: string } },

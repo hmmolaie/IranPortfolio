@@ -87,22 +87,35 @@ export type StockFact = {
   symbol: string;
   nameFa: string;
   price: number;
-  volume: number | null;
+  close: number | null;
+  eps: number | null;
   pe: number | null;
+  /** بازده سود هر سهم به درصد: EPS تقسیم بر قیمت، ضربدر ۱۰۰. */
+  ep: number | null;
+  volume: number | null;
+  valueRial: number | null;
+  trades: number | null;
+  changePct: number | null;
+  high: number | null;
+  low: number | null;
+  realBuy: number | null;
+  realSell: number | null;
+  legalBuy: number | null;
+  legalSell: number | null;
+  sectorPe: number | null;
+  nav: number | null;
 };
+
+const STOCK_LEGEND =
+  'Stock keys: px last price in rial, cl close if different, eps, pe price/eps, ep earnings yield percent (eps/price*100), vol shares, val turnover rial, chg percent versus previous close, hi lo day high and low, n trade count, rb rs real-person buy and sell volume, lb ls legal-person buy and sell volume, spe sector pe, nav fund nav. A missing key is unknown.';
 
 type DecisionState = {
   investor: InvestorState;
   market: MarketState;
   task: string;
-  stocks?: Array<{
-    i: number;
-    symbol: string;
-    name: string;
-    price: number;
-    volume?: number;
-    pe?: number;
-  }>;
+  legend?: string;
+  stocks?: Array<Record<string, string | number>>;
+  options?: Array<Record<string, string | number>>;
 };
 
 export function classQuestions(): Record<string, { type: 'score'; instructions: string; criteria: string[] }> {
@@ -125,14 +138,14 @@ export function stockQuestions(
     { type: 'noul' | 'score'; instructions: string; criteria?: Record<string, string> | string[] }
   > = {};
   stocks.forEach((stock, index) => {
-    const who = `${stock.symbol} (${stock.nameFa})`;
+    const who = stock.symbol;
     questions[`p${index}`] = {
       type: 'noul',
-      instructions: `Should ${who} be included in this investor's stock sleeve? Weigh the profile, strategy, current gold and dollar prices, lessons, Iran news, and world news in the state. Judge only this stock.`,
+      instructions: `Include ${who} (stocks i=${index})? Use its px, eps, pe, ep and the other figures in the legend, plus profile, gold, dollar, lessons, and news. This symbol only.`,
     };
     questions[`s${index}`] = {
       type: 'score',
-      instructions: `If ${who} is included, how large should it be inside the stock sleeve? Use the same gold, dollar, lesson, and news context. Score only this stock.`,
+      instructions: `If ${who} (stocks i=${index}) is included, how large inside the stock sleeve? Use the same figures. This symbol only.`,
       criteria: SIZE_CRITERIA,
     };
   });
@@ -151,16 +164,63 @@ export function stockState(investor: InvestorState, market: MarketState, stocks:
   return fitDecisionState({
     investor,
     market,
-    task: 'For each listed stock, decide inclusion and size. Use gold and dollar prices, lessons, Iran news, and world news. Do not assume a stock is attractive only because it was mentioned in a headline.',
-    stocks: stocks.map((stock, index) => ({
-      i: index,
-      symbol: stock.symbol,
-      name: clip(stock.nameFa, 48) ?? stock.symbol,
-      price: Math.round(stock.price),
-      ...(stock.volume != null && stock.volume > 0 ? { volume: Math.round(stock.volume) } : {}),
-      ...(stock.pe != null && Number.isFinite(stock.pe) ? { pe: Math.round(stock.pe * 10) / 10 } : {}),
-    })),
+    legend: STOCK_LEGEND,
+    task: 'For each stock, decide inclusion and size from its px, eps, pe, ep and the other listed figures, together with gold, dollar, lessons, Iran news, and world news. A headline alone is not a reason to include it.',
+    stocks: stocks.map((stock, index) => compactStock(stock, index)),
   });
+}
+
+export function buildStockFact(input: {
+  symbol: string;
+  nameFa: string;
+  price: number;
+  close: number | null;
+  eps: number | null;
+  pe: number | null;
+  volume: number | null;
+  raw: unknown;
+}): StockFact {
+  const raw = rawRecord(input.raw);
+  const eps = finiteOr(input.eps) ?? firstNum(raw, ['eps', 'estimatedEPS']);
+  const storedPe = finiteOr(input.pe) ?? firstNum(raw, ['pe', 'pE']);
+  const pe =
+    storedPe != null && storedPe > 0
+      ? storedPe
+      : eps != null && eps > 0 && input.price > 0
+        ? input.price / eps
+        : null;
+  const ep =
+    eps != null && input.price > 0 ? (eps / input.price) * 100 : pe != null && pe > 0 ? 100 / pe : null;
+  const prev = firstNum(raw, ['py', 'priceYesterday', 'PriceYesterday']);
+  const givenChange = firstNum(raw, ['plp', 'pcp', 'priceChangePercent', 'changePercent'], true);
+  const changePct =
+    prev != null && prev > 0
+      ? ((input.price - prev) / prev) * 100
+      : givenChange != null && Math.abs(givenChange) <= 100
+        ? givenChange
+        : null;
+  const sectorPe = firstNum(raw, ['sectorPE', 'sectorPe']);
+  return {
+    symbol: input.symbol,
+    nameFa: input.nameFa,
+    price: input.price,
+    close: finiteOr(input.close) ?? firstNum(raw, ['pc', 'pClosing', 'closePrice', 'closingPrice']),
+    eps,
+    pe,
+    ep,
+    volume: finiteOr(input.volume) ?? firstNum(raw, ['qTotTran5J', 'tvol', 'volume', 'tradeVolume']),
+    valueRial: firstNum(raw, ['tval', 'qTotCap', 'tradeValue', 'TradeValue']),
+    trades: firstNum(raw, ['tno', 'zTotTran', 'tradeCount']),
+    changePct,
+    high: firstNum(raw, ['pmax', 'pMax', 'priceMax', 'high']),
+    low: firstNum(raw, ['pmin', 'pMin', 'priceMin', 'low']),
+    realBuy: firstNum(raw, ['Buy_I_Volume', 'buy_I_Volume', 'BuyIVolume']),
+    realSell: firstNum(raw, ['Sell_I_Volume', 'sell_I_Volume', 'SellIVolume']),
+    legalBuy: firstNum(raw, ['Buy_N_Volume', 'buy_N_Volume', 'BuyNVolume']),
+    legalSell: firstNum(raw, ['Sell_N_Volume', 'sell_N_Volume', 'SellNVolume']),
+    sectorPe: sectorPe != null && (pe == null || Math.abs(sectorPe - pe) > 0.05) ? sectorPe : null,
+    nav: firstNum(raw, ['nav', 'NAV', 'Nav']),
+  };
 }
 
 export function levelValue(score: number, levels: number[]): number {
@@ -229,10 +289,127 @@ export function fillStockSleeve(
       symbol: pick.symbol,
       amountRial,
       weightPct: capital > 0 ? (amountRial / capital) * 100 : 0,
-      reasonFa: `احتمال حضور ${probability.toLocaleString('fa-IR')}٪ و اندازه حدود ${pick.sizePct.toLocaleString('fa-IR', { maximumFractionDigits: 1 })}٪ از بخش سهام. قیمت طلا و دلار، درس‌آموخته‌ها و اخبار ایران و جهان در همین قضاوت بوده‌اند.`,
+      reasonFa: `احتمال حضور ${probability.toLocaleString('fa-IR')}٪ و اندازه حدود ${pick.sizePct.toLocaleString('fa-IR', { maximumFractionDigits: 1 })}٪ از بخش سهام. قیمت، EPS، نسبت سود به قیمت و بقیهٔ ارقام نماد، به‌همراه طلا، دلار، درس‌آموخته‌ها و اخبار در همین قضاوت بوده‌اند.`,
     });
   }
   return chosen;
+}
+
+export type HedgeCandidate = {
+  symbol: string;
+  nameFa: string;
+  underlying: string;
+  strike: number;
+  premium: number;
+  daysLeft: number;
+  contractSize: number;
+  volume: number | null;
+  spot: number;
+  heldQty: number;
+};
+
+const HEDGE_LEGEND =
+  'Option keys: und held stock, k strike, px put premium in rial, d days to expiry, sz shares per contract, vol, spot held stock price, qty shares already held. These are puts only. A missing key is unknown.';
+
+export function hedgeQuestions(
+  options: HedgeCandidate[],
+): Record<string, { type: 'noul' | 'score'; instructions: string; criteria?: string[] }> {
+  const questions: Record<string, { type: 'noul' | 'score'; instructions: string; criteria?: string[] }> = {};
+  options.forEach((option, index) => {
+    questions[`p${index}`] = {
+      type: 'noul',
+      instructions: `Buy put ${option.symbol} (options i=${index}) to hedge shares of ${option.underlying} already held? Use strike, premium, days left, and held quantity. This contract only. Do not open a new stock position.`,
+    };
+    questions[`s${index}`] = {
+      type: 'score',
+      instructions: `If put ${option.symbol} is used, what percent of the held ${option.underlying} shares should it cover? This contract only.`,
+      criteria: SIZE_CRITERIA,
+    };
+  });
+  return questions;
+}
+
+export function hedgeState(investor: InvestorState, market: MarketState, options: HedgeCandidate[]): DecisionState {
+  return fitDecisionState({
+    investor,
+    market,
+    legend: HEDGE_LEGEND,
+    task: 'Choose unexpired puts that hedge stocks the investor already holds. Cover only existing shares. Ignore a contract that does not reduce downside of its underlying.',
+    options: options.map((option, index) => compactHedge(option, index)),
+  });
+}
+
+export type HedgeChoice = {
+  underlying: string;
+  symbol: string;
+  nameFa: string;
+  sideFa: string;
+  strike: number;
+  premium: number;
+  daysLeft: number;
+  contracts: number;
+  coverShares: number;
+  coverPct: number;
+  probabilityPct: number;
+  costRial: number;
+  reasonFa: string;
+};
+
+export function fillHedge(
+  picks: Array<HedgeCandidate & { noul: number; sizePct: number }>,
+): HedgeChoice[] {
+  const ranked = [...picks].sort((a, b) => b.noul - a.noul || b.sizePct - a.sizePct);
+  const covered = new Map<string, number>();
+  const chosen: HedgeChoice[] = [];
+  for (const pick of ranked) {
+    if (pick.noul < MIN_STOCK_PROBABILITY) break;
+    if (!(pick.premium > 0) || !(pick.heldQty > 0) || pick.sizePct <= 0) continue;
+    const used = covered.get(pick.underlying) ?? 0;
+    const room = pick.heldQty - used;
+    if (room < 1) continue;
+    const wanted = Math.floor((pick.heldQty * pick.sizePct) / 100);
+    const unit = pick.contractSize > 0 ? pick.contractSize : 1;
+    const contracts = Math.floor(Math.min(wanted, room) / unit);
+    if (contracts < 1) continue;
+    const coverShares = contracts * unit;
+    covered.set(pick.underlying, used + coverShares);
+    const probabilityPct = Math.round(pick.noul * 100);
+    const coverPct = (coverShares / pick.heldQty) * 100;
+    chosen.push({
+      underlying: pick.underlying,
+      symbol: pick.symbol,
+      nameFa: pick.nameFa,
+      sideFa: 'اختیار فروش',
+      strike: pick.strike,
+      premium: pick.premium,
+      daysLeft: pick.daysLeft,
+      contracts,
+      coverShares,
+      coverPct,
+      probabilityPct,
+      costRial: Math.round(contracts * unit * pick.premium),
+      reasonFa: `پوشش ${coverShares.toLocaleString('fa-IR')} سهم از ${pick.heldQty.toLocaleString('fa-IR')} سهم ${pick.underlying}. احتمال ${probabilityPct.toLocaleString('fa-IR')}٪ و ${pick.daysLeft.toLocaleString('fa-IR')} روز تا سررسید.`,
+    });
+  }
+  return chosen;
+}
+
+function compactHedge(option: HedgeCandidate, index: number): Record<string, string | number> {
+  const row: Record<string, string | number> = {
+    i: index,
+    symbol: option.symbol,
+    name: clip(option.nameFa, 32) ?? option.symbol,
+    und: option.underlying,
+    side: 'PUT',
+    k: Math.round(option.strike),
+    px: Math.round(option.premium),
+    d: Math.round(option.daysLeft),
+    sz: option.contractSize > 0 ? Math.round(option.contractSize) : 1,
+    spot: Math.round(option.spot),
+    qty: Math.round(option.heldQty),
+  };
+  if (option.volume != null && option.volume > 0) row.vol = Math.round(option.volume);
+  return row;
 }
 
 export function faPct(value: number): string {
@@ -246,8 +423,95 @@ function clip(value: string | null | undefined, max: number): string | null {
   return text.length <= max ? text : `${text.slice(0, max)}…`;
 }
 
+function compactStock(stock: StockFact, index: number): Record<string, string | number> {
+  const row: Record<string, string | number> = {
+    i: index,
+    symbol: stock.symbol,
+    name: clip(stock.nameFa, 32) ?? stock.symbol,
+    px: Math.round(stock.price),
+  };
+  const put = (key: string, value: number | null, digits: number) => {
+    if (value == null || !Number.isFinite(value)) return;
+    row[key] = roundTo(value, digits);
+  };
+  if (stock.close != null && Math.abs(stock.close - stock.price) >= 1) put('cl', stock.close, 0);
+  put('eps', stock.eps, stock.eps != null && Math.abs(stock.eps) < 100 ? 2 : 0);
+  put('pe', stock.pe, 2);
+  put('ep', stock.ep, 2);
+  put('vol', stock.volume, 0);
+  put('val', stock.valueRial, 0);
+  put('chg', stock.changePct, 2);
+  put('hi', stock.high, 0);
+  put('lo', stock.low, 0);
+  put('n', stock.trades, 0);
+  put('rb', stock.realBuy, 0);
+  put('rs', stock.realSell, 0);
+  put('lb', stock.legalBuy, 0);
+  put('ls', stock.legalSell, 0);
+  put('spe', stock.sectorPe, 2);
+  put('nav', stock.nav, 0);
+  return row;
+}
+
+function rawRecord(raw: unknown): Record<string, unknown> {
+  if (!raw || typeof raw !== 'object' || Array.isArray(raw)) return {};
+  return raw as Record<string, unknown>;
+}
+
+function finiteOr(value: number | null | undefined): number | null {
+  return value != null && Number.isFinite(value) ? value : null;
+}
+
+function firstNum(raw: Record<string, unknown>, keys: string[], allowZero = false): number | null {
+  for (const key of keys) {
+    const value = raw[key];
+    const parsed =
+      typeof value === 'number'
+        ? value
+        : typeof value === 'string' && value.trim()
+          ? Number(value.replace(/,/g, ''))
+          : Number.NaN;
+    if (!Number.isFinite(parsed)) continue;
+    if (!allowZero && parsed === 0) continue;
+    return parsed;
+  }
+  return null;
+}
+
+function roundTo(value: number, digits: number): number {
+  const scale = 10 ** digits;
+  return Math.round(value * scale) / scale;
+}
+
+function packState(value: unknown): unknown {
+  if (typeof value === 'string') {
+    const text = value.replace(/\s+/g, ' ').trim();
+    return text || null;
+  }
+  if (Array.isArray(value)) {
+    return value
+      .map((item) => packState(item))
+      .filter((item) => item != null && item !== '' && !(isPlain(item) && Object.keys(item).length === 0));
+  }
+  if (isPlain(value)) {
+    const out: Record<string, unknown> = {};
+    for (const [key, item] of Object.entries(value)) {
+      const next = packState(item);
+      if (next == null || next === '') continue;
+      if (isPlain(next) && Object.keys(next).length === 0) continue;
+      out[key] = next;
+    }
+    return out;
+  }
+  return value;
+}
+
+function isPlain(value: unknown): value is Record<string, unknown> {
+  return !!value && typeof value === 'object' && !Array.isArray(value);
+}
+
 function fitDecisionState(state: DecisionState): DecisionState {
-  const clone = structuredClone(state);
+  const clone = packState(structuredClone(state)) as DecisionState;
   const size = () => Buffer.byteLength(JSON.stringify(clone), 'utf8');
   const clipRows = (rows: Array<Record<string, unknown>> | undefined, key: string, max: number) => {
     if (!rows) return;

@@ -1,6 +1,6 @@
 'use client';
 
-import { useCallback, useEffect, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useRouter } from 'next/navigation';
 import { api, formatNum, formatRial, getToken, getUserRole } from '@/lib/api';
 import { formatShamsiDateTime } from '@/lib/shamsi-date';
@@ -47,6 +47,90 @@ type HistoryDetail = HistoryItem & {
   response: string;
 };
 
+type HistoryGroup = {
+  key: string;
+  ids: string[];
+  userLabel: string;
+  sectionFa: string;
+  model: string | null;
+  promptTokens: number;
+  completionTokens: number;
+  totalTokens: number;
+  costRial: number;
+  estimated: boolean;
+  ok: boolean;
+  createdAt: string;
+};
+
+type OpenDetail = {
+  key: string;
+  sectionFa: string;
+  userLabel: string;
+  model: string | null;
+  promptTokens: number;
+  completionTokens: number;
+  estimated: boolean;
+  ok: boolean;
+  prompt: string;
+  response: string;
+};
+
+function historyGroupKey(item: HistoryItem): string {
+  return [
+    formatShamsiDateTime(item.createdAt),
+    item.sectionFa,
+    item.userLabel,
+    item.ok ? 'ok' : 'err',
+    item.model?.trim() || '',
+  ].join('\u0001');
+}
+
+function groupHistory(items: HistoryItem[]): HistoryGroup[] {
+  const groups: HistoryGroup[] = [];
+  const index = new Map<string, HistoryGroup>();
+  for (const item of items) {
+    const key = historyGroupKey(item);
+    const found = index.get(key);
+    if (!found) {
+      const group: HistoryGroup = {
+        key,
+        ids: [item.id],
+        userLabel: item.userLabel,
+        sectionFa: item.sectionFa,
+        model: item.model,
+        promptTokens: item.promptTokens,
+        completionTokens: item.completionTokens,
+        totalTokens: item.totalTokens,
+        costRial: item.costRial,
+        estimated: item.estimated,
+        ok: item.ok,
+        createdAt: item.createdAt,
+      };
+      index.set(key, group);
+      groups.push(group);
+      continue;
+    }
+    found.ids.push(item.id);
+    found.promptTokens += item.promptTokens;
+    found.completionTokens += item.completionTokens;
+    found.totalTokens += item.totalTokens;
+    found.costRial += item.costRial;
+    found.estimated = found.estimated || item.estimated;
+  }
+  return groups;
+}
+
+function joinCalls(rows: HistoryDetail[], field: 'prompt' | 'response'): string {
+  const ordered = [...rows].reverse();
+  if (ordered.length === 1) return ordered[0][field];
+  return ordered
+    .map((row, index) => {
+      const text = row[field].trim() || 'متنی ذخیره نشده است.';
+      return `فراخوانی ${(index + 1).toLocaleString('fa-IR')}\n${text}`;
+    })
+    .join('\n\n');
+}
+
 export default function AiHistoryPage() {
   const router = useRouter();
   const [userId, setUserId] = useState('');
@@ -58,8 +142,9 @@ export default function AiHistoryPage() {
   const [error, setError] = useState('');
   const [loading, setLoading] = useState(true);
   const [clearing, setClearing] = useState(false);
-  const [openId, setOpenId] = useState<string | null>(null);
-  const [detail, setDetail] = useState<HistoryDetail | null>(null);
+  const [openKey, setOpenKey] = useState<string | null>(null);
+  const detailRequest = useRef(0);
+  const [detail, setDetail] = useState<OpenDetail | null>(null);
   const [detailError, setDetailError] = useState('');
 
   const load = useCallback(
@@ -93,7 +178,7 @@ export default function AiHistoryPage() {
       router.replace('/dashboard');
       return;
     }
-    setOpenId(null);
+    setOpenKey(null);
     setDetail(null);
     void load();
   }, [load, router]);
@@ -106,7 +191,7 @@ export default function AiHistoryPage() {
       await api('/ai-usage/history', { method: 'DELETE' });
       setItems([]);
       setNextCursor(null);
-      setOpenId(null);
+      setOpenKey(null);
       setDetail(null);
     } catch (e) {
       setError((e as Error).message);
@@ -115,18 +200,38 @@ export default function AiHistoryPage() {
     }
   }
 
-  function openItem(id: string) {
-    if (openId === id) {
-      setOpenId(null);
+  const groups = useMemo(() => groupHistory(items), [items]);
+
+  function openGroup(group: HistoryGroup) {
+    if (openKey === group.key) {
+      setOpenKey(null);
       setDetail(null);
       return;
     }
-    setOpenId(id);
+    setOpenKey(group.key);
     setDetail(null);
     setDetailError('');
-    api<HistoryDetail>(`/ai-usage/history/${id}`)
-      .then(setDetail)
-      .catch((e) => setDetailError((e as Error).message));
+    const request = ++detailRequest.current;
+    Promise.all(group.ids.map((id) => api<HistoryDetail>(`/ai-usage/history/${id}`)))
+      .then((rows) => {
+        if (detailRequest.current !== request) return;
+        setDetail({
+          key: group.key,
+          sectionFa: group.sectionFa,
+          userLabel: group.userLabel,
+          model: group.model,
+          promptTokens: group.promptTokens,
+          completionTokens: group.completionTokens,
+          estimated: group.estimated,
+          ok: group.ok,
+          prompt: joinCalls(rows, 'prompt'),
+          response: joinCalls(rows, 'response'),
+        });
+      })
+      .catch((e) => {
+        if (detailRequest.current !== request) return;
+        setDetailError((e as Error).message);
+      });
   }
 
   return (
@@ -135,7 +240,7 @@ export default function AiHistoryPage() {
         <div>
           <h1 className="text-3xl font-bold">سوابق هوش مصنوعی</h1>
           <p className="mt-2 text-navy-800/70">
-            زمان، بخش، کاربر، مدل، توکن و نتیجهٔ هر فراخوانی. با کلیک روی ردیف، متن ورودی و خروجی باز می‌شود. اخبار و آنالیز خودکار با نام سیستم ثبت می‌شوند.
+            زمان، بخش، کاربر، مدل، توکن و نتیجهٔ هر فراخوانی. ردیف‌هایی که زمان، بخش، کاربر، مدل و نتیجه‌شان یکی است جمع می‌شوند. با کلیک، متن ورودی و خروجی باز می‌شود. اخبار و آنالیز خودکار با نام سیستم ثبت می‌شوند.
           </p>
         </div>
         <button
@@ -190,15 +295,15 @@ export default function AiHistoryPage() {
             </tr>
           </thead>
           <tbody>
-            {items.map((item) => {
-              const selected = openId === item.id;
+            {groups.map((item) => {
+              const selected = openKey === item.key;
               return (
                 <tr
-                  key={item.id}
+                  key={item.key}
                   className={`cursor-pointer border-b border-navy-900/5 ${
                     selected ? 'bg-gold-400/30' : 'odd:bg-white even:bg-navy-50/40'
                   }`}
-                  onClick={() => openItem(item.id)}
+                  onClick={() => openGroup(item)}
                 >
                   <td className="whitespace-nowrap px-3 py-3">{formatShamsiDateTime(item.createdAt)}</td>
                   <td className="px-3 py-3 font-medium">{item.sectionFa}</td>
@@ -222,11 +327,11 @@ export default function AiHistoryPage() {
         )}
       </section>
 
-      {openId && (
+      {openKey && (
         <div className="card space-y-3">
           {detailError && <p className="text-sm text-red-700">{detailError}</p>}
           {!detail && !detailError && <p className="text-sm text-navy-800/60">در حال خواندن متن کامل...</p>}
-          {detail && detail.id === openId && (
+          {detail && detail.key === openKey && (
             <>
               <p className="text-xs text-navy-800/50">
                 {detail.sectionFa}

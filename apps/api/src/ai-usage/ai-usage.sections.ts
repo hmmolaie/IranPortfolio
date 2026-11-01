@@ -5,12 +5,14 @@ import { AsyncLocalStorage } from 'async_hooks';
 export const PORTFOLIO_AI_PURPOSES = new Set([
   'portfolio_suggest_multi',
   'portfolio_analyze',
+  'portfolio_hedge',
   'monthly_eval',
 ]);
 
 export const QUOTA_PURPOSES = new Set([
   'portfolio_suggest_multi',
   'portfolio_analyze',
+  'portfolio_hedge',
   'portfolio_chat',
   'monthly_eval',
   'market_tehran_chat',
@@ -22,6 +24,7 @@ const SECTION_LABELS: Record<string, string> = {
   fund_report_analysis: 'تحلیل صندوق',
   fund_timeline_analysis: 'تحلیل ماه‌به‌ماه صندوق',
   portfolio_suggest_multi: 'پیشنهاد سبد',
+  portfolio_hedge: 'پوشش ریسک',
   portfolio_analyze: 'آنالیز سبد',
   portfolio_chat: 'چت سبد',
   monthly_eval: 'ارزیابی ماهانه سبد',

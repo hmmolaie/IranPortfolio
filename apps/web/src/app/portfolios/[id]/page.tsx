@@ -2,13 +2,14 @@
 
 import { FormEvent, Fragment, useEffect, useRef, useState } from 'react';
 import { useParams, useRouter } from 'next/navigation';
-import { ASSET_TYPE_LABELS_FA, AssetType } from '@sabadyar/shared';
+import { ASSET_TYPE_LABELS_FA, AssetType, PortfolioStrategy, STRATEGY_LABELS_FA } from '@sabadyar/shared';
 import { api, formatNum, formatRial, getToken } from '@/lib/api';
 import { PortfolioPieChart } from '@/components/PortfolioPieChart';
 import { ConfirmDeletePortfolioModal } from '@/components/ConfirmDeletePortfolioModal';
 import { useToast } from '@/components/Toast';
 import { formatShamsiDate, formatShamsiDateTime } from '@/lib/shamsi-date';
 import { IntelligencePanel } from '@/components/IntelligencePanel';
+import { WaitingOverlay } from '@/components/WaitingOverlay';
 
 type Item = {
   id: string;
@@ -86,6 +87,28 @@ type AnalysisResult = {
   analyzedAt: string;
 };
 
+type HedgeItem = {
+  underlying: string;
+  symbol: string;
+  nameFa: string;
+  sideFa: string;
+  strike: number;
+  premium: number;
+  daysLeft: number;
+  contracts: number;
+  coverShares: number;
+  coverPct: number;
+  probabilityPct: number;
+  costRial: number;
+  reasonFa: string;
+};
+
+type HedgeResult = {
+  noteFa: string;
+  items: HedgeItem[];
+  uncovered: string[];
+};
+
 const ADDABLE_TYPES = Object.values(AssetType);
 
 /** پیشنهاد چند استراتژی فعلاً از UI پنهان است. */
@@ -130,6 +153,7 @@ export default function PortfolioDetailPage() {
   const [edits, setEdits] = useState<Record<string, HoldingEdit>>({});
 
   const [analysis, setAnalysis] = useState<AnalysisResult | null>(null);
+  const [hedge, setHedge] = useState<HedgeResult | null>(null);
   const [appliedSuggestions, setAppliedSuggestions] = useState<number[]>([]);
   const [confirmDelete, setConfirmDelete] = useState(false);
   const [deleting, setDeleting] = useState(false);
@@ -169,6 +193,15 @@ export default function PortfolioDetailPage() {
   useEffect(() => {
     chatEndRef.current?.scrollIntoView({ behavior: 'smooth' });
   }, [chat]);
+
+  useEffect(() => {
+    if (busy !== 'suggest' && busy !== 'hedge') return;
+    const previous = document.body.style.overflow;
+    document.body.style.overflow = 'hidden';
+    return () => {
+      document.body.style.overflow = previous;
+    };
+  }, [busy]);
 
   async function run(action: string, path: string, body?: unknown) {
     setBusy(action);
@@ -328,6 +361,19 @@ export default function PortfolioDetailPage() {
       await api(`/portfolios/${id}/suggest`, { method: 'POST' });
       await load();
       toast.success('پیشنهاد سبد آماده شد.');
+    } catch (err) {
+      toast.error((err as Error).message);
+    } finally {
+      setBusy('');
+    }
+  }
+
+  async function suggestHedge() {
+    setBusy('hedge');
+    try {
+      const res = await api<HedgeResult>(`/portfolios/${id}/hedge`, { method: 'POST' });
+      setHedge(res);
+      toast.success(res.items.length ? 'پوشش ریسک آماده شد.' : res.noteFa);
     } catch (err) {
       toast.error((err as Error).message);
     } finally {
@@ -509,6 +555,11 @@ export default function PortfolioDetailPage() {
         <div>
           <h1 className="text-3xl font-bold">{p.name}</h1>
           <p className="mt-1 text-sm text-navy-800/55">
+            استراتژی{' '}
+            {p.strategy in STRATEGY_LABELS_FA
+              ? STRATEGY_LABELS_FA[p.strategy as PortfolioStrategy]
+              : p.strategy}
+            {' · '}
             تاریخ تشکیل {formatShamsiDate(p.createdAt, 'long')}
           </p>
           <p className="mt-2 text-navy-800/70">
@@ -529,7 +580,7 @@ export default function PortfolioDetailPage() {
             disabled={!!busy}
             onClick={() => void suggestPortfolio()}
           >
-            {busy === 'suggest' ? 'در حال پیشنهاد...' : 'پیشنهاد سبد با هوش مصنوعی'}
+            {busy === 'suggest' ? 'در حال دریافت پیشنهاد' : 'پیشنهاد سبد با هوش مصنوعی'}
           </button>
           )}
           {aiOn.portfolio && (
@@ -570,9 +621,30 @@ export default function PortfolioDetailPage() {
         </div>
       </div>
       {busy === 'suggest' && (
-        <p className="text-sm text-navy-800/70">
-          لطفاً صفحه را نبندید. ساخت پیشنهاد ممکن است کمی طول بکشد.
-        </p>
+        <WaitingOverlay
+          title="در حال دریافت پیشنهاد"
+          description="پیشنهاد سبد بر اساس پروفایل، قیمت طلا و دلار، درس‌آموخته‌ها و اخبار در حال ساخته شدن است. لطفاً این صفحه را نبندید."
+          steps={[
+            'خواندن پروفایل و استراتژی...',
+            'بررسی قیمت طلا و دلار...',
+            'مرور درس‌آموخته‌ها و اخبار...',
+            'تعیین سهم هر کلاس دارایی...',
+            'انتخاب سهم‌های بدون صف...',
+            'چیدن ترکیب نهایی...',
+          ]}
+        />
+      )}
+      {busy === 'hedge' && (
+        <WaitingOverlay
+          title="در حال دریافت پوشش ریسک"
+          description="اختیار فروش سررسیدنشدهٔ سهم‌های همین سبد بررسی می‌شود. لطفاً این صفحه را نبندید."
+          steps={[
+            'خواندن سهم‌های سبد...',
+            'جدا کردن اختیارهای سررسیدنشده...',
+            'سنجیدن قیمت اعمال و پرمیوم...',
+            'انتخاب پوشش برای سهم‌های موجود...',
+          ]}
+        />
       )}
 
       <IntelligencePanel portfolioId={id} />
@@ -979,6 +1051,87 @@ export default function PortfolioDetailPage() {
               یکی از تعداد یا مبلغ را بدهید؛ دیگری از آخرین قیمت دیتابیس حساب می‌شود. وزن٪ لازم نیست.
             </p>
           </form>
+        </section>
+      )}
+
+      {latest && (
+        <section className="card space-y-4">
+          <div className="flex flex-wrap items-start justify-between gap-3">
+            <div>
+              <h2 className="text-lg font-semibold">پوشش ریسک</h2>
+              <p className="mt-1 text-sm leading-7 text-navy-800/65">
+                برای سهم‌هایی که اختیار فروش سررسیدنشده دارند، پوشش پیشنهاد می‌شود. این پیشنهاد به سبد اضافه نمی‌شود.
+              </p>
+            </div>
+            {aiOn.portfolio && (
+              <button
+                type="button"
+                className="btn-primary"
+                disabled={!!busy}
+                onClick={() => void suggestHedge()}
+              >
+                {busy === 'hedge' ? 'در حال دریافت پوشش' : 'پیشنهاد پوشش ریسک'}
+              </button>
+            )}
+          </div>
+          {hedge && (
+            <div className="space-y-3">
+              <p className="text-sm leading-7 text-navy-800/80">{hedge.noteFa}</p>
+              {hedge.uncovered.length > 0 && (
+                <p className="text-sm leading-7 text-navy-800/60">
+                  بدون اختیار فروش سررسیدنشده: {hedge.uncovered.join('، ')}
+                </p>
+              )}
+              {hedge.items.length > 0 && (
+                <div className="overflow-x-auto">
+                  <table className="w-full text-sm">
+                    <thead>
+                      <tr className="border-b border-navy-900/10 text-start">
+                        <th className="py-2 pe-2 font-medium">سهم</th>
+                        <th className="py-2 pe-2 font-medium">اختیار فروش</th>
+                        <th className="py-2 pe-2 font-medium">اعمال</th>
+                        <th className="py-2 pe-2 font-medium">پرمیوم</th>
+                        <th className="py-2 pe-2 font-medium">روز مانده</th>
+                        <th className="py-2 pe-2 font-medium">احتمال</th>
+                        <th className="py-2 pe-2 font-medium">پوشش سهم</th>
+                        <th className="py-2 pe-2 font-medium">قرارداد</th>
+                        <th className="py-2 font-medium">هزینه</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {hedge.items.map((item) => (
+                        <tr key={`${item.underlying}-${item.symbol}`} className="border-b border-navy-900/5">
+                          <td className="py-2 pe-2 font-medium">{item.underlying}</td>
+                          <td className="py-2 pe-2">{item.symbol}</td>
+                          <td className="py-2 pe-2 tabular-nums">{formatRial(item.strike)}</td>
+                          <td className="py-2 pe-2 tabular-nums">{formatRial(item.premium)}</td>
+                          <td className="py-2 pe-2 tabular-nums">{formatNum(item.daysLeft)}</td>
+                          <td className="py-2 pe-2 tabular-nums">{formatNum(item.probabilityPct)}٪</td>
+                          <td className="py-2 pe-2 tabular-nums">
+                            {formatNum(item.coverShares)}
+                            <span className="text-navy-800/50"> ({formatNum(item.coverPct)}٪)</span>
+                          </td>
+                          <td className="py-2 pe-2 tabular-nums">{formatNum(item.contracts)}</td>
+                          <td className="py-2 tabular-nums">{formatRial(item.costRial)}</td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+              )}
+              {hedge.items.length > 0 && (
+                <ul className="grid gap-2">
+                  {hedge.items.map((item) => (
+                    <li key={`why-${item.underlying}-${item.symbol}`} className="text-sm leading-7 text-navy-800/75">
+                      <span className="font-medium text-navy-900">{item.symbol}</span>
+                      {' · '}
+                      {item.reasonFa}
+                    </li>
+                  ))}
+                </ul>
+              )}
+            </div>
+          )}
         </section>
       )}
 
