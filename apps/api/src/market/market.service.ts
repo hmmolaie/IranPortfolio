@@ -255,6 +255,8 @@ type IngestRow = Record<string, unknown>;
 export class MarketService implements OnModuleInit {
   private readonly logger = new Logger(MarketService.name);
   private ingestInFlight = false;
+  /** بعد از تلاش ناموفق، تا این لحظه دوباره API بورس صدا زده نمی‌شود */
+  private marketRetryAfter = 0;
   private optionsRefresh: { running: boolean; messageFa: string; error: boolean } = {
     running: false,
     messageFa: '',
@@ -274,37 +276,53 @@ export class MarketService implements OnModuleInit {
     }, 180_000);
   }
 
-  /** هر دقیقه با ساعت ذخیره‌شدهٔ بازار سهام مقایسه می‌شود */
+  /**
+   * هر دقیقه فقط ساعت تهران را با تنظیم ادمین مقایسه می‌کند.
+   * باز شدن صفحه این را صدا نمی‌زند و خودش API بورس را نمی‌خواند.
+   */
   @Cron('* * * * *', { timeZone: 'Asia/Tehran', name: 'market-ingest-tick' })
   async scheduledIngest() {
-    const schedule = await readRefreshSchedule(this.prisma);
-    const now = tehranTimeParts();
-    const slot = isRefreshSlot(
-      now.hour * 60 + now.minute,
-      schedule.marketHour * 60 + schedule.marketMinute,
-      true,
-    );
-    if (!slot) return;
-    if (slot === 'retry' && (await this.hasBarsForLatestTradingDay())) {
-      await this.ingestOptionsIfMissing();
-      await this.ensureLatestIndexValues(true);
-      return;
-    }
-    const label = `${String(schedule.marketHour).padStart(2, '0')}:${String(schedule.marketMinute).padStart(2, '0')}`;
-    this.logger.log(`بروزرسانی زمان‌بندی‌شده بازار از TSETMC (${label} تهران)`);
-    this.beginIngest(false);
+    await this.syncMarketIfDue(true);
   }
 
+  /** اگر سرویس بعد از ساعت مقرر بالا بیاید و میلهٔ سهام همان روز نباشد، همان به‌روزرسانی زمان‌بندی‌شده را یک‌بار جبران می‌کند. */
   private async catchUpMarketIfDue() {
+    await this.syncMarketIfDue(false);
+  }
+
+  private async syncMarketIfDue(fromClock: boolean) {
     const schedule = await readRefreshSchedule(this.prisma);
     const now = tehranTimeParts();
-    if (now.hour * 60 + now.minute < schedule.marketHour * 60 + schedule.marketMinute) return;
-    if (await this.hasBarsForLatestTradingDay()) {
-      await this.ingestOptionsIfMissing();
-      await this.ensureLatestIndexValues(true);
+    const nowMin = now.hour * 60 + now.minute;
+    const atMin = schedule.marketHour * 60 + schedule.marketMinute;
+    if (nowMin < atMin) return;
+
+    const slot = isRefreshSlot(nowMin, atMin, true);
+    const label = `${String(schedule.marketHour).padStart(2, '0')}:${String(schedule.marketMinute).padStart(2, '0')}`;
+    if (fromClock && slot === 'exact') {
+      if (this.ingestInFlight || Date.now() < this.marketRetryAfter) return;
+      this.logger.log(`بروزرسانی زمان‌بندی‌شده بازار (${label} تهران)`);
+      this.marketRetryAfter = Date.now() + 15 * 60 * 1000;
+      this.beginIngest(false);
       return;
     }
-    this.logger.log('پس از راه‌اندازی: به‌روزرسانی بازار چون ساعت گذشته و دادهٔ روز نیست');
+
+    const hasStocks = await this.hasBarsForLatestTradingDay();
+    if (hasStocks) {
+      if (fromClock && slot === 'retry') {
+        await this.ingestOptionsIfMissing();
+        await this.ensureLatestIndexValues(true);
+      }
+      return;
+    }
+    if (this.ingestInFlight || Date.now() < this.marketRetryAfter) return;
+
+    this.logger.log(
+      fromClock
+        ? `میلهٔ سهام این روز معاملاتی نیست؛ تلاش دوباره (${label} تهران)`
+        : `پس از راه‌اندازی: ساعت ${label} گذشته و میلهٔ سهام این روز معاملاتی نیست`,
+    );
+    this.marketRetryAfter = Date.now() + 15 * 60 * 1000;
     this.beginIngest(false);
   }
 
@@ -317,10 +335,19 @@ export class MarketService implements OnModuleInit {
     return null;
   }
 
+  /** میلهٔ شاخص یا سپرده کافی نیست؛ باید خود سهام، صندوق یا طلای بورسی همان روز ذخیره شده باشد. */
   private async hasBarsForLatestTradingDay(): Promise<boolean> {
     const day = this.latestTradingDEven();
     if (!day) return false;
-    const count = await this.prisma.priceBar.count({ where: { tradeDate: dEvenToDate(day) } });
+    const count = await this.prisma.priceBar.count({
+      where: {
+        tradeDate: dEvenToDate(day),
+        instrument: {
+          assetType: { in: [AssetType.STOCK, AssetType.GOLD_ETF, AssetType.FUND] },
+        },
+        OR: [{ lastPrice: { gt: 0 } }, { closePrice: { gt: 0 } }],
+      },
+    });
     return count > 0;
   }
 

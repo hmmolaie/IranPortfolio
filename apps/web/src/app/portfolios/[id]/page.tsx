@@ -1,6 +1,6 @@
 'use client';
 
-import { FormEvent, useEffect, useRef, useState } from 'react';
+import { FormEvent, Fragment, useEffect, useRef, useState } from 'react';
 import { useParams, useRouter } from 'next/navigation';
 import { ASSET_TYPE_LABELS_FA, AssetType } from '@sabadyar/shared';
 import { api, formatNum, formatRial, getToken } from '@/lib/api';
@@ -720,19 +720,18 @@ export default function PortfolioDetailPage() {
               می‌شود. وزن٪ فقط نمایشی است. سود و زیان پس از کسر کارمزد خرید روی بهای تمام‌شده و
               کارمزد فروش روی ارزش روز است.
             </p>
-            <table className="min-w-full text-sm">
+            <table className="w-full text-sm">
               <thead>
                 <tr className="border-b border-navy-900/10 text-start">
-                  <th className="py-2 pe-4 font-medium">نماد</th>
-                  <th className="py-2 pe-4 font-medium">نوع</th>
-                  <th className="py-2 pe-4 font-medium">وزن٪</th>
-                  <th className="py-2 pe-4 font-medium">تعداد</th>
-                  <th className="py-2 pe-4 font-medium">مبلغ (ریال)</th>
-                  <th className="py-2 pe-4 font-medium">میانگین خرید</th>
-                  <th className="py-2 pe-4 font-medium">آخرین قیمت</th>
-                  <th className="py-2 pe-4 font-medium">کارمزد</th>
-                  <th className="py-2 pe-4 font-medium">سود/زیان</th>
-                  <th className="py-2 font-medium">عملیات</th>
+                  <th className="py-2 pe-2 font-medium">نماد</th>
+                  <th className="py-2 pe-2 font-medium">نوع</th>
+                  <th className="py-2 pe-2 font-medium">وزن٪</th>
+                  <th className="w-[5.25rem] py-2 pe-2 font-medium">تعداد</th>
+                  <th className="w-[6.75rem] py-2 pe-2 font-medium">مبلغ (ریال)</th>
+                  <th className="py-2 pe-2 font-medium">میانگین خرید</th>
+                  <th className="py-2 pe-2 font-medium">آخرین قیمت</th>
+                  <th className="py-2 pe-2 font-medium">کارمزد</th>
+                  <th className="py-2 font-medium">سود/زیان</th>
                 </tr>
               </thead>
               <tbody>
@@ -745,108 +744,112 @@ export default function PortfolioDetailPage() {
                   const edit = rowEdit(i);
                   const rowBusy = busy === `edit:${i.symbol}`;
                   return (
-                    <tr key={i.id} className="border-b border-navy-900/5 align-top">
-                      <td className="py-3 pe-4 font-medium">{i.symbol}</td>
-                      <td className="py-3 pe-4 text-xs text-navy-800/60">
-                        {ASSET_TYPE_LABELS_FA[i.assetType as AssetType] ?? i.assetType}
-                      </td>
-                      <td className="py-3 pe-4 tabular-nums text-navy-800/90">
-                        {formatNum(displayWeightPct(market, itemsTotal))}٪
-                      </td>
-                      <td className="py-3 pe-4">
-                        <input
-                          className="input min-w-[6.5rem] py-1 text-xs tabular-nums"
-                          inputMode="decimal"
-                          value={edit.qty}
-                          disabled={!!busy}
-                          onChange={(e) =>
-                            patchRowEdit(i, { qty: e.target.value, last: 'qty' })
-                          }
-                          aria-label={`تعداد ${i.symbol}`}
-                        />
-                      </td>
-                      <td className="py-3 pe-4">
-                        <input
-                          className="input min-w-[8rem] py-1 text-xs tabular-nums"
-                          inputMode="decimal"
-                          value={edit.amount}
-                          disabled={!!busy}
-                          onChange={(e) =>
-                            patchRowEdit(i, { amount: e.target.value, last: 'amount' })
-                          }
-                          aria-label={`مبلغ ${i.symbol}`}
-                        />
-                      </td>
-                      <td className="py-3 pe-4 tabular-nums">
-                        {avg != null ? formatRial(avg) : '—'}
-                      </td>
-                      <td className="py-3 pe-4 tabular-nums">
-                        {last != null ? formatRial(last) : '—'}
-                      </td>
-                      <td className="py-3 pe-4 tabular-nums text-navy-800/80">{formatRial(fee)}</td>
-                      <td
-                        className={`py-3 pe-4 tabular-nums font-medium ${
-                          pnl > 0 ? 'text-emerald-800' : pnl < 0 ? 'text-red-700' : 'text-navy-800/70'
-                        }`}
-                      >
-                        {formatRial(pnl)}
-                      </td>
-                      <td className="py-3">
-                        <div className="flex flex-col items-start gap-1">
-                          <button
-                            type="button"
-                            className="text-xs text-navy-900 hover:underline disabled:opacity-40"
-                            disabled={!!busy || !edits[i.symbol]}
-                            onClick={() => saveHolding(i)}
-                          >
-                            {rowBusy ? '...' : 'ذخیره'}
-                          </button>
-                          <span className="text-[10px] text-navy-800/45">
-                            {edit.last === 'qty' ? 'بر اساس تعداد' : 'بر اساس مبلغ'}
-                          </span>
-                          <button
-                            type="button"
-                            className="text-xs text-red-700 hover:underline"
+                    <Fragment key={i.id}>
+                      <tr className="align-top">
+                        <td className="py-2 pe-2 text-xs font-medium whitespace-nowrap">{i.symbol}</td>
+                        <td className="py-2 pe-2 text-xs text-navy-800/60">
+                          {ASSET_TYPE_LABELS_FA[i.assetType as AssetType] ?? i.assetType}
+                        </td>
+                        <td className="py-2 pe-2 text-xs tabular-nums text-navy-800/90">
+                          {formatNum(displayWeightPct(market, itemsTotal))}٪
+                        </td>
+                        <td className="py-2 pe-2">
+                          <input
+                            className="input !w-[5.25rem] !px-2 !py-1 text-xs tabular-nums"
+                            inputMode="decimal"
+                            value={edit.qty}
                             disabled={!!busy}
-                            onClick={() => removeSymbol(i.symbol)}
-                          >
-                            حذف
-                          </button>
-                        </div>
-                      </td>
-                    </tr>
+                            onChange={(e) =>
+                              patchRowEdit(i, { qty: e.target.value, last: 'qty' })
+                            }
+                            aria-label={`تعداد ${i.symbol}`}
+                          />
+                        </td>
+                        <td className="py-2 pe-2">
+                          <input
+                            className="input !w-[6.75rem] !px-2 !py-1 text-xs tabular-nums"
+                            inputMode="decimal"
+                            value={edit.amount}
+                            disabled={!!busy}
+                            onChange={(e) =>
+                              patchRowEdit(i, { amount: e.target.value, last: 'amount' })
+                            }
+                            aria-label={`مبلغ ${i.symbol}`}
+                          />
+                        </td>
+                        <td className="py-2 pe-2 text-xs tabular-nums">
+                          {avg != null ? formatRial(avg) : '—'}
+                        </td>
+                        <td className="py-2 pe-2 text-xs tabular-nums">
+                          {last != null ? formatRial(last) : '—'}
+                        </td>
+                        <td className="py-2 pe-2 text-xs tabular-nums text-navy-800/80">{formatRial(fee)}</td>
+                        <td
+                          className={`py-2 text-xs tabular-nums font-medium ${
+                            pnl > 0 ? 'text-emerald-800' : pnl < 0 ? 'text-red-700' : 'text-navy-800/70'
+                          }`}
+                        >
+                          {formatRial(pnl)}
+                        </td>
+                      </tr>
+                      <tr className="border-b border-navy-900/5">
+                        <td colSpan={9} className="pb-2 pt-0">
+                          <div className="flex flex-wrap items-center gap-x-4 gap-y-1">
+                            <button
+                              type="button"
+                              className="text-xs text-navy-900 hover:underline disabled:opacity-40"
+                              disabled={!!busy || !edits[i.symbol]}
+                              onClick={() => saveHolding(i)}
+                            >
+                              {rowBusy ? '...' : 'ذخیره'}
+                            </button>
+                            <span className="text-[10px] text-navy-800/45">
+                              {edit.last === 'qty' ? 'بر اساس تعداد' : 'بر اساس مبلغ'}
+                            </span>
+                            <button
+                              type="button"
+                              className="text-xs text-red-700 hover:underline"
+                              disabled={!!busy}
+                              onClick={() => removeSymbol(i.symbol)}
+                            >
+                              حذف
+                            </button>
+                          </div>
+                        </td>
+                      </tr>
+                    </Fragment>
                   );
                 })}
               </tbody>
               <tfoot>
                 <tr className="border-t-2 border-navy-900/15 bg-navy-50/60">
-                  <td className="py-3 pe-4 font-semibold" colSpan={2}>
+                  <td className="py-3 pe-2 font-semibold" colSpan={2}>
                     جمع
                   </td>
-                  <td className="py-3 pe-4 font-semibold tabular-nums">
+                  <td className="py-3 pe-2 font-semibold tabular-nums">
                     {itemsTotal > 0 ? `${formatNum(100)}٪` : '—'}
                   </td>
-                  <td className="py-3 pe-4 font-semibold tabular-nums">
+                  <td className="py-3 pe-2 font-semibold tabular-nums">
                     {formatNum(latest.items.reduce((s, i) => s + (i.quantity || 0), 0))}
                   </td>
-                  <td className="py-3 pe-4 font-semibold tabular-nums">
+                  <td className="py-3 pe-2 font-semibold tabular-nums">
                     {formatRial(
                       latest.items.reduce((s, i) => s + (i.amountRial || 0), 0),
                     )}
                   </td>
-                  <td className="py-3 pe-4 font-semibold tabular-nums text-navy-900">
+                  <td className="py-3 pe-2 font-semibold tabular-nums text-navy-900">
                     <div className="text-[10px] font-normal text-navy-800/45">بهای تمام‌شده</div>
                     {formatRial(costBasisTotal)}
                   </td>
-                  <td className="py-3 pe-4 font-semibold tabular-nums text-navy-900">
+                  <td className="py-3 pe-2 font-semibold tabular-nums text-navy-900">
                     <div className="text-[10px] font-normal text-navy-800/45">ارزش روز</div>
                     {formatRial(itemsTotal)}
                   </td>
-                  <td className="py-3 pe-4 font-semibold tabular-nums text-navy-900">
+                  <td className="py-3 pe-2 font-semibold tabular-nums text-navy-900">
                     {formatRial(feeTotal)}
                   </td>
                   <td
-                    className={`py-3 pe-4 font-semibold tabular-nums ${
+                    className={`py-3 font-semibold tabular-nums ${
                       pnlTotal > 0
                         ? 'text-emerald-800'
                         : pnlTotal < 0
@@ -856,7 +859,6 @@ export default function PortfolioDetailPage() {
                   >
                     {formatRial(pnlTotal)}
                   </td>
-                  <td className="py-3" />
                 </tr>
               </tfoot>
             </table>

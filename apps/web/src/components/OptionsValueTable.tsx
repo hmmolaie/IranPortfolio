@@ -55,16 +55,62 @@ const COLUMNS: Array<{ key: SortKey; label: string }> = [
 ];
 
 function parseFilterNumber(raw: string): number | null {
-  const normalized = raw
+  let normalized = raw
     .trim()
     .replace(/[۰-۹]/g, (ch) => String('۰۱۲۳۴۵۶۷۸۹'.indexOf(ch)))
     .replace(/[٠-٩]/g, (ch) => String('٠١٢٣٤٥٦٧٨٩'.indexOf(ch)))
-    .replace(/,/g, '.')
+    .replace(/[\s\u066C\u066B'_’]/g, (ch) => (ch === '\u066B' ? '.' : ''))
+    .replace(/،/g, '')
     .replace(/٫/g, '.');
   if (!normalized) return null;
+  const lastComma = normalized.lastIndexOf(',');
+  const lastDot = normalized.lastIndexOf('.');
+  if (lastComma >= 0 && lastDot >= 0) {
+    normalized =
+      lastComma > lastDot
+        ? normalized.replace(/\./g, '').replace(',', '.')
+        : normalized.replace(/,/g, '');
+  } else if (lastComma >= 0) {
+    const parts = normalized.split(',');
+    const thousands = parts.length > 1 && parts.slice(1).every((part) => /^\d{3}$/.test(part));
+    normalized = thousands ? parts.join('') : normalized.replace(',', '.');
+  } else if (lastDot >= 0) {
+    const parts = normalized.split('.');
+    const thousands = parts.length > 2 && parts.slice(1).every((part) => /^\d{3}$/.test(part));
+    if (thousands) normalized = parts.join('');
+  }
   const n = Number(normalized);
   return Number.isFinite(n) ? n : null;
 }
+
+function rowNumber(value: number | null | undefined): number | null {
+  if (typeof value === 'number') return Number.isFinite(value) ? value : null;
+  if (value == null) return null;
+  const n = Number(value);
+  return Number.isFinite(n) ? n : null;
+}
+
+type OptionFilters = {
+  q: string;
+  side: '' | 'CALL' | 'PUT';
+  listing: 'all' | 'traded';
+  minPremium: string;
+  minBuyQueue: string;
+  minSellQueue: string;
+  minDays: string;
+  maxDays: string;
+};
+
+const INITIAL_FILTERS: OptionFilters = {
+  q: '',
+  side: '',
+  listing: 'all',
+  minPremium: '1',
+  minBuyQueue: '',
+  minSellQueue: '',
+  minDays: '',
+  maxDays: '',
+};
 
 function formatQueue(value: number | null | undefined): string {
   if (value == null) return '—';
@@ -93,28 +139,34 @@ export function OptionsValueTable({
   loading?: boolean;
 }) {
   const router = useRouter();
-  const [q, setQ] = useState('');
-  const [side, setSide] = useState<'' | 'CALL' | 'PUT'>('');
-  const [listing, setListing] = useState<'all' | 'traded'>('all');
-  const [minPremium, setMinPremium] = useState('1');
-  const [minBuyQueue, setMinBuyQueue] = useState('');
-  const [minSellQueue, setMinSellQueue] = useState('');
+  const [draft, setDraft] = useState<OptionFilters>(INITIAL_FILTERS);
+  const [applied, setApplied] = useState<OptionFilters>(INITIAL_FILTERS);
   const [sort, setSort] = useState<SortKey>('profit');
   const [sortDir, setSortDir] = useState<'asc' | 'desc'>('desc');
   const [visible, setVisible] = useState(40);
 
   const rows = useMemo(() => {
-    const text = q.trim();
-    const premiumFloor = parseFilterNumber(minPremium);
-    const buyFloor = parseFilterNumber(minBuyQueue);
-    const sellFloor = parseFilterNumber(minSellQueue);
+    const text = applied.q.trim();
+    const premiumFloor = parseFilterNumber(applied.minPremium);
+    const buyFloor = parseFilterNumber(applied.minBuyQueue);
+    const sellFloor = parseFilterNumber(applied.minSellQueue);
+    const minDays = parseFilterNumber(applied.minDays);
+    const maxDays = parseFilterNumber(applied.maxDays);
     const list = (items ?? []).filter((row) => {
-      if (side && row.side !== side) return false;
+      if (applied.side && row.side !== applied.side) return false;
       if (text && !row.symbol.includes(text)) return false;
-      if (listing === 'traded' && !(row.tradeVolume != null && row.tradeVolume > 0)) return false;
-      if (premiumFloor != null && !(row.premium != null && row.premium > premiumFloor)) return false;
-      if (buyFloor != null && !(row.buyQueueVolume != null && row.buyQueueVolume >= buyFloor)) return false;
-      if (sellFloor != null && !(row.sellQueueVolume != null && row.sellQueueVolume >= sellFloor)) return false;
+      const tradeVolume = rowNumber(row.tradeVolume);
+      if (applied.listing === 'traded' && !(tradeVolume != null && tradeVolume > 0)) return false;
+      const premium = rowNumber(row.premium);
+      if (premiumFloor != null && !(premium != null && premium > premiumFloor)) return false;
+      const buyQueue = rowNumber(row.buyQueueVolume);
+      if (buyFloor != null && !(buyQueue != null && buyQueue >= buyFloor)) return false;
+      const sellQueue = rowNumber(row.sellQueueVolume);
+      if (sellFloor != null && !(sellQueue != null && sellQueue >= sellFloor)) return false;
+      const daysLeft = rowNumber(row.daysLeft);
+      const daysRounded = daysLeft == null ? null : Math.round(daysLeft);
+      if (minDays != null && !(daysRounded != null && daysRounded >= minDays)) return false;
+      if (maxDays != null && !(daysRounded != null && daysRounded <= maxDays)) return false;
       return true;
     });
     const dir = sortDir === 'asc' ? 1 : -1;
@@ -133,11 +185,11 @@ export function OptionsValueTable({
       return a.symbol.localeCompare(b.symbol, 'fa');
     });
     return list;
-  }, [items, q, side, listing, minPremium, minBuyQueue, minSellQueue, sort, sortDir]);
+  }, [items, applied, sort, sortDir]);
 
   useEffect(() => {
     setVisible(40);
-  }, [items, q, side, listing, minPremium, minBuyQueue, minSellQueue, sort, sortDir]);
+  }, [items, applied, sort, sortDir]);
 
   const shown = rows.slice(0, visible);
 
@@ -152,19 +204,33 @@ export function OptionsValueTable({
 
   return (
     <>
-      <div className="card flex flex-wrap gap-3">
+      <form
+        className="card flex flex-wrap items-center gap-3"
+        onSubmit={(e) => {
+          e.preventDefault();
+          setApplied(draft);
+        }}
+      >
         <input
           className="input max-w-xs"
           placeholder="جستجوی نماد..."
-          value={q}
-          onChange={(e) => setQ(e.target.value)}
+          value={draft.q}
+          onChange={(e) => setDraft({ ...draft, q: e.target.value })}
         />
-        <select className="input max-w-xs" value={side} onChange={(e) => setSide(e.target.value as '' | 'CALL' | 'PUT')}>
+        <select
+          className="input max-w-xs"
+          value={draft.side}
+          onChange={(e) => setDraft({ ...draft, side: e.target.value as '' | 'CALL' | 'PUT' })}
+        >
           <option value="">همهٔ انواع</option>
           <option value="CALL">اختیار خرید</option>
           <option value="PUT">اختیار فروش</option>
         </select>
-        <select className="input max-w-xs" value={listing} onChange={(e) => setListing(e.target.value as 'all' | 'traded')}>
+        <select
+          className="input max-w-xs"
+          value={draft.listing}
+          onChange={(e) => setDraft({ ...draft, listing: e.target.value as 'all' | 'traded' })}
+        >
           <option value="all">تمام نمادها</option>
           <option value="traded">نمادهای معامله شده</option>
         </select>
@@ -174,8 +240,8 @@ export function OptionsValueTable({
             className="input w-28"
             dir="ltr"
             inputMode="decimal"
-            value={minPremium}
-            onChange={(e) => setMinPremium(e.target.value)}
+            value={draft.minPremium}
+            onChange={(e) => setDraft({ ...draft, minPremium: e.target.value })}
           />
         </label>
         <label className="flex items-center gap-2 text-sm text-navy-800/80">
@@ -184,8 +250,8 @@ export function OptionsValueTable({
             className="input w-28"
             dir="ltr"
             inputMode="decimal"
-            value={minBuyQueue}
-            onChange={(e) => setMinBuyQueue(e.target.value)}
+            value={draft.minBuyQueue}
+            onChange={(e) => setDraft({ ...draft, minBuyQueue: e.target.value })}
             placeholder="خالی"
           />
         </label>
@@ -195,17 +261,42 @@ export function OptionsValueTable({
             className="input w-28"
             dir="ltr"
             inputMode="decimal"
-            value={minSellQueue}
-            onChange={(e) => setMinSellQueue(e.target.value)}
+            value={draft.minSellQueue}
+            onChange={(e) => setDraft({ ...draft, minSellQueue: e.target.value })}
             placeholder="خالی"
           />
         </label>
+        <label className="flex items-center gap-2 text-sm text-navy-800/80">
+          روز مانده از
+          <input
+            className="input w-24"
+            dir="ltr"
+            inputMode="numeric"
+            value={draft.minDays}
+            onChange={(e) => setDraft({ ...draft, minDays: e.target.value })}
+            placeholder="خالی"
+          />
+        </label>
+        <label className="flex items-center gap-2 text-sm text-navy-800/80">
+          روز مانده تا
+          <input
+            className="input w-24"
+            dir="ltr"
+            inputMode="numeric"
+            value={draft.maxDays}
+            onChange={(e) => setDraft({ ...draft, maxDays: e.target.value })}
+            placeholder="خالی"
+          />
+        </label>
+        <button type="submit" className="btn-primary">
+          اعمال
+        </button>
         {items && (
           <span className="self-center text-sm text-navy-800/55">
             {rows.length.toLocaleString('fa-IR')} نماد
           </span>
         )}
-      </div>
+      </form>
 
       <section className="card overflow-x-auto p-0">
         <table className="min-w-full text-sm">

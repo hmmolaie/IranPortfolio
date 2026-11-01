@@ -2,7 +2,7 @@
 
 import Link from 'next/link';
 import { usePathname, useRouter } from 'next/navigation';
-import { getToken, clearSession, api, getUserRole, setUserRole, UserRole, touchSession, refreshSessionIfNeeded, sessionTimedOut, formatNum, formatRial } from '@/lib/api';
+import { getToken, clearSession, api, getUserRole, setUserRole, UserRole, touchSession, ensureAuthCookie, refreshSessionIfNeeded, sessionTimedOut, formatNum, formatRial } from '@/lib/api';
 import { useCallback, useEffect, useRef, useState } from 'react';
 import clsx from 'clsx';
 import { ToastProvider, useToast } from '@/components/Toast';
@@ -60,9 +60,12 @@ export function AppShell({ children }: { children: React.ReactNode }) {
 
     const cached = getUserRole();
     if (cached) setRole(cached);
+    ensureAuthCookie();
     if (meLoaded.current) return;
+    let alive = true;
     api<{ role?: UserRole; email?: string; name?: string | null; optionsMarketAccess?: boolean }>('/users/me')
       .then((u) => {
+        if (!alive) return;
         if (u.role) {
           setUserRole(u.role);
           setRole(u.role);
@@ -72,14 +75,21 @@ export function AppShell({ children }: { children: React.ReactNode }) {
         meLoaded.current = true;
       })
       .catch(() => {
+        if (!alive) return;
+        if (getToken()) {
+          meLoaded.current = true;
+          return;
+        }
         meLoaded.current = false;
-        clearSession();
         setAuthed(false);
         setRole(null);
         setOptionsAccess(false);
         setUserLabel('');
         if (!isAuthPage) router.replace('/');
       });
+    return () => {
+      alive = false;
+    };
   }, [pathname, router, isAuthPage]);
 
   useEffect(() => {
@@ -113,6 +123,7 @@ export function AppShell({ children }: { children: React.ReactNode }) {
         logoutIdle();
         return;
       }
+      ensureAuthCookie();
       void refreshSessionIfNeeded();
     }, 5000);
 

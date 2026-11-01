@@ -2,7 +2,7 @@
 
 import { useEffect, useState } from 'react';
 import { useRouter } from 'next/navigation';
-import { api, getToken, getUserRole, setUserRole, UserRole } from '@/lib/api';
+import { ApiError, api, getToken, getUserRole, setUserRole, UserRole } from '@/lib/api';
 import { OptionsTableRow, OptionsValueTable } from '@/components/OptionsValueTable';
 
 type Payload = {
@@ -23,8 +23,19 @@ export default function OptionsMarketPage() {
 
   function loadOptions() {
     return api<Payload>('/market/option-value')
-      .then(setData)
-      .catch((e) => setError((e as Error).message));
+      .then((payload) => {
+        setData(payload);
+        setAllowed(true);
+        setError('');
+      })
+      .catch((e) => {
+        if (e instanceof ApiError && e.status === 403) {
+          setAllowed(false);
+          setData(null);
+          return;
+        }
+        setError(e instanceof Error ? e.message : 'بارگذاری بازار اختیار ناموفق بود.');
+      });
   }
 
   useEffect(() => {
@@ -32,16 +43,29 @@ export default function OptionsMarketPage() {
       router.replace('/');
       return;
     }
-    api<{ role?: UserRole; optionsMarketAccess?: boolean }>('/users/me')
+    let cancel = false;
+    api<{ role?: UserRole; optionsMarketAccess?: boolean } | null>('/users/me')
       .then((u) => {
+        if (cancel || !u) return;
         const admin = u.role === 'ADMIN' || getUserRole() === 'ADMIN';
         if (u.role) setUserRole(u.role);
         setIsAdmin(admin);
-        const ok = admin || Boolean(u.optionsMarketAccess);
-        setAllowed(ok);
-        if (ok) return loadOptions();
+        if (!admin && u.optionsMarketAccess === false) {
+          setAllowed(false);
+          return;
+        }
+        setAllowed(true);
+        return loadOptions();
       })
-      .catch(() => setAllowed(false));
+      .catch(() => {
+        if (cancel || !getToken()) return;
+        setIsAdmin(getUserRole() === 'ADMIN');
+        setAllowed(true);
+        return loadOptions();
+      });
+    return () => {
+      cancel = true;
+    };
   }, [router]);
 
   useEffect(() => {

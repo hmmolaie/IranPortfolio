@@ -28,6 +28,7 @@ export default function DashboardPage() {
   const [role, setRole] = useState<UserRole | null>(null);
   const [users, setUsers] = useState<AppUser[]>([]);
   const [selectedUserId, setSelectedUserId] = useState('');
+  const [loadError, setLoadError] = useState('');
   const [home, setHome] = useState<{
     regime: { labelFa: string; summaryFa: string };
     portfolio: {
@@ -72,7 +73,15 @@ export default function DashboardPage() {
         }
         return loadPortfolios();
       })
-      .catch(() => router.replace('/'));
+      .catch((e) => {
+        if (!getToken()) {
+          router.replace('/');
+          return;
+        }
+        setUsersReady(true);
+        setPortfoliosReady(true);
+        setLoadError((e as Error).message || 'بارگذاری داشبورد ناموفق بود.');
+      });
   }, [router]);
 
   useEffect(() => {
@@ -94,6 +103,11 @@ export default function DashboardPage() {
     <div className="space-y-8">
       <div>
         <h1 className="text-3xl font-bold text-navy-900">سلام، {name}</h1>
+        {loadError && (
+          <p className="mt-3 rounded-lg bg-red-50 px-3 py-2 text-sm text-red-800" role="alert">
+            {loadError}
+          </p>
+        )}
         <p className="mt-2 text-navy-800/70">
           {role === 'ADMIN'
             ? 'نمای کلی سبد کاربران — فقط مشاهده'

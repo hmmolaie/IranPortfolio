@@ -57,7 +57,13 @@ export default function PortfoliosPage() {
       router.replace('/');
       return;
     }
-    load().catch(() => router.replace('/'));
+    load().catch((e) => {
+      if (!getToken()) {
+        router.replace('/');
+        return;
+      }
+      setError((e as Error).message || 'بارگذاری سبدها ناموفق بود.');
+    });
     api<{ role?: string; aiPortfolioEnabled?: boolean; llmEnabled?: boolean }>('/users/me')
       .then((u) => {
         const admin = u.role === 'ADMIN';

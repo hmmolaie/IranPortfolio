@@ -33,7 +33,8 @@ const LAST_ACTIVITY_KEY = 'sabadyar_last_activity';
 
 /** اگر کاربر ۱۵ دقیقه کاری نکند، جلسه تمام می‌شود. این از حداقل ۵ دقیقه بیشتر است. */
 export const SESSION_IDLE_MS = 15 * 60 * 1000;
-const COOKIE_MAX_AGE_SEC = Math.ceil(SESSION_IDLE_MS / 1000);
+/** کوکی فقط برای middleware است و با عمر JWT یکی است. بیکاری ۱۵ دقیقه‌ای خودِ توکن را پاک می‌کند. */
+const COOKIE_MAX_AGE_SEC = 2 * 60 * 60;
 const ACTIVITY_TOUCH_THROTTLE_MS = 1000;
 const TOKEN_REFRESH_EVERY_MS = 60 * 1000;
 
@@ -71,6 +72,13 @@ function idleExpired(): boolean {
 export function sessionTimedOut(): boolean {
   if (!readStoredToken()) return true;
   return idleExpired();
+}
+
+/** اگر توکن هنوز معتبر است کوکی ورود را تازه می‌کند تا middleware کاربر را به لاگین برنگرداند. */
+export function ensureAuthCookie() {
+  if (typeof window === 'undefined') return;
+  if (!readStoredToken() || idleExpired()) return;
+  writeAuthCookie(true);
 }
 
 export function touchSession() {
@@ -268,13 +276,14 @@ export async function api<T>(
       touchSession();
     }
   }
-  const res = await fetch(apiUrl(path), { ...options, headers });
+  const res = await fetch(apiUrl(path), { cache: 'no-store', ...options, headers });
   if (!res.ok) {
     if (
       res.status === 401 &&
       options.auth !== false &&
       path !== '/auth/login' &&
       path !== '/auth/refresh' &&
+      path !== '/users/me/password' &&
       !path.startsWith('/auth/webauthn/login')
     ) {
       expireAndRedirect();

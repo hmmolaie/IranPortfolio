@@ -2,7 +2,7 @@
 
 import { FormEvent, useEffect, useState } from 'react';
 import { useRouter } from 'next/navigation';
-import { ApiError, api, getToken, setToken, setUserRole } from '@/lib/api';
+import { ApiError, api, ensureAuthCookie, getToken, setToken, setUserRole } from '@/lib/api';
 import {
   canUsePlatformBiometrics,
   defaultDeviceName,
@@ -57,6 +57,7 @@ export default function HomePage() {
 
   useEffect(() => {
     if (getToken()) {
+      ensureAuthCookie();
       router.replace(nextFromUrl());
       return;
     }

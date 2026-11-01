@@ -254,7 +254,13 @@ export default function ForexPage() {
         setLoading(true);
         return loadLatest().catch((e) => setErrorFa((e as Error).message));
       })
-      .catch(() => router.replace('/'))
+      .catch((e) => {
+        if (!getToken()) {
+          router.replace('/');
+          return;
+        }
+        setErrorFa((e as Error).message || 'بارگذاری آزمایش فارکس ناموفق بود.');
+      })
       .finally(() => setLoading(false));
   }, [router]);
 

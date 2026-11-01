@@ -308,8 +308,13 @@ export default function WorldEconomyPage() {
         if (cancel) return;
         if (!ok) router.replace('/dashboard');
       })
-      .catch(() => {
-        if (!cancel) router.replace('/');
+      .catch((e) => {
+        if (cancel) return;
+        if (!getToken()) {
+          router.replace('/');
+          return;
+        }
+        toast.error((e as Error).message || 'بارگذاری اقتصاد دنیا ناموفق بود.');
       })
       .finally(() => {
         if (!cancel) setLoading(false);
