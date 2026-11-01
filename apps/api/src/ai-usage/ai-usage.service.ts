@@ -1,4 +1,4 @@
-import { BadRequestException, ForbiddenException, Injectable, NotFoundException } from '@nestjs/common';
+import { BadRequestException, ForbiddenException, Injectable, Logger, NotFoundException } from '@nestjs/common';
 import { PrismaService } from '../prisma/prisma.service';
 import { daysAgoDateKey, tehranDateKey } from '../news/tehran-date';
 import {
@@ -40,8 +40,11 @@ type MeSnapshot = UsageSums & {
   unlimited: boolean;
 };
 
+const USAGE_TEXT_MAX = 80_000;
+
 @Injectable()
 export class AiUsageService {
+  private readonly logger = new Logger(AiUsageService.name);
   private readonly meCache = new Map<string, { at: number; value: MeSnapshot }>();
   private readonly meFlight = new Map<string, Promise<MeSnapshot>>();
 
@@ -75,46 +78,58 @@ export class AiUsageService {
     exchange?: { prompt?: string; response?: string; ok?: boolean },
   ): Promise<AiUsageHit> {
     const failed = exchange?.ok === false;
+    const promptTokens = usageInt(use.promptTokens);
+    const completionTokens = usageInt(use.completionTokens);
+    const totalTokens = usageInt(use.totalTokens) || promptTokens + completionTokens;
     const rates = await this.rates();
     const costRial = failed
       ? 0
       : Math.max(
           0,
-          Math.round(
-            (use.promptTokens / 1000) * rates.promptRialPer1k +
-              (use.completionTokens / 1000) * rates.completionRialPer1k,
+          usageInt(
+            (promptTokens / 1000) * rates.promptRialPer1k + (completionTokens / 1000) * rates.completionRialPer1k,
           ),
         );
     const section = sectionKey(purpose);
     const hit: AiUsageHit = {
       purpose,
       sectionFa: sectionLabel(section),
-      promptTokens: use.promptTokens,
-      completionTokens: use.completionTokens,
-      totalTokens: use.totalTokens,
+      promptTokens,
+      completionTokens,
+      totalTokens,
       costRial,
       estimated: use.estimated,
     };
+    const data = {
+      userId: userId ?? null,
+      purpose,
+      section,
+      model: model ?? null,
+      promptTokens,
+      completionTokens,
+      totalTokens,
+      costRial,
+      estimated: use.estimated,
+      ok: !failed,
+      prompt: usageText(exchange?.prompt),
+      response: usageText(exchange?.response),
+      dateKey: tehranDateKey(),
+    };
     try {
-      await this.prisma.aiUsageLog.create({
-        data: {
-          userId: userId ?? null,
-          purpose,
-          section,
-          model: model ?? null,
-          promptTokens: use.promptTokens,
-          completionTokens: use.completionTokens,
-          totalTokens: use.totalTokens,
-          costRial,
-          estimated: use.estimated,
-          ok: !failed,
-          prompt: exchange?.prompt ?? '',
-          response: exchange?.response ?? '',
-          dateKey: tehranDateKey(),
-        },
-      });
-    } catch {
-      /* ثبت مصرف نباید پاسخ مدل را خراب کند */
+      await this.prisma.aiUsageLog.create({ data });
+    } catch (e) {
+      this.logger.warn(`ثبت سابقهٔ ${purpose} کوتاه شد: ${(e as Error).message.slice(0, 180)}`);
+      try {
+        await this.prisma.aiUsageLog.create({
+          data: {
+            ...data,
+            prompt: data.prompt.slice(0, 2000),
+            response: data.response.slice(0, 2000),
+          },
+        });
+      } catch (again) {
+        this.logger.warn(`ثبت سابقهٔ ${purpose} ناموفق ماند: ${(again as Error).message.slice(0, 180)}`);
+      }
     }
     if (userId) this.meCache.delete(userId);
     if (!failed) aiUsageStore.getStore()?.hits.push(hit);
@@ -483,6 +498,15 @@ export class AiUsageService {
       costRial: asCount(row.costRial),
     };
   }
+}
+
+function usageInt(value: number): number {
+  if (!Number.isFinite(value) || value <= 0) return 0;
+  return Math.min(Math.round(value), 2_000_000_000);
+}
+
+function usageText(value: string | undefined): string {
+  return (value ?? '').replace(/\u0000/g, '').slice(0, USAGE_TEXT_MAX);
 }
 
 function historyActor(
