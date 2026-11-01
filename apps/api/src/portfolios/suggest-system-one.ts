@@ -3,8 +3,8 @@
 export const CLASS_LEVELS = [0, 5, 10, 15, 20, 30, 40, 55, 75, 100];
 export const SIZE_LEVELS = [0, 2, 5, 8, 12, 18, 25, 35, 50, 70];
 export const MIN_STOCK_PROBABILITY = 0.5;
-export const STOCKS_PER_CALL = 16;
-const STATE_BYTE_BUDGET = 45_000;
+export const STOCKS_PER_CALL = 8;
+const STATE_BYTE_BUDGET = 24_000;
 
 export const CLASS_IDS = [
   'cash',
@@ -129,10 +129,6 @@ export function stockQuestions(
     questions[`p${index}`] = {
       type: 'noul',
       instructions: `Should ${who} be included in this investor's stock sleeve? Weigh the profile, strategy, current gold and dollar prices, lessons, Iran news, and world news in the state. Judge only this stock.`,
-      criteria: {
-        true: 'This stock belongs in the portfolio.',
-        false: 'This stock should stay out.',
-      },
     };
     questions[`s${index}`] = {
       type: 'score',

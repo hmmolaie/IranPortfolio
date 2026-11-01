@@ -126,6 +126,41 @@ function preferGrokFirst(models: string[]): string[] {
   return grok.length ? [...grok, ...rest] : models;
 }
 
+function systemOneAnswers(json: Record<string, unknown>): Record<string, unknown> | null {
+  const direct = json.answers;
+  if (direct && typeof direct === 'object' && !Array.isArray(direct)) {
+    return direct as Record<string, unknown>;
+  }
+  const result = json.result;
+  if (result && typeof result === 'object' && !Array.isArray(result)) {
+    const nested = (result as { answers?: unknown }).answers;
+    if (nested && typeof nested === 'object' && !Array.isArray(nested)) {
+      return nested as Record<string, unknown>;
+    }
+  }
+  return null;
+}
+
+function systemOneFailureFa(status: number, detail: string): string {
+  const head = status
+    ? `فراخوانی System One ناموفق بود (${status.toLocaleString('fa-IR')}).`
+    : 'فراخوانی System One ناموفق بود.';
+  let extra = '';
+  try {
+    const parsed = JSON.parse(detail) as { message?: unknown; error?: unknown };
+    const message = parsed.message ?? parsed.error;
+    if (typeof message === 'string') extra = message;
+    else if (message && typeof message === 'object' && 'message' in message) {
+      const inner = (message as { message?: unknown }).message;
+      if (typeof inner === 'string') extra = inner;
+    }
+  } catch {
+    extra = detail;
+  }
+  extra = extra.replace(/\s+/g, ' ').trim().slice(0, 180);
+  return extra ? `${head}\n${extra}` : head;
+}
+
 @Injectable()
 export class LlmService {
   private readonly logger = new Logger(LlmService.name);
@@ -317,12 +352,24 @@ export class LlmService {
     questions: Record<string, SystemOneQuestion>,
   ): Promise<Record<string, unknown>> {
     await this.aiUsage.assertAllowed(userId, purpose);
-    const creds = await this.systemOneCreds();
-    const body = JSON.stringify({ model: creds.model, state, questions });
-    if (Buffer.byteLength(body, 'utf8') > 65_000) {
-      throw new BadRequestException('حجم زمینهٔ System One از سقف مدل بیشتر است.');
+    let creds: { baseUrl: string; model: string; apiKey: string };
+    try {
+      creds = await this.systemOneCreds();
+    } catch (e) {
+      await this.recordFailure(purpose, userId, e, { history: true });
+      throw e;
     }
-    const url = `${creds.baseUrl}/systemone`;
+    const body = JSON.stringify({ model: creds.model, state, questions });
+    if (Buffer.byteLength(body, 'utf8') > 60_000) {
+      const err = new BadRequestException('حجم زمینهٔ System One از سقف مدل بیشتر است.');
+      await this.recordFailure(purpose, userId, err, {
+        model: creds.model,
+        prompt: body.slice(0, 4000),
+        history: true,
+      });
+      throw err;
+    }
+    const url = creds.baseUrl.endsWith('/systemone') ? creds.baseUrl : `${creds.baseUrl}/systemone`;
     let lastStatus = 0;
     let lastText = '';
     for (let attempt = 0; attempt < 2; attempt++) {
@@ -346,22 +393,23 @@ export class LlmService {
           continue;
         }
         if (!response.ok) break;
-        const json = JSON.parse(lastText) as {
-          model?: string;
-          answers?: Record<string, unknown>;
-          usage?: { input_tokens?: number | null; output_tokens?: number | null };
-        };
-        if (!json.answers || typeof json.answers !== 'object') {
-          throw new BadRequestException('پاسخ System One جواب تصمیم نداشت.');
+        const json = JSON.parse(lastText) as Record<string, unknown>;
+        const answers = systemOneAnswers(json);
+        if (!answers) {
+          lastStatus = response.status || 502;
+          lastText = lastText || 'پاسخ System One جواب تصمیم نداشت.';
+          break;
         }
-        const promptTokens = finite(json.usage?.input_tokens);
-        const completionTokens = finite(json.usage?.output_tokens);
+        const usage = json.usage as { input_tokens?: number | null; output_tokens?: number | null } | undefined;
+        const promptTokens = finite(usage?.input_tokens);
+        const completionTokens = finite(usage?.output_tokens);
         const estimated = !(promptTokens > 0);
         const promptCount = estimated ? Math.max(1, Math.ceil(Buffer.byteLength(body, 'utf8') / 4)) : promptTokens;
+        const modelName = typeof json.model === 'string' && json.model.trim() ? json.model : creds.model;
         await this.aiUsage.record(
           userId,
           purpose,
-          json.model || creds.model,
+          modelName,
           {
             promptTokens: promptCount,
             completionTokens,
@@ -370,29 +418,27 @@ export class LlmService {
           },
           {
             prompt: body.slice(0, 12000),
-            response: JSON.stringify(json.answers).slice(0, 12000),
+            response: JSON.stringify(answers).slice(0, 12000),
           },
         );
-        return json.answers;
+        return answers;
       } catch (e) {
-        if (e instanceof BadRequestException) throw e;
         lastText = e instanceof Error ? e.message : String(e);
         break;
       }
     }
     const detail = redactSecrets(lastText).slice(0, 4000);
-    await this.aiUsage.record(
-      userId,
+    await this.recordFailure(
       purpose,
-      creds.model,
-      { promptTokens: 0, completionTokens: 0, totalTokens: 0, estimated: false },
-      { prompt: body.slice(0, 4000), response: detail, ok: false },
+      userId,
+      new LlmHttpError(detail || 'فراخوانی System One ناموفق بود.', lastStatus || 500, detail),
+      {
+        model: creds.model,
+        prompt: body.slice(0, 4000),
+        history: true,
+      },
     );
-    throw new BadRequestException(
-      lastStatus
-        ? `فراخوانی System One ناموفق بود (${lastStatus.toLocaleString('fa-IR')}).`
-        : 'فراخوانی System One ناموفق بود.',
-    );
+    throw new BadRequestException(systemOneFailureFa(lastStatus, detail));
   }
 
   private async systemOneCreds(): Promise<{ baseUrl: string; model: string; apiKey: string }> {
@@ -400,8 +446,13 @@ export class LlmService {
     const row = adminId
       ? await this.prisma.llmSetting.findUnique({ where: { userId: adminId } })
       : null;
-    const model = row?.systemModel?.trim() ?? '';
-    const token = row?.systemOneTokenEncrypted ? this.decryptToken(row.systemOneTokenEncrypted) : '';
+    const model = (row?.systemModel ?? '').split(/[,|\n]/).map((part) => part.trim()).find(Boolean) ?? '';
+    let token = '';
+    try {
+      token = row?.systemOneTokenEncrypted ? this.decryptToken(row.systemOneTokenEncrypted) : '';
+    } catch {
+      throw new BadRequestException('کلید System One ذخیره شده خوانده نشد. آن را دوباره در تنظیمات ذخیره کنید.');
+    }
     if (!model) throw new BadRequestException('مدل system-one در تنظیمات ادمین خالی است.');
     if (!token) throw new BadRequestException('کلید System One در تنظیمات ادمین ذخیره نشده است.');
     const baseUrl = (row?.systemOneBaseUrl?.trim() || 'https://system-one.dev/v1').replace(/\/$/, '');
