@@ -44,6 +44,19 @@ const SECTION_LABELS: Record<string, string> = {
   llm_test: 'تست اتصال مدل',
 };
 
+/** کارهایی که خود سرور بدون درخواست یک کاربر انجام می‌دهد. در سوابق به‌جای نام کاربر «سیستم» می‌آید. */
+export const SYSTEM_HISTORY_PURPOSES = new Set([
+  'economic_news_refresh',
+  'economic_opportunity_refresh',
+  'world_macro_news',
+  'world_market_signals',
+  'world_x_signals',
+  'fund_report_analysis',
+  'fund_timeline_analysis',
+  'telegram_digest_voice',
+  'tts',
+]);
+
 export function sectionKey(purpose: string): string {
   return purpose.trim() || 'other';
 }

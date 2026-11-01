@@ -9,6 +9,7 @@ import {
   sectionKey,
   sectionLabel,
   sectionOptions,
+  SYSTEM_HISTORY_PURPOSES,
 } from './ai-usage.sections';
 import { UsersService } from '../users/users.service';
 
@@ -71,16 +72,19 @@ export class AiUsageService {
     purpose: string,
     model: string | undefined,
     use: TokenUse,
-    exchange?: { prompt?: string; response?: string },
+    exchange?: { prompt?: string; response?: string; ok?: boolean },
   ): Promise<AiUsageHit> {
+    const failed = exchange?.ok === false;
     const rates = await this.rates();
-    const costRial = Math.max(
-      0,
-      Math.round(
-        (use.promptTokens / 1000) * rates.promptRialPer1k +
-          (use.completionTokens / 1000) * rates.completionRialPer1k,
-      ),
-    );
+    const costRial = failed
+      ? 0
+      : Math.max(
+          0,
+          Math.round(
+            (use.promptTokens / 1000) * rates.promptRialPer1k +
+              (use.completionTokens / 1000) * rates.completionRialPer1k,
+          ),
+        );
     const section = sectionKey(purpose);
     const hit: AiUsageHit = {
       purpose,
@@ -103,6 +107,7 @@ export class AiUsageService {
           totalTokens: use.totalTokens,
           costRial,
           estimated: use.estimated,
+          ok: !failed,
           prompt: exchange?.prompt ?? '',
           response: exchange?.response ?? '',
           dateKey: tehranDateKey(),
@@ -112,7 +117,7 @@ export class AiUsageService {
       /* ثبت مصرف نباید پاسخ مدل را خراب کند */
     }
     if (userId) this.meCache.delete(userId);
-    aiUsageStore.getStore()?.hits.push(hit);
+    if (!failed) aiUsageStore.getStore()?.hits.push(hit);
     return hit;
   }
 
@@ -164,7 +169,7 @@ export class AiUsageService {
       }),
       this.groupedUsage(config.resetAt),
       this.prisma.aiUsageLog.findMany({
-        where: { ...counted, dateKey: { gte: since } },
+        where: { ...counted, ok: true, dateKey: { gte: since } },
         select: { section: true, dateKey: true, totalTokens: true, costRial: true },
       }),
     ]);
@@ -284,8 +289,10 @@ export class AiUsageService {
     const section = query.section?.trim() || undefined;
     const cursor = query.cursor?.trim() || undefined;
     const where = {
-      ...(userId ? { userId } : {}),
       ...(section ? { section } : {}),
+      ...(userId
+        ? { userId, purpose: { notIn: [...SYSTEM_HISTORY_PURPOSES] } }
+        : {}),
     };
     const rows = await this.prisma.aiUsageLog.findMany({
       where,
@@ -303,6 +310,7 @@ export class AiUsageService {
         totalTokens: true,
         costRial: true,
         estimated: true,
+        ok: true,
         createdAt: true,
         prompt: true,
         response: true,
@@ -321,8 +329,7 @@ export class AiUsageService {
       items: page.map((row) => ({
         id: row.id,
         userId: row.userId,
-        userLabel: row.user?.name?.trim() || row.user?.email || 'سیستم',
-        email: row.user?.email ?? null,
+        ...historyActor(row.purpose, row.user),
         purpose: row.purpose,
         section: row.section,
         sectionFa: sectionLabel(row.section),
@@ -332,6 +339,7 @@ export class AiUsageService {
         totalTokens: row.totalTokens,
         costRial: row.costRial,
         estimated: row.estimated,
+        ok: row.ok,
         createdAt: row.createdAt,
         promptPreview: previewText(row.prompt),
         responsePreview: previewText(row.response),
@@ -340,6 +348,12 @@ export class AiUsageService {
       })),
       nextCursor: hasMore ? page[page.length - 1]?.id ?? null : null,
     };
+  }
+
+  async clearHistory() {
+    const result = await this.prisma.aiUsageLog.deleteMany();
+    this.meCache.clear();
+    return { deleted: result.count };
   }
 
   async historyItem(id: string) {
@@ -351,8 +365,7 @@ export class AiUsageService {
     return {
       id: row.id,
       userId: row.userId,
-      userLabel: row.user?.name?.trim() || row.user?.email || 'سیستم',
-      email: row.user?.email ?? null,
+      ...historyActor(row.purpose, row.user),
       purpose: row.purpose,
       section: row.section,
       sectionFa: sectionLabel(row.section),
@@ -362,6 +375,7 @@ export class AiUsageService {
       totalTokens: row.totalTokens,
       costRial: row.costRial,
       estimated: row.estimated,
+      ok: row.ok,
       createdAt: row.createdAt,
       prompt: row.prompt,
       response: row.response,
@@ -416,7 +430,7 @@ export class AiUsageService {
             COALESCE(SUM("costRial"), 0)::float8 AS "costRial",
             COUNT(*)::float8 AS calls
           FROM "AiUsageLog"
-          WHERE "createdAt" > ${resetAt}
+          WHERE "createdAt" > ${resetAt} AND ok = true
           GROUP BY "userId", section
         `
       : await this.prisma.$queryRaw<Array<Record<string, unknown>>>`
@@ -427,6 +441,7 @@ export class AiUsageService {
             COALESCE(SUM("costRial"), 0)::float8 AS "costRial",
             COUNT(*)::float8 AS calls
           FROM "AiUsageLog"
+          WHERE ok = true
           GROUP BY "userId", section
         `;
     return rows.map((row) => ({
@@ -449,7 +464,7 @@ export class AiUsageService {
             COALESCE(SUM("totalTokens"), 0)::float8 AS "totalTokens",
             COALESCE(SUM("costRial"), 0)::float8 AS "costRial"
           FROM "AiUsageLog"
-          WHERE "userId" = ${userId} AND "createdAt" > ${resetAt}
+          WHERE "userId" = ${userId} AND "createdAt" > ${resetAt} AND ok = true
         `
       : await this.prisma.$queryRaw<Array<Record<string, unknown>>>`
           SELECT
@@ -458,7 +473,7 @@ export class AiUsageService {
             COALESCE(SUM("totalTokens"), 0)::float8 AS "totalTokens",
             COALESCE(SUM("costRial"), 0)::float8 AS "costRial"
           FROM "AiUsageLog"
-          WHERE "userId" = ${userId}
+          WHERE "userId" = ${userId} AND ok = true
         `;
     const row = rows[0] ?? {};
     return {
@@ -468,6 +483,17 @@ export class AiUsageService {
       costRial: asCount(row.costRial),
     };
   }
+}
+
+function historyActor(
+  purpose: string,
+  user: { name: string | null; email: string } | null,
+): { userLabel: string; email: string | null } {
+  if (SYSTEM_HISTORY_PURPOSES.has(purpose) || !user) {
+    return { userLabel: 'سیستم', email: null };
+  }
+  const name = user.name?.trim();
+  return { userLabel: name || user.email, email: user.email };
 }
 
 function previewText(value: string): string {

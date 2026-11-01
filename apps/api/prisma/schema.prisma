@@ -200,7 +200,7 @@ model AiUserQuota {
   user User @relation(fields: [userId], references: [id], onDelete: Cascade)
 }
 
-/** هر فراخوانی موفق مدل زبانی، بعد از آخرین ریست */
+/** هر فراخوانی مدل زبانی. ok یعنی جواب گرفته شد؛ خطا هم با ok=false همین‌جا می‌ماند. */
 model AiUsageLog {
   id               String   @id @default(cuid())
   userId           String?
@@ -212,9 +212,10 @@ model AiUsageLog {
   totalTokens      Int      @default(0)
   costRial         Int      @default(0)
   estimated        Boolean  @default(false)
+  ok               Boolean  @default(true)
   /// پرامپت کامل فرستاده‌شده به مدل
   prompt           String   @default("")
-  /// جواب کامل مدل
+  /// جواب مدل، یا متن خطا اگر ناموفق بوده
   response         String   @default("")
   dateKey          String
   createdAt        DateTime @default(now())

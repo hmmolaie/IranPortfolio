@@ -27,6 +27,7 @@ type HistoryItem = {
   totalTokens: number;
   costRial: number;
   estimated: boolean;
+  ok: boolean;
   createdAt: string;
   promptPreview: string;
   responsePreview: string;
@@ -56,6 +57,7 @@ export default function AiHistoryPage() {
   const [nextCursor, setNextCursor] = useState<string | null>(null);
   const [error, setError] = useState('');
   const [loading, setLoading] = useState(true);
+  const [clearing, setClearing] = useState(false);
   const [openId, setOpenId] = useState<string | null>(null);
   const [detail, setDetail] = useState<HistoryDetail | null>(null);
   const [detailError, setDetailError] = useState('');
@@ -96,6 +98,23 @@ export default function AiHistoryPage() {
     void load();
   }, [load, router]);
 
+  async function clearHistory() {
+    if (!confirm('همهٔ سوابق هوش مصنوعی حذف شوند؟ توکن و هزینهٔ همین فراخوانی‌ها هم از گزارش هزینه پاک می‌شود.')) return;
+    setClearing(true);
+    setError('');
+    try {
+      await api('/ai-usage/history', { method: 'DELETE' });
+      setItems([]);
+      setNextCursor(null);
+      setOpenId(null);
+      setDetail(null);
+    } catch (e) {
+      setError((e as Error).message);
+    } finally {
+      setClearing(false);
+    }
+  }
+
   function openItem(id: string) {
     if (openId === id) {
       setOpenId(null);
@@ -112,11 +131,21 @@ export default function AiHistoryPage() {
 
   return (
     <div className="space-y-6">
-      <div>
-        <h1 className="text-3xl font-bold">سوابق هوش مصنوعی</h1>
-        <p className="mt-2 text-navy-800/70">
-          پرامپت کامل، جواب مدل، توکن و هزینهٔ هر فراخوانی موفق. چت کاربران، اخبار و تحلیل صندوق‌ها هم اینجاست.
-        </p>
+      <div className="flex flex-wrap items-start justify-between gap-3">
+        <div>
+          <h1 className="text-3xl font-bold">سوابق هوش مصنوعی</h1>
+          <p className="mt-2 text-navy-800/70">
+            زمان، بخش، کاربر، مدل، توکن و نتیجهٔ هر فراخوانی. با کلیک روی ردیف، متن ورودی و خروجی باز می‌شود. اخبار و آنالیز خودکار با نام سیستم ثبت می‌شوند.
+          </p>
+        </div>
+        <button
+          type="button"
+          className="btn-secondary"
+          disabled={clearing || (items.length === 0 && !userId && !section)}
+          onClick={() => void clearHistory()}
+        >
+          {clearing ? 'در حال حذف...' : 'حذف سوابق'}
+        </button>
       </div>
 
       <div className="card grid gap-4 sm:grid-cols-2">
@@ -146,66 +175,84 @@ export default function AiHistoryPage() {
 
       {error && <p className="text-sm text-red-700">{error}</p>}
 
-      <div className="space-y-3">
-        {items.map((item) => (
-          <article key={item.id} className="card space-y-3">
-            <button type="button" className="w-full text-start" onClick={() => openItem(item.id)}>
-              <div className="flex flex-wrap items-baseline justify-between gap-2">
-                <div>
-                  <div className="font-bold">{item.sectionFa}</div>
-                  <div className="mt-1 text-sm text-navy-800/70">{item.userLabel}</div>
-                  {item.email && (
-                    <div className="text-xs text-navy-800/45" dir="ltr">
-                      {item.email}
-                    </div>
-                  )}
-                </div>
-                <div className="text-sm text-navy-800/70">{formatShamsiDateTime(item.createdAt)}</div>
-              </div>
-              <div className="mt-3 flex flex-wrap gap-x-4 gap-y-1 text-sm">
-                <span>{formatNum(item.totalTokens)} توکن</span>
-                <span>{formatRial(item.costRial)}</span>
-                {item.model && (
-                  <span dir="ltr" className="text-navy-800/55">
-                    {item.model}
-                  </span>
-                )}
-                {item.estimated && <span className="text-navy-800/45">برآورد توکن</span>}
-              </div>
-              <p className="mt-3 line-clamp-2 text-sm text-navy-800/80">
-                {item.promptPreview || 'برای دیدن پرامپت و جواب کامل باز کنید.'}
-              </p>
-            </button>
-
-            {openId === item.id && (
-              <div className="space-y-3 border-t border-navy-900/10 pt-3">
-                {detailError && <p className="text-sm text-red-700">{detailError}</p>}
-                {!detail && !detailError && <p className="text-sm text-navy-800/60">در حال خواندن متن کامل...</p>}
-                {detail && detail.id === item.id && (
-                  <>
-                    <p className="text-xs text-navy-800/50">
-                      ورودی {formatNum(detail.promptTokens)} · خروجی {formatNum(detail.completionTokens)} ·{' '}
-                      {formatNum(detail.promptChars)} نویسه پرامپت · {formatNum(detail.responseChars)} نویسه جواب
-                    </p>
-                    <TextBlock title="فرستاده‌شده به مدل" text={detail.prompt} />
-                    <TextBlock title="جواب مدل" text={detail.response} />
-                  </>
-                )}
-              </div>
-            )}
-          </article>
-        ))}
-
+      <section className="card overflow-x-auto p-0">
+        <table className="min-w-full text-sm">
+          <thead className="bg-navy-900 text-white">
+            <tr>
+              <th className="px-3 py-3 text-start font-medium">زمان</th>
+              <th className="px-3 py-3 text-start font-medium">بخش</th>
+              <th className="px-3 py-3 text-start font-medium">کاربر</th>
+              <th className="px-3 py-3 text-start font-medium">مدل</th>
+              <th className="px-3 py-3 text-start font-medium">توکن ورودی</th>
+              <th className="px-3 py-3 text-start font-medium">توکن خروجی</th>
+              <th className="px-3 py-3 text-start font-medium">هزینه</th>
+              <th className="px-3 py-3 text-start font-medium">نتیجه</th>
+            </tr>
+          </thead>
+          <tbody>
+            {items.map((item) => {
+              const selected = openId === item.id;
+              return (
+                <tr
+                  key={item.id}
+                  className={`cursor-pointer border-b border-navy-900/5 ${
+                    selected ? 'bg-gold-400/30' : 'odd:bg-white even:bg-navy-50/40'
+                  }`}
+                  onClick={() => openItem(item.id)}
+                >
+                  <td className="whitespace-nowrap px-3 py-3">{formatShamsiDateTime(item.createdAt)}</td>
+                  <td className="px-3 py-3 font-medium">{item.sectionFa}</td>
+                  <td className="px-3 py-3">{item.userLabel}</td>
+                  <td className="px-3 py-3" dir="ltr">
+                    {item.model || '—'}
+                  </td>
+                  <td className="px-3 py-3">{formatNum(item.promptTokens)}</td>
+                  <td className="px-3 py-3">{formatNum(item.completionTokens)}</td>
+                  <td className="whitespace-nowrap px-3 py-3">{formatRial(item.costRial)}</td>
+                  <td className={`px-3 py-3 font-medium ${item.ok ? 'text-emerald-800' : 'text-red-700'}`}>
+                    {item.ok ? 'موفق' : 'خطا'}
+                  </td>
+                </tr>
+              );
+            })}
+          </tbody>
+        </table>
         {!loading && items.length === 0 && (
-          <p className="text-sm text-navy-800/60">سابقه‌ای برای این فیلتر نیست. رکوردها از استقرار این نسخه به بعد پر می‌شوند.</p>
+          <p className="px-4 py-4 text-sm text-navy-800/60">سابقه‌ای برای این فیلتر نیست.</p>
         )}
+      </section>
 
-        {nextCursor && (
-          <button type="button" className="btn-secondary" disabled={loading} onClick={() => void load(nextCursor)}>
-            سابقه‌های قدیمی‌تر
-          </button>
-        )}
-      </div>
+      {openId && (
+        <div className="card space-y-3">
+          {detailError && <p className="text-sm text-red-700">{detailError}</p>}
+          {!detail && !detailError && <p className="text-sm text-navy-800/60">در حال خواندن متن کامل...</p>}
+          {detail && detail.id === openId && (
+            <>
+              <p className="text-xs text-navy-800/50">
+                {detail.sectionFa}
+                {' · '}
+                {detail.userLabel}
+                {' · '}
+                ورودی {formatNum(detail.promptTokens)} · خروجی {formatNum(detail.completionTokens)}
+                {detail.estimated ? ' · برآورد توکن' : ''}
+              </p>
+              {detail.model && (
+                <p className="text-xs text-navy-800/50" dir="ltr">
+                  {detail.model}
+                </p>
+              )}
+              <TextBlock title="فرستاده‌شده به مدل" text={detail.prompt} />
+              <TextBlock title={detail.ok ? 'جواب مدل' : 'متن خطا'} text={detail.response} />
+            </>
+          )}
+        </div>
+      )}
+
+      {nextCursor && (
+        <button type="button" className="btn-secondary" disabled={loading} onClick={() => void load(nextCursor)}>
+          سابقه‌های قدیمی‌تر
+        </button>
+      )}
     </div>
   );
 }

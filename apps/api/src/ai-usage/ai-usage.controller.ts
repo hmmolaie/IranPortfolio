@@ -1,4 +1,4 @@
-import { Body, Controller, Get, Param, Post, Put, Query, Req, UseGuards } from '@nestjs/common';
+import { Body, Controller, Delete, Get, Param, Post, Put, Query, Req, UseGuards } from '@nestjs/common';
 import { Type } from 'class-transformer';
 import { IsNumber, IsOptional, IsString, Min } from 'class-validator';
 import { AdminGuard } from '../auth/admin.guard';
@@ -69,6 +69,12 @@ export class AiUsageController {
   @UseGuards(AdminGuard)
   historyItem(@Param('id') id: string) {
     return this.usage.historyItem(id);
+  }
+
+  @Delete('history')
+  @UseGuards(AdminGuard)
+  clearHistory() {
+    return this.usage.clearHistory();
   }
 
   @Put('config')

@@ -678,7 +678,16 @@ export class LlmService {
     try {
       return await this.chatJsonInner<T>(purpose, systemPrompt, userPrompt, userId, options);
     } catch (e) {
-      await this.recordFailure(purpose, userId, e);
+      let model: string | undefined;
+      try {
+        model = (await this.resolveCredentials(userId, purpose)).model;
+      } catch {
+        model = undefined;
+      }
+      await this.recordFailure(purpose, userId, e, {
+        prompt: `${systemPrompt}\n---\n${userPrompt}`,
+        model,
+      });
       throw this.humanizeError(e);
     }
   }
@@ -771,10 +780,16 @@ export class LlmService {
     const maxChunk = 4096;
     const chunks = splitSpeechInput(input, maxChunk);
     const pieces: Buffer[] = [];
-    for (const chunk of chunks) {
-      pieces.push(await this.requestSpeech(url, apiKey, model, voice, chunk, instructions));
+    let audio: Buffer;
+    try {
+      for (const chunk of chunks) {
+        pieces.push(await this.requestSpeech(url, apiKey, model, voice, chunk, instructions));
+      }
+      audio = Buffer.concat(pieces);
+    } catch (e) {
+      await this.recordFailure('tts', userId, e, { prompt: input, model });
+      throw e;
     }
-    const audio = Buffer.concat(pieces);
     const promptTokens = Math.max(1, Math.ceil(input.length / 4));
     await this.aiUsage.record(userId, 'tts', model, {
       promptTokens,
@@ -1030,7 +1045,10 @@ export class LlmService {
       });
       return content;
     } catch (e) {
-      await this.recordFailure(purpose, userId, e);
+      await this.recordFailure(purpose, userId, e, {
+        prompt: `${systemPrompt}\n---\n${userPrompt}`,
+        model: creds.model,
+      });
       throw this.humanizeError(e);
     }
   }
@@ -1055,7 +1073,12 @@ export class LlmService {
     return { deleted: result.count };
   }
 
-  private async recordFailure(purpose: string, userId: string | undefined, err: unknown) {
+  private async recordFailure(
+    purpose: string,
+    userId: string | undefined,
+    err: unknown,
+    exchange?: { prompt?: string; model?: string },
+  ) {
     try {
       const raw =
         err instanceof LlmHttpError
@@ -1074,6 +1097,13 @@ export class LlmService {
           detail,
         },
       });
+      await this.aiUsage.record(
+        userId,
+        purpose,
+        exchange?.model,
+        { promptTokens: 0, completionTokens: 0, totalTokens: 0, estimated: false },
+        { prompt: exchange?.prompt, response: detail, ok: false },
+      );
     } catch (logErr) {
       this.logger.warn(`ثبت خطای LLM ناموفق: ${(logErr as Error).message}`);
     }
@@ -1088,6 +1118,7 @@ export class LlmService {
     draft?: { baseUrl?: string; model?: string; apiToken?: string },
   ) {
     const started = Date.now();
+    let testedModel: string | undefined;
     try {
       let creds: LlmCreds;
       if (draft?.baseUrl || draft?.model || draft?.apiToken) {
@@ -1120,6 +1151,7 @@ export class LlmService {
         creds = await this.resolveCredentials(userId);
       }
 
+      testedModel = creds.model;
       const { content, model, usage } = await this.callWithModelFallback(creds, (m) => ({
         model: m,
         temperature: 0,
@@ -1151,7 +1183,10 @@ export class LlmService {
         messageFa: `اتصال برقرار است. مدل «${model}» در ${latencyMs.toLocaleString('fa-IR')} میلی‌ثانیه پاسخ داد.`,
       };
     } catch (e) {
-      await this.recordFailure('llm_test', userId, e);
+      await this.recordFailure('llm_test', userId, e, {
+        prompt: 'ping',
+        model: testedModel,
+      });
       const latencyMs = Date.now() - started;
       const err = this.humanizeError(e);
       return {
