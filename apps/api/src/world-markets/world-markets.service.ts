@@ -143,7 +143,7 @@ export class WorldMarketsService implements OnModuleInit {
     const slot = isRefreshSlot(
       now.hour * 60 + now.minute,
       schedule.worldHour * 60 + schedule.worldMinute,
-      true,
+      false,
     );
     if (!slot) return;
     if (slot === 'retry') {
@@ -164,7 +164,7 @@ export class WorldMarketsService implements OnModuleInit {
       const count = await this.prisma.worldMarket.count();
       if (count === 0) {
         this.logger.log('جدول اقتصاد دنیا خالی است؛ همگام‌سازی اولیه');
-        await this.refreshFromBitpin();
+        await this.refreshFromBitpin({ macroNews: false });
         return;
       }
       if (process.env.NODE_ENV !== 'production') return;
@@ -174,7 +174,7 @@ export class WorldMarketsService implements OnModuleInit {
       const refresh = await this.prisma.worldMarketRefresh.findUnique({ where: { id: REFRESH_ID } });
       if (refresh?.dateKey === tehranDateKey()) return;
       this.logger.log('پس از راه‌اندازی: اقتصاد دنیا برای امروز هنوز به‌روز نشده');
-      await this.refreshFromBitpin();
+      await this.refreshFromBitpin({ macroNews: false });
     } catch (e) {
       this.logger.warn(`همگام‌سازی اولیه اقتصاد دنیا: ${(e as Error).message.slice(0, 180)}`);
     }
@@ -347,7 +347,7 @@ export class WorldMarketsService implements OnModuleInit {
     };
   }
 
-  async refreshFromBitpin() {
+  async refreshFromBitpin(opts?: { macroNews?: boolean }) {
     if (this.refreshInFlight) {
       throw new BadRequestException('همگام‌سازی قبلی هنوز تمام نشده است');
     }
@@ -401,10 +401,12 @@ export class WorldMarketsService implements OnModuleInit {
       } catch (e) {
         this.logger.warn(`ذخیره دلار/طلا از بیت‌پین: ${(e as Error).message.slice(0, 180)}`);
       }
-      try {
-        await this.refreshMacroNews(dateKey, fetchedAt);
-      } catch (e) {
-        this.logger.warn(`اخبار کلان جهان: ${(e as Error).message.slice(0, 180)}`);
+      if (opts?.macroNews !== false) {
+        try {
+          await this.refreshMacroNews(dateKey, fetchedAt);
+        } catch (e) {
+          this.logger.warn(`اخبار کلان جهان: ${(e as Error).message.slice(0, 180)}`);
+        }
       }
       return this.list();
     } finally {
@@ -445,6 +447,7 @@ export class WorldMarketsService implements OnModuleInit {
       adminId,
       {
         once: true,
+        errorLogOnly: true,
         preferGrok: true,
         liveSearch: { x: true, web: true, fromDate: daysAgoDateKey(3), toDate: dateKey },
       },

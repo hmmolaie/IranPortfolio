@@ -1,4 +1,5 @@
-import { Injectable, Logger, OnModuleInit } from '@nestjs/common';
+import { Injectable, Logger } from '@nestjs/common';
+import { Prisma } from '@prisma/client';
 import { Cron } from '@nestjs/schedule';
 import { PrismaService } from '../prisma/prisma.service';
 import { LlmService } from '../llm/llm.service';
@@ -35,7 +36,7 @@ type NewsLlmOut = {
 };
 
 @Injectable()
-export class NewsService implements OnModuleInit {
+export class NewsService {
   private readonly logger = new Logger(NewsService.name);
   private refreshInFlight = false;
   private llmRefresh: Promise<unknown> | null = null;
@@ -45,13 +46,6 @@ export class NewsService implements OnModuleInit {
     private readonly llm: LlmService,
     private readonly users: UsersService,
   ) {}
-
-  onModuleInit() {
-    if (process.env.NODE_ENV !== 'production') return;
-    setTimeout(() => {
-      void this.catchUpAfterRestart();
-    }, 20_000);
-  }
 
   getRefreshSchedule() {
     return readRefreshSchedule(this.prisma);
@@ -69,7 +63,7 @@ export class NewsService implements OnModuleInit {
     return saveRefreshSchedule(this.prisma, data);
   }
 
-  /** هر دقیقه با ساعت ذخیره‌شدهٔ اخبار ایران مقایسه می‌شود؛ یک و دو ساعت بعد اگر خالی ماند تلاش مجدد */
+  /** هر دقیقه با ساعت ذخیره‌شده مقایسه می‌شود. فقط همان دقیقه، یک فراخوانی. */
   @Cron('* * * * *', { timeZone: 'Asia/Tehran', name: 'economic-news-tick' })
   async scheduledRefresh() {
     const schedule = await readRefreshSchedule(this.prisma);
@@ -77,19 +71,11 @@ export class NewsService implements OnModuleInit {
     const slot = isRefreshSlot(
       now.hour * 60 + now.minute,
       schedule.iranNewsHour * 60 + schedule.iranNewsMinute,
-      true,
+      false,
     );
     if (!slot) return;
     const label = `${String(schedule.iranNewsHour).padStart(2, '0')}:${String(schedule.iranNewsMinute).padStart(2, '0')}`;
     this.logger.log(`بروزرسانی زمان‌بندی‌شده اخبار ایران (${label} تهران)`);
-    await this.runScheduledRefresh();
-  }
-
-  private async catchUpAfterRestart() {
-    const schedule = await readRefreshSchedule(this.prisma);
-    const now = tehranTimeParts();
-    if (now.hour * 60 + now.minute < schedule.iranNewsHour * 60 + schedule.iranNewsMinute) return;
-    this.logger.log('پس از راه‌اندازی: اگر اخبار امروز خالی باشد جمع می‌شود');
     await this.runScheduledRefresh();
   }
 
@@ -110,12 +96,23 @@ export class NewsService implements OnModuleInit {
         where: { userId_newsDateKey: { userId: adminId, newsDateKey } },
         include: { _count: { select: { items: true } } },
       });
-      if (existing && existing._count.items > 0) {
-        this.logger.log(`اخبار ${newsDateKey} از قبل ذخیره شده؛ مدل دوباره خوانده نشد`);
+      if (existing) {
+        this.logger.log(`اخبار ${newsDateKey} امروز یک‌بار انجام شده؛ مدل دوباره خوانده نشد`);
         return;
       }
+      try {
+        await this.prisma.economicNewsBatch.create({
+          data: { userId: adminId, newsDateKey },
+        });
+      } catch (e) {
+        if (e instanceof Prisma.PrismaClientKnownRequestError && e.code === 'P2002') {
+          this.logger.log(`اخبار ${newsDateKey} هم‌زمان ثبت شد؛ فراخوانی دوم انجام نشد`);
+          return;
+        }
+        throw e;
+      }
       this.logger.log(`خواندن اخبار ${newsDateKey} از مدل (ساعت تهران ${tehranHour()})`);
-      const batch = await this.refresh(adminId, { persistEmpty: false });
+      const batch = await this.readNewsFromModel(adminId, newsDateKey, false);
       const n = batch?.items?.length ?? 0;
       this.logger.log(`کرون اخبار ${newsDateKey}: ${n} خبر ذخیره شد`);
     } catch (e) {
@@ -160,7 +157,7 @@ export class NewsService implements OnModuleInit {
         where: { userId_newsDateKey: { userId: ownerId, newsDateKey } },
         include: { items: { orderBy: { sortOrder: 'asc' } } },
       });
-      if (stored && stored.items.length > 0) {
+      if (stored) {
         this.logger.log(`اخبار ${newsDateKey} از ذخیره خوانده شد؛ مدل دوباره صدا زده نشد`);
         return stored;
       }
@@ -295,6 +292,7 @@ ${opportunitySystem}
         ownerId,
         {
           once: true,
+          errorLogOnly: true,
           preferGrok: true,
           liveSearch: {
             x: true,

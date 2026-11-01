@@ -525,14 +525,7 @@ export class TelegramService implements OnModuleInit {
             include: { items: { orderBy: { sortOrder: 'asc' } } },
           }));
         if (!batch?.items?.length) {
-          const adminId = await this.users.getAdminUserId();
-          if (adminId) {
-            try {
-              batch = await this.news.refresh(adminId, { persistEmpty: false });
-            } catch (e) {
-              this.logger.warn(`رفرش اخبار قبل از تلگرام ناموفق: ${(e as Error).message.slice(0, 160)}`);
-            }
-          }
+          this.logger.log('اخبار امروز ذخیره نشده؛ پیام تلگرام مدل را دوباره صدا نمی‌زند');
         }
         const regimeBrief = await this.intelligence.regimeBriefFa().catch(() => '');
         const optionLines = await this.optionOpportunityLines();

@@ -101,6 +101,8 @@ export type LlmChatOptions = {
   preferGrok?: boolean;
   /** فقط یک درخواست. مدل جایگزین و تلاش دوباره در همان نوبت انجام نمی‌شود. */
   once?: boolean;
+  /** خطا فقط در «خطاهای مشاهده‌شده» بماند و ردیف سوابق ساخته نشود. */
+  errorLogOnly?: boolean;
 };
 
 function normalizeLiveSearch(raw?: LlmChatOptions['liveSearch']): LlmLiveSearch | null {
@@ -768,6 +770,7 @@ export class LlmService {
       await this.recordFailure(purpose, userId, e, {
         prompt: `${systemPrompt}\n---\n${userPrompt}`,
         model,
+        history: !options?.errorLogOnly,
       });
       throw this.humanizeError(e);
     }
@@ -1158,7 +1161,7 @@ export class LlmService {
     purpose: string,
     userId: string | undefined,
     err: unknown,
-    exchange?: { prompt?: string; model?: string },
+    exchange?: { prompt?: string; model?: string; history?: boolean },
   ) {
     try {
       const raw =
@@ -1178,13 +1181,15 @@ export class LlmService {
           detail,
         },
       });
-      await this.aiUsage.record(
-        userId,
-        purpose,
-        exchange?.model,
-        { promptTokens: 0, completionTokens: 0, totalTokens: 0, estimated: false },
-        { prompt: exchange?.prompt, response: detail, ok: false },
-      );
+      if (exchange?.history !== false) {
+        await this.aiUsage.record(
+          userId,
+          purpose,
+          exchange?.model,
+          { promptTokens: 0, completionTokens: 0, totalTokens: 0, estimated: false },
+          { prompt: exchange?.prompt, response: detail, ok: false },
+        );
+      }
     } catch (logErr) {
       this.logger.warn(`ثبت خطای LLM ناموفق: ${(logErr as Error).message}`);
     }

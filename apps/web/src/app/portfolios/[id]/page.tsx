@@ -322,6 +322,19 @@ export default function PortfolioDetailPage() {
     }
   }
 
+  async function suggestPortfolio() {
+    setBusy('suggest');
+    try {
+      await api(`/portfolios/${id}/suggest`, { method: 'POST' });
+      await load();
+      toast.success('پیشنهاد سبد آماده شد.');
+    } catch (err) {
+      toast.error((err as Error).message);
+    } finally {
+      setBusy('');
+    }
+  }
+
   async function analyzePortfolio() {
     setBusy('analyze');
     setAnalysis(null);
@@ -511,6 +524,16 @@ export default function PortfolioDetailPage() {
         <div className="flex flex-wrap gap-2">
           {aiOn.portfolio && (
           <button
+            type="button"
+            className="btn-primary"
+            disabled={!!busy}
+            onClick={() => void suggestPortfolio()}
+          >
+            {busy === 'suggest' ? 'در حال پیشنهاد...' : 'پیشنهاد سبد با هوش مصنوعی'}
+          </button>
+          )}
+          {aiOn.portfolio && (
+          <button
             className="btn-primary"
             disabled={!!busy || !latest}
             onClick={analyzePortfolio}
@@ -546,6 +569,11 @@ export default function PortfolioDetailPage() {
           </button>
         </div>
       </div>
+      {busy === 'suggest' && (
+        <p className="text-sm text-navy-800/70">
+          لطفاً صفحه را نبندید. ساخت پیشنهاد ممکن است کمی طول بکشد.
+        </p>
+      )}
 
       <IntelligencePanel portfolioId={id} />
 
