@@ -195,45 +195,22 @@ export class NewsService implements OnModuleInit {
       topItems: b.items.map((i) => i.titleFa),
     }));
 
-    const [newsOut, oppOut] = await Promise.all([
-      this.runGrokSearch(ownerId, 'economic_news_refresh', {
-        todayTehran: newsDateKey,
-        todayLabelFa: tehranDateFa(),
-        maxItems: MAX_MACRO_ITEMS,
-        recentHeadlinesToAvoidRepeat: recentHeadlines,
-        instruction:
-          'در کل فضای شبکه اجتماعی به هر زبانی بگرد. حداکثر ۷ مطلب از معتبرترین حساب‌هایی که چیزی نوشته‌اند که ممکن است روی اقتصاد ایران اثر بگذارد. همه را فارسی بنویس. تکراری نسبت به recentHeadlinesToAvoidRepeat نده. در متن فارسی خروجی نام X یا توییتر ننویس؛ فقط بگو شبکه اجتماعی.',
-      }),
-      this.runGrokSearch(ownerId, 'economic_opportunity_refresh', {
-        todayTehran: newsDateKey,
-        todayLabelFa: tehranDateFa(),
-        maxItems: MAX_OPPORTUNITY_ITEMS,
-        recentHeadlinesToAvoidRepeat: recentHeadlines,
-        instruction:
-          'در کل فضای شبکه اجتماعی به هر زبانی بگرد. حداکثر ۳ مطلب از معتبرترین حساب‌ها درباره عرضه اولیه، ثبت‌نام خودرو، حراج سکه یا ارز، آربیتراژ، یا بازار مستعد رشد. همه را فارسی بنویس. در متن فارسی خروجی نام X یا توییتر ننویس؛ فقط بگو شبکه اجتماعی.',
-      }),
-    ]);
+    const newsOut = await this.runGrokSearch(ownerId, {
+      todayTehran: newsDateKey,
+      todayLabelFa: tehranDateFa(),
+      maxMacroItems: MAX_MACRO_ITEMS,
+      maxOpportunityItems: MAX_OPPORTUNITY_ITEMS,
+      recentHeadlinesToAvoidRepeat: recentHeadlines,
+      instruction:
+        'در یک پاسخ هر دو دسته را بده. حداکثر ۷ خبر اثرگذار بر اقتصاد ایران با category برابر macro و حداکثر ۳ فرصت سرمایه‌گذاری با category برابر opportunity. در کل فضای شبکه اجتماعی به هر زبانی بگرد و همه را فارسی بنویس. تکراری نسبت به recentHeadlinesToAvoidRepeat نده. در متن فارسی خروجی نام X یا توییتر ننویس؛ فقط بگو شبکه اجتماعی.',
+    });
 
-    const macros = this.takeValid(newsOut.items, MAX_MACRO_ITEMS).map((item) => ({
-      ...item,
-      category: 'macro' as const,
-      isRetailActionable: false,
-    }));
-    const opportunities = this.takeValid(oppOut.items, MAX_OPPORTUNITY_ITEMS).map((item) => ({
-      ...item,
-      category: 'opportunity' as const,
-      isRetailActionable: item.isRetailActionable !== false,
-    }));
+    const split = this.splitNewsItems(newsOut.items);
+    const macros = split.macros;
+    const opportunities = split.opportunities;
     const items = [...macros, ...opportunities];
-    const analysisSummaryFa = [newsOut.analysisSummaryFa, oppOut.analysisSummaryFa]
-      .map((s) => replaceSocialNetworkBrandFa((s ?? '').trim()))
-      .filter(Boolean)
-      .join('\n\n');
-    const sourceNoteFa =
-      [newsOut.sourceNoteFa, oppOut.sourceNoteFa]
-        .map((s) => replaceSocialNetworkBrandFa((s ?? '').trim()))
-        .filter(Boolean)
-        .join(' · ') || null;
+    const analysisSummaryFa = replaceSocialNetworkBrandFa((newsOut.analysisSummaryFa ?? '').trim());
+    const sourceNoteFa = replaceSocialNetworkBrandFa((newsOut.sourceNoteFa ?? '').trim()) || null;
 
     const existing = await this.prisma.economicNewsBatch.findUnique({
       where: { userId_newsDateKey: { userId: ownerId, newsDateKey } },
@@ -297,18 +274,27 @@ export class NewsService implements OnModuleInit {
 
   private async runGrokSearch(
     ownerId: string,
-    purpose: 'economic_news_refresh' | 'economic_opportunity_refresh',
     payload: Record<string, unknown>,
   ): Promise<NewsLlmOut> {
-    const system = await this.llm.getSystemPrompt(ownerId, purpose);
+    const [newsSystem, opportunitySystem] = await Promise.all([
+      this.llm.getSystemPrompt(ownerId, 'economic_news_refresh'),
+      this.llm.getSystemPrompt(ownerId, 'economic_opportunity_refresh'),
+    ]);
+    const system = `${newsSystem}
+
+در همین یک پاسخ، فرصت‌های سرمایه‌گذاری را هم بیاور. درخواست جداگانه‌ای در کار نیست.
+${opportunitySystem}
+
+خروجی فقط یک JSON است. آرایه items هر دو دسته را با هم دارد: حداکثر ${MAX_MACRO_ITEMS} مورد با category برابر macro و حداکثر ${MAX_OPPORTUNITY_ITEMS} مورد با category برابر opportunity.`;
     const newsDateKey = tehranDateKey();
     try {
       const out = await this.llm.chatJson<NewsLlmOut>(
-        purpose,
+        'economic_news_refresh',
         system,
         JSON.stringify(payload, null, 2),
         ownerId,
         {
+          once: true,
           preferGrok: true,
           liveSearch: {
             x: true,
@@ -324,7 +310,7 @@ export class NewsService implements OnModuleInit {
         items: Array.isArray(out.items) ? out.items : [],
       };
     } catch (e) {
-      this.logger.warn(`${purpose} ناموفق: ${(e as Error).message.slice(0, 180)}`);
+      this.logger.warn(`اخبار ایران ناموفق: ${(e as Error).message.slice(0, 180)}`);
       return {
         analysisSummaryFa: '',
         items: [],
@@ -332,19 +318,31 @@ export class NewsService implements OnModuleInit {
     }
   }
 
-  private takeValid(raw: NewsLlmItem[], max: number): NewsLlmItem[] {
-    const out: NewsLlmItem[] = [];
+  private splitNewsItems(raw: NewsLlmItem[]): { macros: NewsLlmItem[]; opportunities: NewsLlmItem[] } {
+    const macros: NewsLlmItem[] = [];
+    const opportunities: NewsLlmItem[] = [];
     const seen = new Set<string>();
     for (const item of raw) {
-      if (out.length >= max) break;
       const cleaned = this.cleanItem(item);
       if (!cleaned) continue;
       const key = cleaned.titleFa.replace(/\s+/g, ' ').trim().toLowerCase();
       if (seen.has(key)) continue;
       seen.add(key);
-      out.push(cleaned);
+      const kind = (cleaned.category ?? '').trim().toLowerCase();
+      const isOpportunity = kind === 'opportunity' || Boolean(cleaned.opportunityKind);
+      if (isOpportunity) {
+        if (opportunities.length >= MAX_OPPORTUNITY_ITEMS) continue;
+        opportunities.push({
+          ...cleaned,
+          category: 'opportunity',
+          isRetailActionable: cleaned.isRetailActionable !== false,
+        });
+        continue;
+      }
+      if (macros.length >= MAX_MACRO_ITEMS) continue;
+      macros.push({ ...cleaned, category: 'macro', isRetailActionable: false });
     }
-    return out;
+    return { macros, opportunities };
   }
 
   private cleanItem(item: NewsLlmItem): NewsLlmItem | null {

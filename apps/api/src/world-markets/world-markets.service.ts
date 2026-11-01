@@ -444,6 +444,7 @@ export class WorldMarketsService implements OnModuleInit {
       ),
       adminId,
       {
+        once: true,
         preferGrok: true,
         liveSearch: { x: true, web: true, fromDate: daysAgoDateKey(3), toDate: dateKey },
       },

@@ -28,7 +28,7 @@ type LlmCreds = {
   pinPrimary?: boolean;
 };
 
-/** گفتگوی زندهٔ کاربر. بقیهٔ فراخوانی‌ها کار سیستم‌اند و مدل system-one را می‌گیرند. */
+/** گفتگوی زندهٔ کاربر روی مدل اصلی می‌ماند. */
 const INTERACTIVE_LLM_PURPOSES = new Set([
   'portfolio_chat',
   'market_symbol_qa',
@@ -40,6 +40,13 @@ const INTERACTIVE_LLM_PURPOSES = new Set([
   'telegram_assistant_youtube',
   'telegram_assistant_youtube_subs',
   'llm_test',
+]);
+
+/** فقط آنالیز و پیشنهاد سبد. اخبار، اقتصاد دنیا، صندوق و درس روی مدل اصلی می‌مانند. */
+const SYSTEM_MODEL_PURPOSES = new Set([
+  'portfolio_suggest_multi',
+  'portfolio_analyze',
+  'monthly_eval',
 ]);
 
 type GapGptWallet = {
@@ -107,6 +114,8 @@ export type LlmChatOptions = {
   liveSearch?: boolean | LlmLiveSearch;
   /** اگر در فهرست مدل‌ها Grok باشد، برای جستجوی شبکه اجتماعی همان را جلو می‌اندازد */
   preferGrok?: boolean;
+  /** فقط یک درخواست. مدل جایگزین و تلاش دوباره در همان نوبت انجام نمی‌شود. */
+  once?: boolean;
 };
 
 function normalizeLiveSearch(raw?: LlmChatOptions['liveSearch']): LlmLiveSearch | null {
@@ -310,7 +319,8 @@ export class LlmService {
 
   private applySystemModel(creds: LlmCreds, systemModel: string, purpose?: string): LlmCreds {
     const pinned = systemModel.trim();
-    if (!pinned || !purpose || INTERACTIVE_LLM_PURPOSES.has(purpose)) return creds;
+    if (!pinned || !purpose || !SYSTEM_MODEL_PURPOSES.has(purpose)) return creds;
+    if (INTERACTIVE_LLM_PURPOSES.has(purpose)) return creds;
     const fallbackModels = [creds.model, ...creds.fallbackModels].filter((name) => name && name !== pinned);
     return { ...creds, model: pinned, fallbackModels, pinPrimary: true };
   }
@@ -574,15 +584,18 @@ export class LlmService {
     userPrompt: string,
     search: LlmLiveSearch,
     preferGrok?: boolean,
+    once?: boolean,
   ): Promise<{ content: string; model: string; citations: string[]; usage: TokenUse }> {
-    const models =
+    const ordered =
       preferGrok && !creds.pinPrimary
         ? preferGrokFirst(uniqueStrings([creds.model, ...creds.fallbackModels]))
         : uniqueStrings([creds.model, ...creds.fallbackModels]);
+    const models = once ? ordered.slice(0, 1) : ordered;
     let lastErr: unknown;
     for (const model of models) {
       const toolSets = this.searchToolSets(creds, model, search);
-      for (const tools of toolSets) {
+      const sets = once ? toolSets.slice(0, 1) : toolSets;
+      for (const tools of sets) {
         const baseBody: Record<string, unknown> = {
           model,
           instructions: systemPrompt,
@@ -594,6 +607,11 @@ export class LlmService {
           ...baseBody,
           text: { format: { type: 'json_object' } },
         };
+        if (once) {
+          const r = await this.postResponses(creds, withJson);
+          this.logger.log(`جستجوی زنده مدل=${model} ابزار=${tools.map((t) => String(t.type ?? '')).join(',')}`);
+          return { ...r, model };
+        }
         try {
           const r = await this.postResponses(creds, withJson);
           this.logger.log(`جستجوی زنده مدل=${model} ابزار=${tools.map((t) => String(t.type ?? '')).join(',')}`);
@@ -683,12 +701,20 @@ export class LlmService {
 
     if (search) {
       try {
-        const r = await this.callResponsesForJson(creds, system, userPrompt, search, options?.preferGrok);
+        const r = await this.callResponsesForJson(
+          creds,
+          system,
+          userPrompt,
+          search,
+          options?.preferGrok,
+          options?.once,
+        );
         content = r.content;
         usedModel = r.model;
         citations = r.citations;
         usage = r.usage;
       } catch (e) {
+        if (options?.once) throw e;
         this.logger.warn(
           `جستجوی زندهٔ ${SOCIAL_NETWORK_LABEL_FA} ناموفق؛ ادامه بدون ابزار جستجو: ${(e as Error).message.slice(0, 180)}`,
         );
