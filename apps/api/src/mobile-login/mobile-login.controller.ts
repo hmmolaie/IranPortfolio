@@ -2,6 +2,7 @@ import { Body, Controller, Delete, Get, Param, Patch, Post, Put, Req, UseGuards 
 import { IsBoolean, IsString, MaxLength } from 'class-validator';
 import { AdminGuard } from '../auth/admin.guard';
 import { JwtAuthGuard } from '../auth/jwt-auth.guard';
+import { RateLimit } from '../common/rate-limit';
 import { clientIpFromHeaders, MobileLoginService } from './mobile-login.service';
 
 class LocationDto {
@@ -37,16 +38,22 @@ export class MobileLoginController {
   }
 
   @Post('visits')
+  @RateLimit(
+    { scope: 'mobile-visit', by: 'ip', limit: 30, windowMs: 60 * 60_000 },
+    { scope: 'mobile-visit', by: 'all', limit: 3000, windowMs: 60 * 60_000 },
+  )
   open(@Req() req: ReqWithIp) {
     return this.mobileLogin.openVisit(this.ip(req));
   }
 
   @Patch('visits/:id/location')
+  @RateLimit({ scope: 'mobile-visit-edit', by: 'ip', limit: 60, windowMs: 60 * 60_000 })
   location(@Param('id') id: string, @Body() dto: LocationDto) {
     return this.mobileLogin.saveLocation(id, dto.location);
   }
 
   @Patch('visits/:id/mobile')
+  @RateLimit({ scope: 'mobile-visit-edit', by: 'ip', limit: 60, windowMs: 60 * 60_000 })
   mobile(@Param('id') id: string, @Body() dto: MobileDto) {
     return this.mobileLogin.saveMobile(id, dto.mobilePhone);
   }

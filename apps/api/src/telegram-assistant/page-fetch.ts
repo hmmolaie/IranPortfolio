@@ -1,3 +1,5 @@
+import { assertPublicHttpUrl, fetchPublicUrl } from '../common/safe-url';
+
 export type PageFetchResult = { title: string; text: string; url: string };
 
 function stripHtml(html: string): string {
@@ -18,25 +20,29 @@ function stripHtml(html: string): string {
     .trim();
 }
 
+const MAX_PAGE_BYTES = 5_000_000;
+
 async function fetchText(url: string, timeoutMs: number, headers?: Record<string, string>): Promise<string | null> {
   try {
-    const res = await fetch(url, {
+    const res = await fetchPublicUrl(url, {
       headers: {
         'User-Agent': 'SabadyarAssistant/1.0',
         Accept: 'text/plain, text/html, application/xhtml+xml',
         ...headers,
       },
       signal: AbortSignal.timeout(timeoutMs),
-      redirect: 'follow',
     });
     if (!res.ok) return null;
-    return await res.text();
+    if (Number(res.headers.get('content-length') ?? 0) > MAX_PAGE_BYTES) return null;
+    return (await res.text()).slice(0, MAX_PAGE_BYTES);
   } catch {
     return null;
   }
 }
 
 export async function fetchWebPage(url: string): Promise<PageFetchResult> {
+  // لینک کاربر نباید سرور را به شبکهٔ داخلی (api، db، متادیتای ابر) بفرستد.
+  await assertPublicHttpUrl(url);
   const jina = await fetchText(`https://r.jina.ai/${url}`, 45_000, { Accept: 'text/plain' });
   if (jina && jina.trim().length > 80 && !/failed to|blocked/i.test(jina.slice(0, 200))) {
     const lines = jina.trim().split('\n');

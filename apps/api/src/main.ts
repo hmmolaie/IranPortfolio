@@ -5,9 +5,12 @@ import { publicSiteOrigins } from './common/public-sites';
 import { ObservedErrorService } from './common/observed-error.service';
 import { ObservedErrorLogger } from './common/observed-error.logger';
 import { ObservedExceptionFilter } from './common/observed-exception.filter';
+import { assertProductionSecrets } from './common/app-secrets';
 
 async function bootstrap() {
+  assertProductionSecrets();
   const app = await NestFactory.create(AppModule, { bufferLogs: true });
+  app.getHttpAdapter().getInstance().disable('x-powered-by');
   const observed = app.get(ObservedErrorService);
   app.useLogger(new ObservedErrorLogger(observed));
   app.useGlobalFilters(new ObservedExceptionFilter(observed));
@@ -61,6 +64,7 @@ async function bootstrap() {
     res.setHeader('Pragma', 'no-cache');
     res.setHeader('CDN-Cache-Control', 'no-store');
     res.setHeader('Surrogate-Control', 'no-store');
+    res.setHeader('X-Content-Type-Options', 'nosniff');
     next();
   });
   const port = Number(process.env.API_PORT ?? 3001);

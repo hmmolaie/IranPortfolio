@@ -104,10 +104,4 @@ function normalizeLocation(raw: string): string | null {
   return `${lat.toFixed(5)},${lng.toFixed(5)}`;
 }
 
-export function clientIpFromHeaders(headers: Record<string, string | string[] | undefined>, fallback?: string): string | null {
-  const forwarded = headers['x-forwarded-for'];
-  const raw = Array.isArray(forwarded) ? forwarded[0] : forwarded;
-  const first = (raw ?? fallback ?? '').split(',')[0]?.trim() ?? '';
-  const ip = first.replace(/^::ffff:/, '').slice(0, 64);
-  return ip || null;
-}
+export { clientIpFromHeaders } from '../common/rate-limit';

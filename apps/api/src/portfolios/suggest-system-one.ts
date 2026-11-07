@@ -4,6 +4,8 @@ export const CLASS_LEVELS = [0, 5, 10, 15, 20, 30, 40, 55, 75, 100];
 export const SIZE_LEVELS = [0, 2, 5, 8, 12, 18, 25, 35, 50, 70];
 export const MIN_STOCK_PROBABILITY = 0.5;
 export const STOCKS_PER_CALL = 8;
+/** سهم‌های برتر غربال روزانه که برای هر کاربر با پروفایل خودش دوباره سنجیده می‌شوند. */
+export const SCREEN_SHORTLIST = 24;
 const STATE_BYTE_BUDGET = 24_000;
 
 export const CLASS_IDS = [
@@ -104,10 +106,26 @@ export type StockFact = {
   legalSell: number | null;
   sectorPe: number | null;
   nav: number | null;
+  /** تغییر قیمت ۵ و ۲۰ روز معاملاتی اخیر به درصد */
+  r5?: number | null;
+  r20?: number | null;
+  /** انحراف معیار بازده روزانهٔ ۲۰ روز اخیر به درصد */
+  v20?: number | null;
+  /** میانگین ارزش معاملهٔ روزانهٔ ۲۰ روز اخیر به ریال */
+  av20?: number | null;
+  /** خالص خرید حقیقی ۵ روز اخیر به درصد حجم */
+  rf5?: number | null;
+  /** صندوق‌های پیگیری‌شده: دارنده، خریدار، فروشنده در آخرین گزارش ماهانه و میانگین وزن */
+  fh?: number | null;
+  fb?: number | null;
+  fs?: number | null;
+  fw?: number | null;
+  /** احتمال غربال روزانه به درصد */
+  sp?: number | null;
 };
 
 const STOCK_LEGEND =
-  'Stock keys: px last price in rial, cl close if different, eps, pe price/eps, ep earnings yield percent (eps/price*100), vol shares, val turnover rial, chg percent versus previous close, hi lo day high and low, n trade count, rb rs real-person buy and sell volume, lb ls legal-person buy and sell volume, spe sector pe, nav fund nav. A missing key is unknown.';
+  'Stock keys: px last price in rial, cl close if different, eps, pe price/eps, ep earnings yield percent (eps/price*100), vol shares, val turnover rial, chg percent versus previous close, hi lo day high and low, n trade count, rb rs real-person buy and sell volume, lb ls legal-person buy and sell volume, spe sector pe, nav fund nav. Trend keys: r5 r20 price change percent over the last 5 and 20 trading days (restarted after a corporate-action gap), v20 daily return volatility percent over 20 days, av20 average daily turnover rial over 20 days, rf5 real-person net buy as percent of volume over 5 days. Fund-manager keys from the latest monthly reports of tracked top funds: fh funds holding it, fb funds that added to it, fs funds that cut it, fw average weight percent among holders. sp market-wide screen probability percent today. A missing key is unknown.';
 
 type DecisionState = {
   investor: InvestorState;
@@ -141,7 +159,7 @@ export function stockQuestions(
     const who = stock.symbol;
     questions[`p${index}`] = {
       type: 'noul',
-      instructions: `Include ${who} (stocks i=${index})? Use its px, eps, pe, ep and the other figures in the legend, plus profile, gold, dollar, lessons, and news. This symbol only.`,
+      instructions: `Include ${who} (stocks i=${index})? Use its px, eps, pe, ep, trend, fund-manager moves and the other figures in the legend, plus profile, gold, dollar, lessons, and news. This symbol only.`,
     };
     questions[`s${index}`] = {
       type: 'score',
@@ -150,6 +168,36 @@ export function stockQuestions(
     };
   });
   return questions;
+}
+
+const SCREEN_INVESTOR: InvestorState = {
+  strategy: 'MARKET_SCREEN',
+  strategyFa: 'غربال روزانهٔ بازار برای بخش سهام متنوع با افق ۳ تا ۱۲ ماه',
+  capitalRial: 0,
+  noteFa: null,
+  profile: null,
+};
+
+/** غربال روزانه: فقط احتمال حضور، بدون پروفایل کاربر. اندازه را مرحلهٔ هر کاربر تعیین می‌کند. */
+export function screenQuestions(stocks: StockFact[]): Record<string, { type: 'noul'; instructions: string }> {
+  const questions: Record<string, { type: 'noul'; instructions: string }> = {};
+  stocks.forEach((stock, index) => {
+    questions[`p${index}`] = {
+      type: 'noul',
+      instructions: `Is ${stock.symbol} (stocks i=${index}) among the better buys today for a diversified Tehran stock sleeve with a 3 to 12 month horizon? Weigh valuation, trend, liquidity, real-money flow, and what top fund managers did with it, plus gold, dollar, lessons, and news. This symbol only.`,
+    };
+  });
+  return questions;
+}
+
+export function screenState(market: MarketState, stocks: StockFact[]): DecisionState {
+  return fitDecisionState({
+    investor: SCREEN_INVESTOR,
+    market,
+    legend: STOCK_LEGEND,
+    task: 'Screen these stocks for the whole market, not for one investor. Fund-manager moves are evidence of informed demand, not an order to copy. A headline alone is not a reason to include a stock.',
+    stocks: stocks.map((stock, index) => compactStock(stock, index)),
+  });
 }
 
 export function allocationState(investor: InvestorState, market: MarketState): DecisionState {
@@ -264,7 +312,24 @@ export type SleevePick = {
   price: number;
   noul: number;
   sizePct: number;
+  /** خلاصهٔ سیگنال‌های عددی نماد برای کاربر */
+  whyFa?: string;
 };
+
+/** سیگنال‌های قابل‌فهم نماد برای ستون دلیل؛ فقط ارقام موجود. */
+export function stockSignalsFa(stock: StockFact): string {
+  const parts: string[] = [];
+  const pct = (value: number) => `${value > 0 ? '+' : ''}${value.toLocaleString('fa-IR', { maximumFractionDigits: 1 })}٪`;
+  if (stock.r20 != null) parts.push(`روند ۲۰ روزه ${pct(stock.r20)}`);
+  if (stock.rf5 != null && Math.abs(stock.rf5) >= 1) {
+    parts.push(stock.rf5 > 0 ? `ورود پول حقیقی ${pct(stock.rf5)} حجم ۵ روز` : `خروج پول حقیقی ${pct(stock.rf5)} حجم ۵ روز`);
+  }
+  if (stock.fh) parts.push(`در سبد ${stock.fh.toLocaleString('fa-IR')} صندوق برتر`);
+  if (stock.fb) parts.push(`خرید ${stock.fb.toLocaleString('fa-IR')} صندوق در ماه اخیر`);
+  if (stock.fs) parts.push(`فروش ${stock.fs.toLocaleString('fa-IR')} صندوق در ماه اخیر`);
+  if (stock.sp != null) parts.push(`امتیاز غربال روزانه ${stock.sp.toLocaleString('fa-IR')}٪`);
+  return parts.length ? `${parts.join('، ')}.` : '';
+}
 
 export function fillStockSleeve(
   capitalRial: number,
@@ -289,7 +354,7 @@ export function fillStockSleeve(
       symbol: pick.symbol,
       amountRial,
       weightPct: capital > 0 ? (amountRial / capital) * 100 : 0,
-      reasonFa: `احتمال حضور ${probability.toLocaleString('fa-IR')}٪ و اندازه حدود ${pick.sizePct.toLocaleString('fa-IR', { maximumFractionDigits: 1 })}٪ از بخش سهام. قیمت، EPS، نسبت سود به قیمت و بقیهٔ ارقام نماد، به‌همراه طلا، دلار، درس‌آموخته‌ها و اخبار در همین قضاوت بوده‌اند.`,
+      reasonFa: `احتمال حضور ${probability.toLocaleString('fa-IR')}٪ و اندازه حدود ${pick.sizePct.toLocaleString('fa-IR', { maximumFractionDigits: 1 })}٪ از بخش سهام.${pick.whyFa ? ` ${pick.whyFa}` : ''} قیمت، EPS، نسبت سود به قیمت، روند و رفتار صندوق‌های برتر، به‌همراه طلا، دلار، درس‌آموخته‌ها و اخبار در همین قضاوت بوده‌اند.`,
     });
   }
   return chosen;
@@ -450,7 +515,26 @@ function compactStock(stock: StockFact, index: number): Record<string, string | 
   put('ls', stock.legalSell, 0);
   put('spe', stock.sectorPe, 2);
   put('nav', stock.nav, 0);
+  put('r5', stock.r5 ?? null, 1);
+  put('r20', stock.r20 ?? null, 1);
+  put('v20', stock.v20 ?? null, 2);
+  put('av20', stock.av20 ?? null, 0);
+  put('rf5', stock.rf5 ?? null, 1);
+  put('fh', stock.fh ?? null, 0);
+  put('fb', stock.fb ?? null, 0);
+  put('fs', stock.fs ?? null, 0);
+  put('fw', stock.fw ?? null, 2);
+  put('sp', stock.sp ?? null, 0);
   return row;
+}
+
+/** عدد اول موجود از raw میلهٔ قیمت؛ همان کلیدهای buildStockFact */
+export function rawFigure(raw: unknown, keys: string[]): number | null {
+  return firstNum(rawRecord(raw), keys);
+}
+
+export function compactStockFacts(stock: StockFact): Record<string, string | number> {
+  return compactStock(stock, 0);
 }
 
 function rawRecord(raw: unknown): Record<string, unknown> {

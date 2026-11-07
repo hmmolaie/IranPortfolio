@@ -9,7 +9,7 @@ import {
   Req,
   UseGuards,
 } from '@nestjs/common';
-import { Allow, IsObject, IsOptional, IsString } from 'class-validator';
+import { Allow, IsObject, IsOptional, IsString, MaxLength } from 'class-validator';
 import type {
   AuthenticationResponseJSON,
   RegistrationResponseJSON,
@@ -17,12 +17,15 @@ import type {
 import { AuthService } from './auth.service';
 import { WebAuthnService } from './webauthn.service';
 import { JwtAuthGuard } from './jwt-auth.guard';
+import { RateLimit } from '../common/rate-limit';
 
 class LoginDto {
   @IsString()
+  @MaxLength(200)
   email!: string;
 
   @IsString()
+  @MaxLength(200)
   password!: string;
 }
 
@@ -61,6 +64,10 @@ export class AuthController {
   }
 
   @Post('login')
+  @RateLimit(
+    { scope: 'login', by: 'email', limit: 10, windowMs: 15 * 60_000 },
+    { scope: 'login', by: 'ip', limit: 40, windowMs: 15 * 60_000 },
+  )
   login(@Body() dto: LoginDto) {
     return this.auth.login(dto.email, dto.password);
   }
@@ -87,6 +94,7 @@ export class AuthController {
   }
 
   @Post('webauthn/login/options')
+  @RateLimit({ scope: 'webauthn-login', by: 'ip', limit: 40, windowMs: 15 * 60_000 })
   webauthnLoginOptions(
     @Req() req: { headers: { origin?: string } },
     @Body() dto: WebAuthnLoginOptionsDto,
@@ -95,6 +103,7 @@ export class AuthController {
   }
 
   @Post('webauthn/login/verify')
+  @RateLimit({ scope: 'webauthn-login', by: 'ip', limit: 40, windowMs: 15 * 60_000 })
   webauthnLoginVerify(
     @Req() req: { headers: { origin?: string } },
     @Body() dto: WebAuthnLoginVerifyDto,

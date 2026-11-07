@@ -18,12 +18,18 @@ export const QUOTA_PURPOSES = new Set([
   'market_tehran_chat',
   'market_symbol_qa',
   'macro_qa',
+  'telegram_assistant_qa',
+  'telegram_assistant_page',
+  'telegram_assistant_pdf',
+  'telegram_assistant_youtube',
+  'telegram_assistant_youtube_subs',
 ]);
 
 const SECTION_LABELS: Record<string, string> = {
   fund_report_analysis: 'تحلیل صندوق',
   fund_timeline_analysis: 'تحلیل ماه‌به‌ماه صندوق',
   portfolio_suggest_multi: 'پیشنهاد سبد',
+  portfolio_stock_screen: 'غربال روزانهٔ سهام',
   portfolio_hedge: 'پوشش ریسک',
   portfolio_analyze: 'آنالیز سبد',
   portfolio_chat: 'چت سبد',
@@ -58,6 +64,7 @@ export const SYSTEM_HISTORY_PURPOSES = new Set([
   'fund_timeline_analysis',
   'telegram_digest_voice',
   'tts',
+  'portfolio_stock_screen',
 ]);
 
 export function sectionKey(purpose: string): string {

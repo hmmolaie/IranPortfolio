@@ -2,6 +2,7 @@ import { BadRequestException, Injectable, Logger, NotFoundException } from '@nes
 import { ConfigService } from '@nestjs/config';
 import { WalletPaymentStatus, WalletTxKind } from '@prisma/client';
 import { PrismaService } from '../prisma/prisma.service';
+import { encryptionKey } from '../common/app-secrets';
 import { decryptSecret, encryptSecret } from '../common/secret-box';
 
 export type WalletFeature = 'telegram' | 'suggest' | 'rebalance';
@@ -27,7 +28,7 @@ export class WalletService {
   ) {}
 
   private encKey() {
-    return this.config.get<string>('LLM_TOKEN_ENCRYPTION_KEY') ?? '0123456789abcdef0123456789abcdef';
+    return encryptionKey();
   }
 
   async readConfig() {
@@ -140,8 +141,15 @@ export class WalletService {
     if (!origin) {
       throw new BadRequestException('نشانی عمومی سایت برای بازگشت از درگاه تنظیم نشده است.');
     }
-    const user = await this.prisma.user.findUnique({ where: { id: userId }, select: { email: true } });
+    const user = await this.prisma.user.findUnique({
+      where: { id: userId },
+      select: { email: true, walletBalanceRial: true },
+    });
     if (!user) throw new NotFoundException('کاربر پیدا نشد');
+    // اگر بعد از پرداخت سقف موجودی رد شود، پول از کاربر کم شده ولی شارژ ثبت نمی‌شود؛ پس همین‌جا رد می‌شود.
+    if (user.walletBalanceRial > MAX_BALANCE_RIAL - amountRial) {
+      throw new BadRequestException('با این شارژ موجودی از سقف کیف پول بیشتر می‌شود.');
+    }
     const offer = await this.referralOffer(referralCode);
     const paidRial = Math.round((amountRial * (100 - offer.discountPct)) / 100);
     if (paidRial < MIN_CHARGE_RIAL) {

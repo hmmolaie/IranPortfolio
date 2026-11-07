@@ -1224,6 +1224,11 @@ export class MarketService implements OnModuleInit {
     }
   }
 
+  /** اینجست بازار همین حالا در حال اجراست؛ غربال روزانه تا پایانش صبر می‌کند. */
+  get ingestRunning(): boolean {
+    return this.ingestInFlight;
+  }
+
   ingestCatchUp() {
     return this.beginIngest(true);
   }

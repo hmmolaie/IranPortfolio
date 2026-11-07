@@ -44,8 +44,12 @@ services:
       # فقط شبکهٔ داخلی داکر؛ روی کارت شبکهٔ هاست publish نمی‌شود
       API_LISTEN_HOST: 0.0.0.0
       DATABASE_URL: postgresql://${POSTGRES_USER:-sabadyar}:${POSTGRES_PASSWORD:-sabadyar}@db:5432/${POSTGRES_DB:-sabadyar}?schema=public&connection_limit=10&pool_timeout=15
-      JWT_SECRET: ${JWT_SECRET:-change-me-to-a-long-random-string}
-      LLM_TOKEN_ENCRYPTION_KEY: ${LLM_TOKEN_ENCRYPTION_KEY:-0123456789abcdef0123456789abcdef}
+      # بدون مقدار امن در .env، compose بالا نمی‌آید (کلید تازه: openssl rand -hex 32)
+      JWT_SECRET: ${JWT_SECRET:?JWT_SECRET را در .env بگذارید}
+      LLM_TOKEN_ENCRYPTION_KEY: ${LLM_TOKEN_ENCRYPTION_KEY:?LLM_TOKEN_ENCRYPTION_KEY را در .env بگذارید}
+      LLM_TOKEN_ENCRYPTION_KEY_PREVIOUS: ${LLM_TOKEN_ENCRYPTION_KEY_PREVIOUS:-}
+      # تعداد پروکسی جلوی API برای خواندن آی‌پی واقعی: ۱ فقط nginx، ۲ اگر CDN جلوی nginx است
+      TRUSTED_PROXY_HOPS: ${TRUSTED_PROXY_HOPS:-1}
       CORS_ORIGIN: ${CORS_ORIGIN:-https://sabad-yar.ir,http://sabad-yar.ir,http://46.249.100.230}
       PUBLIC_URL: ${PUBLIC_URL:-https://sabad-yar.ir}
       WEBAUTHN_RP_ID: ${WEBAUTHN_RP_ID:-sabad-yar.ir}

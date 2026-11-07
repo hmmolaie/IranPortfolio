@@ -4,6 +4,7 @@ import { Type } from 'class-transformer';
 import { UserRole } from '@prisma/client';
 import { UsersService } from './users.service';
 import { JwtAuthGuard } from '../auth/jwt-auth.guard';
+import { RateLimit } from '../common/rate-limit';
 import { AdminGuard } from '../auth/admin.guard';
 
 class UpdateProfileDto {
@@ -67,7 +68,8 @@ class CreateUserDto {
   email!: string;
 
   @IsString()
-  @MinLength(6)
+  @MinLength(8)
+  @MaxLength(200)
   password!: string;
 
   @IsOptional()
@@ -102,7 +104,8 @@ class UpdateUserByAdminDto {
 
 class SetPasswordByAdminDto {
   @IsString()
-  @MinLength(6)
+  @MinLength(8)
+  @MaxLength(200)
   password!: string;
 }
 
@@ -116,7 +119,8 @@ class ChangeOwnPasswordDto {
   currentPassword!: string;
 
   @IsString()
-  @MinLength(6)
+  @MinLength(8)
+  @MaxLength(200)
   newPassword!: string;
 }
 
@@ -243,6 +247,7 @@ export class UsersController {
   }
 
   @Patch('me/password')
+  @RateLimit({ scope: 'own-password', by: 'ip', limit: 10, windowMs: 15 * 60_000 })
   changeOwnPassword(
     @Req() req: { user: { userId: string } },
     @Body() dto: ChangeOwnPasswordDto,
