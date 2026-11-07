@@ -13,18 +13,49 @@ import {
 import { UserRole } from '@prisma/client';
 import { AssetType, PortfolioStrategy } from '@prisma/client';
 import {
+  ArrayMaxSize,
   IsArray,
   IsEnum,
   IsIn,
   IsNumber,
   IsOptional,
   IsString,
+  MaxLength,
   Min,
   ValidateNested,
 } from 'class-validator';
 import { Type } from 'class-transformer';
 import { PortfoliosService } from './portfolios.service';
 import { JwtAuthGuard } from '../auth/jwt-auth.guard';
+
+/** دارایی‌ای که کاربر همین حالا دارد؛ یکی از تعداد یا مبلغ کافی است. */
+class HoldingDto {
+  @IsString()
+  @MaxLength(64)
+  symbol!: string;
+
+  @IsEnum(AssetType)
+  assetType!: AssetType;
+
+  @IsOptional()
+  @Type(() => Number)
+  @IsNumber()
+  @Min(0)
+  quantity?: number;
+
+  @IsOptional()
+  @Type(() => Number)
+  @IsNumber()
+  @Min(0)
+  amountRial?: number;
+
+  /** میانگین قیمت خرید برای سود و زیان واقعی؛ خالی یعنی آخرین قیمت */
+  @IsOptional()
+  @Type(() => Number)
+  @IsNumber()
+  @Min(0)
+  avgBuyPrice?: number;
+}
 
 class CreatePortfolioDto {
   @IsString()
@@ -33,13 +64,29 @@ class CreatePortfolioDto {
   @IsEnum(PortfolioStrategy)
   strategy!: PortfolioStrategy;
 
+  /** برای سبد از صفر لازم است؛ برای سبد فعلی از ارزش دارایی‌ها و نقد حساب می‌شود. */
+  @IsOptional()
   @IsNumber()
   @Min(0)
-  capitalRial!: number;
+  capitalRial?: number;
 
   @IsOptional()
   @IsString()
   description?: string;
+
+  /** سبد فعلی کاربر؛ اگر باشد سبد بدون مدل و از همین دارایی‌ها ساخته می‌شود. */
+  @IsOptional()
+  @IsArray()
+  @ArrayMaxSize(80)
+  @ValidateNested({ each: true })
+  @Type(() => HoldingDto)
+  holdings?: HoldingDto[];
+
+  @IsOptional()
+  @Type(() => Number)
+  @IsNumber()
+  @Min(0)
+  cashRial?: number;
 }
 
 class WeightItemDto {

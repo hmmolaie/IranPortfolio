@@ -135,6 +135,14 @@ function splitNewsForPortfolio(rows: PortfolioNewsRow[]) {
   };
 }
 
+type ImportedHolding = {
+  symbol: string;
+  assetType: AssetType;
+  quantity?: number;
+  amountRial?: number;
+  avgBuyPrice?: number;
+};
+
 @Injectable()
 export class PortfoliosService {
   private readonly logger = new Logger(PortfoliosService.name);
@@ -314,8 +322,22 @@ export class PortfoliosService {
 
   async create(
     userId: string,
-    data: { name: string; strategy: PortfolioStrategy; capitalRial: number; description?: string },
+    data: {
+      name: string;
+      strategy: PortfolioStrategy;
+      capitalRial?: number;
+      description?: string;
+      holdings?: ImportedHolding[];
+      cashRial?: number;
+    },
   ) {
+    if (data.holdings?.length || (data.cashRial ?? 0) > 0) {
+      return this.createFromHoldings(userId, { ...data, holdings: data.holdings ?? [] });
+    }
+    if (!(data.capitalRial && data.capitalRial > 0)) {
+      throw new BadRequestException('مبلغ سرمایه باید بزرگ‌تر از صفر باشد.');
+    }
+    const capitalRial = data.capitalRial;
     const ai = await this.users.aiAccess(userId);
     if (ai.portfolio) await this.wallet.ensure(userId, 'suggest');
     const portfolio = await this.prisma.portfolio.create({
@@ -323,8 +345,8 @@ export class PortfoliosService {
         userId,
         name: data.name,
         strategy: data.strategy,
-        capitalRial: data.capitalRial,
-        cashRial: data.capitalRial,
+        capitalRial,
+        cashRial: capitalRial,
         description: data.description,
       },
     });
@@ -336,6 +358,107 @@ export class PortfoliosService {
       /* سبد خالی برمی‌گردد؛ کاربر بعداً می‌تواند پیشنهاد بگیرد */
     }
 
+    return this.get(userId, portfolio.id);
+  }
+
+  /**
+   * سبدی که کاربر از قبل دارد. مدل صدا زده نمی‌شود و هزینه‌ای ندارد؛ سرمایه همان ارزش روز دارایی‌ها به‌علاوهٔ نقد است.
+   * اگر قیمت یک نماد در دیتابیس نباشد کل ثبت رد می‌شود تا سبد نیمه‌کاره نماند.
+   */
+  private async createFromHoldings(
+    userId: string,
+    data: {
+      name: string;
+      strategy: PortfolioStrategy;
+      description?: string;
+      holdings: ImportedHolding[];
+      cashRial?: number;
+    },
+  ) {
+    const cashRial = Math.max(0, Math.round(data.cashRial ?? 0));
+    const seen = new Set<string>();
+    const rows: Array<{
+      symbol: string;
+      assetType: AssetType;
+      quantity: number;
+      amountRial: number;
+      unitPrice: number;
+      avgBuyPrice: number;
+      instrumentId?: string;
+    }> = [];
+    for (const holding of data.holdings) {
+      const symbol = holding.symbol.trim();
+      if (!symbol) continue;
+      if (holding.assetType === AssetType.CASH || holding.assetType === AssetType.INDEX) {
+        throw new BadRequestException(`نوع دارایی «${symbol}» قابل ثبت نیست؛ پول نقد را در خانهٔ نقد بنویسید.`);
+      }
+      if (seen.has(symbol)) throw new BadRequestException(`نماد «${symbol}» دو بار آمده است.`);
+      seen.add(symbol);
+      const priced = await this.latestPriceForSymbol(symbol, holding.assetType);
+      let resolved: { quantity: number; amountRial: number };
+      try {
+        resolved = this.resolveQtyAndAmount(priced.price, holding.quantity, holding.amountRial);
+      } catch {
+        throw new BadRequestException(`برای «${symbol}» تعداد یا مبلغ را وارد کنید.`);
+      }
+      rows.push({
+        symbol,
+        assetType: holding.assetType,
+        ...resolved,
+        unitPrice: priced.price,
+        avgBuyPrice: holding.avgBuyPrice && holding.avgBuyPrice > 0 ? holding.avgBuyPrice : priced.price,
+        instrumentId: priced.instrumentId,
+      });
+    }
+    if (!rows.length && cashRial <= 0) {
+      throw new BadRequestException('دست‌کم یک دارایی یا مبلغ نقد وارد کنید.');
+    }
+    const holdingsTotal = rows.reduce((sum, row) => sum + row.amountRial, 0);
+    const capitalRial = holdingsTotal + cashRial;
+
+    const portfolio = await this.prisma.$transaction(async (tx) => {
+      const created = await tx.portfolio.create({
+        data: {
+          userId,
+          name: data.name,
+          strategy: data.strategy,
+          capitalRial,
+          cashRial,
+          description: data.description,
+        },
+      });
+      await tx.portfolioSnapshot.create({
+        data: {
+          portfolioId: created.id,
+          kind: SnapshotKind.USER_ADJUSTED,
+          strategySummaryFa: 'سبد فعلی کاربر',
+          totalValueRial: holdingsTotal,
+          meta: { imported: true },
+          items: {
+            create: rows.map((row) => ({
+              symbol: row.symbol,
+              assetType: row.assetType,
+              weightPct: holdingsTotal > 0 ? (row.amountRial / holdingsTotal) * 100 : 0,
+              quantity: row.quantity,
+              amountRial: row.amountRial,
+              unitPrice: row.unitPrice,
+              avgBuyPrice: row.avgBuyPrice,
+              reasonFa: 'دارایی فعلی کاربر',
+              ...(row.instrumentId ? { instrumentId: row.instrumentId } : {}),
+            })),
+          },
+        },
+      });
+      await tx.portfolioEvent.create({
+        data: {
+          portfolioId: created.id,
+          type: PortfolioEventType.WEIGHT_EDIT,
+          payload: { imported: rows.length, cashRial },
+          noteFa: `ثبت سبد فعلی با ${rows.length.toLocaleString('fa-IR')} دارایی`,
+        },
+      });
+      return created;
+    });
     return this.get(userId, portfolio.id);
   }
 

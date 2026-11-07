@@ -6,6 +6,7 @@ import { useRouter } from 'next/navigation';
 import { api, formatRial, getToken } from '@/lib/api';
 import { ConfirmDeletePortfolioModal } from '@/components/ConfirmDeletePortfolioModal';
 import { PortfolioCreatingOverlay } from '@/components/PortfolioCreatingOverlay';
+import { ImportPortfolioForm } from '@/components/ImportPortfolioForm';
 
 const STRATEGIES = [
   { value: 'GROWTH', label: 'رشدی' },
@@ -47,6 +48,8 @@ export default function PortfoliosPage() {
   const [deleting, setDeleting] = useState(false);
   const [creating, setCreating] = useState(false);
   const [portfolioAi, setPortfolioAi] = useState(true);
+  /** سبد فعلی دارم یا از صفر؛ تا انتخاب نشده فقط دو کارت دیده می‌شود */
+  const [mode, setMode] = useState<'none' | 'import' | 'scratch'>('none');
 
   async function load() {
     setItems(await api<Portfolio[]>('/portfolios'));
@@ -125,6 +128,44 @@ export default function PortfoliosPage() {
         <p className="mt-2 text-navy-800/70">چند سبد با استراتژی‌های مختلف تعریف کنید</p>
       </div>
 
+      <section className="space-y-4">
+        <h2 className="text-lg font-semibold">سبد تازه</h2>
+        <div className="grid gap-4 sm:grid-cols-2">
+          {(
+            [
+              {
+                id: 'import',
+                title: 'سبد فعلی دارم',
+                body: 'دارایی‌هایی که همین حالا دارید (سهام، صندوق، طلا، دلار، سپرده و نقد) را وارد کنید. بعد هوش مصنوعی نقاط قوت و ضعفش را می‌گوید و می‌توانید بازچینش بگیرید.',
+              },
+              {
+                id: 'scratch',
+                title: 'سبد ندارم، از صفر بساز',
+                body: 'فقط مبلغ سرمایه و نوع سبد را بدهید تا هوش مصنوعی ترکیب دارایی و سهم‌ها را پیشنهاد کند.',
+              },
+            ] as const
+          ).map((option) => (
+            <button
+              key={option.id}
+              type="button"
+              onClick={() => setMode(option.id)}
+              disabled={creating}
+              className={`card text-right transition hover:-translate-y-0.5 hover:border-gold-400/60 ${
+                mode === option.id ? 'border-gold-500 ring-2 ring-gold-400/40' : ''
+              }`}
+            >
+              <div className="text-lg font-semibold">{option.title}</div>
+              <p className="mt-2 text-sm leading-7 text-navy-800/65">{option.body}</p>
+            </button>
+          ))}
+        </div>
+      </section>
+
+      {mode === 'import' && (
+        <ImportPortfolioForm strategies={STRATEGIES} onCreated={(newId) => router.push(`/portfolios/${newId}`)} />
+      )}
+
+      {mode === 'scratch' && (
       <form onSubmit={onCreate} className="card grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
         <div>
           <label className="label">نام سبد</label>
@@ -179,9 +220,13 @@ export default function PortfoliosPage() {
         )}
         {error && <p className="text-sm text-red-700 sm:col-span-2">{error}</p>}
       </form>
+      )}
+
+      {mode !== 'scratch' && error && <p className="text-sm text-red-700">{error}</p>}
 
       {creating && <PortfolioCreatingOverlay />}
 
+      {items.length > 0 && <h2 className="text-lg font-semibold">سبدهای من</h2>}
       <div className="grid gap-4 sm:grid-cols-2">
         {items.map((p) => (
           <div key={p.id} className="card flex flex-col gap-3 transition hover:border-gold-400/40">

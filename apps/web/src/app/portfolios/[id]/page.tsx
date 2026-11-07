@@ -10,6 +10,7 @@ import { useToast } from '@/components/Toast';
 import { formatShamsiDate, formatShamsiDateTime } from '@/lib/shamsi-date';
 import { IntelligencePanel } from '@/components/IntelligencePanel';
 import { WaitingOverlay } from '@/components/WaitingOverlay';
+import { ImportGuide } from '@/components/ImportGuide';
 
 type Item = {
   id: string;
@@ -31,6 +32,8 @@ type Item = {
 type Snapshot = {
   id: string;
   kind: string;
+  /** imported: سبدی که کاربر از دارایی‌های فعلی‌اش ثبت کرده */
+  meta?: { imported?: boolean } | null;
   strategySummaryFa?: string | null;
   performancePct?: number | null;
   items: Item[];
@@ -155,6 +158,43 @@ export default function PortfolioDetailPage() {
   const [analysis, setAnalysis] = useState<AnalysisResult | null>(null);
   const [hedge, setHedge] = useState<HedgeResult | null>(null);
   const [appliedSuggestions, setAppliedSuggestions] = useState<number[]>([]);
+  /** پیشرفت راهنمای سبد ثبت‌شده؛ فقط برای راحتی همین مرورگر نگه داشته می‌شود */
+  const [guide, setGuide] = useState({ analyzed: false, rebalanced: false, closed: false });
+  const guideKey = `sabadyar_import_guide_${id}`;
+
+  useEffect(() => {
+    try {
+      const saved = JSON.parse(localStorage.getItem(guideKey) ?? 'null') as typeof guide | null;
+      if (saved) setGuide((g) => ({ ...g, ...saved }));
+    } catch {
+      /* بدون حافظهٔ مرورگر هم راهنما کار می‌کند */
+    }
+  }, [guideKey]);
+
+  function markGuide(patch: Partial<typeof guide>) {
+    setGuide((g) => {
+      const next = { ...g, ...patch };
+      try {
+        localStorage.setItem(guideKey, JSON.stringify(next));
+      } catch {
+        /* بدون حافظهٔ مرورگر هم راهنما کار می‌کند */
+      }
+      return next;
+    });
+  }
+
+  useEffect(() => {
+    if (analysis && !guide.analyzed) markGuide({ analyzed: true });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [analysis]);
+
+  useEffect(() => {
+    if (guide.rebalanced || !p) return;
+    const done =
+      appliedSuggestions.length > 0 || p.snapshots.some((s) => s.kind === 'REBALANCE' || s.kind === 'SUGGESTION');
+    if (done) markGuide({ rebalanced: true });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [p, appliedSuggestions]);
   const [confirmDelete, setConfirmDelete] = useState(false);
   const [deleting, setDeleting] = useState(false);
   const [aiOn, setAiOn] = useState({ portfolio: true, llm: true });
@@ -644,6 +684,17 @@ export default function PortfolioDetailPage() {
             'سنجیدن قیمت اعمال و پرمیوم...',
             'انتخاب پوشش برای سهم‌های موجود...',
           ]}
+        />
+      )}
+
+      {aiOn.portfolio && !guide.closed && p.snapshots.some((s) => s.meta?.imported) && (
+        <ImportGuide
+          analyzed={guide.analyzed}
+          rebalanced={guide.rebalanced}
+          busy={busy}
+          onAnalyze={() => void analyzePortfolio()}
+          onRebalance={() => void run('rebalance', `/portfolios/${id}/rebalance`)}
+          onClose={() => markGuide({ closed: true })}
         />
       )}
 
