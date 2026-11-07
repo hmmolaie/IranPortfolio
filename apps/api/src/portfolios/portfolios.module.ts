@@ -1,5 +1,6 @@
 import { Module } from '@nestjs/common';
 import { PortfoliosService } from './portfolios.service';
+import { StockScreenService } from './stock-screen.service';
 import { PortfoliosController } from './portfolios.controller';
 import { LlmModule } from '../llm/llm.module';
 import { NewsModule } from '../news/news.module';
@@ -11,7 +12,7 @@ import { MarketModule } from '../market/market.module';
 
 @Module({
   imports: [LlmModule, NewsModule, UsersModule, WorldMarketsModule, WalletModule, TradeFeesModule, MarketModule],
-  providers: [PortfoliosService],
+  providers: [PortfoliosService, StockScreenService],
   controllers: [PortfoliosController],
   exports: [PortfoliosService],
 })

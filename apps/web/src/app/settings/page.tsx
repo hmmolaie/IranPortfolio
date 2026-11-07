@@ -1349,7 +1349,7 @@ export default function SettingsPage() {
             <input
               className="input"
               type="password"
-              minLength={6}
+              minLength={8}
               value={passwordForm.newPassword}
               onChange={(e) => setPasswordForm({ ...passwordForm, newPassword: e.target.value })}
               required
@@ -1361,7 +1361,7 @@ export default function SettingsPage() {
             <input
               className="input"
               type="password"
-              minLength={6}
+              minLength={8}
               value={passwordForm.confirmPassword}
               onChange={(e) =>
                 setPasswordForm({ ...passwordForm, confirmPassword: e.target.value })

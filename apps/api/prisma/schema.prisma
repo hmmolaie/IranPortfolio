@@ -764,6 +764,21 @@ model MarketIngestStatus {
   updatedAt  DateTime  @updatedAt
 }
 
+/// غربال روزانهٔ System One روی همهٔ سهم‌های معامله‌شده؛ پیشنهاد هر کاربر فقط از سهم‌های برتر همین جدول می‌آید.
+model StockScreenDaily {
+  id          String   @id @default(cuid())
+  tradeDate   DateTime
+  symbol      String
+  /// احتمال حضور در سبد از ۰ تا ۱
+  probability Float
+  /// ارقامی که مدل همان روز دید
+  facts       Json?
+  createdAt   DateTime @default(now())
+
+  @@unique([tradeDate, symbol])
+  @@index([tradeDate, probability])
+}
+
 /** نشانی و توکن BrsApi برای بورس ایران. توکن رمزنگاری‌شده است. */
 model IranMarketApiConfig {
   id                 String   @id @default("default")

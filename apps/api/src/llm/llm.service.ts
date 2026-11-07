@@ -1,8 +1,10 @@
-import { createCipheriv, createDecipheriv, randomBytes, randomUUID, scryptSync } from 'crypto';
+import { randomUUID } from 'crypto';
 import { Injectable, Logger, BadRequestException } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import { UserRole } from '@prisma/client';
 import { PrismaService } from '../prisma/prisma.service';
+import { encryptionKey } from '../common/app-secrets';
+import { decryptSecret, encryptSecret } from '../common/secret-box';
 import { AiUsageService, TokenUse } from '../ai-usage/ai-usage.service';
 import { transcribeBytes } from '../telegram-assistant/youtube-subs/gapgpt';
 import {
@@ -171,27 +173,12 @@ export class LlmService {
     private readonly aiUsage: AiUsageService,
   ) {}
 
-  private key(): Buffer {
-    const raw = this.config.get<string>('LLM_TOKEN_ENCRYPTION_KEY') ?? '0123456789abcdef0123456789abcdef';
-    return scryptSync(raw, 'sabadyar-salt', 32);
-  }
-
   encryptToken(token: string): string {
-    const iv = randomBytes(12);
-    const cipher = createCipheriv('aes-256-gcm', this.key(), iv);
-    const enc = Buffer.concat([cipher.update(token, 'utf8'), cipher.final()]);
-    const tag = cipher.getAuthTag();
-    return `${iv.toString('hex')}:${tag.toString('hex')}:${enc.toString('hex')}`;
+    return encryptSecret(encryptionKey(), token);
   }
 
   decryptToken(payload: string): string {
-    const [ivHex, tagHex, dataHex] = payload.split(':');
-    const decipher = createDecipheriv('aes-256-gcm', this.key(), Buffer.from(ivHex, 'hex'));
-    decipher.setAuthTag(Buffer.from(tagHex, 'hex'));
-    return Buffer.concat([
-      decipher.update(Buffer.from(dataHex, 'hex')),
-      decipher.final(),
-    ]).toString('utf8');
+    return decryptSecret(encryptionKey(), payload);
   }
 
   async saveSettings(

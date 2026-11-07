@@ -3,6 +3,7 @@ import { Cron, Interval } from '@nestjs/schedule';
 import { ConfigService } from '@nestjs/config';
 import { UserRole } from '@prisma/client';
 import { PrismaService } from '../prisma/prisma.service';
+import { encryptionKey } from '../common/app-secrets';
 import { decryptSecret, encryptSecret } from '../common/secret-box';
 import { normalizeIranMobile } from '../common/iran-mobile';
 import { tehranDateKey, tehranDateWithWeekdayFa, tehranTimeParts, tehranWeekday } from '../news/tehran-date';
@@ -97,7 +98,7 @@ export class TelegramService implements OnModuleInit {
   }
 
   private encKey() {
-    return this.config.get<string>('LLM_TOKEN_ENCRYPTION_KEY') ?? '0123456789abcdef0123456789abcdef';
+    return encryptionKey();
   }
 
   private resolveBotUsername(stored?: string | null) {

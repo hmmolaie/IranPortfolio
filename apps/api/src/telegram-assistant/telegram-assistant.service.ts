@@ -1,10 +1,11 @@
 import { BadRequestException, Injectable, Logger } from '@nestjs/common';
 import { Interval } from '@nestjs/schedule';
-import { ConfigService } from '@nestjs/config';
 import { UserRole } from '@prisma/client';
 import { PrismaService } from '../prisma/prisma.service';
 import { LlmService } from '../llm/llm.service';
 import { UsersService } from '../users/users.service';
+import { AiUsageService } from '../ai-usage/ai-usage.service';
+import { encryptionKey } from '../common/app-secrets';
 import { decryptSecret, encryptSecret } from '../common/secret-box';
 import { normalizeIranMobile } from '../common/iran-mobile';
 import { extractHttpUrls, explicitLanguage, fetchWebPage, wantsSummary } from './page-fetch';
@@ -21,7 +22,7 @@ import { describeError } from './youtube-subs/errors';
 import * as fs from 'fs/promises';
 
 type TgUser = { id: number };
-type TgChat = { id: number; username?: string };
+type TgChat = { id: number; type?: string; username?: string };
 type TgDocument = {
   file_id: string;
   file_name?: string;
@@ -41,6 +42,10 @@ type TgUpdate = { update_id: number; message?: TgMessage };
 const CONFIG_ID = 'default';
 const TG_API = 'https://api.telegram.org';
 const TG_LIMIT = 3900;
+/** کار سنگین (یوتیوب و PDF) همزمان برای همهٔ کاربران؛ بیشتر از این CPU سرور را پر می‌کند. */
+const MAX_HEAVY_JOBS = 2;
+const NOT_LINKED_FA =
+  'این دستیار فقط برای کاربران سبدیار است. ابتدا ربات سبدیار را با موبایل پروفایل حساب خود وصل کنید، بعد دوباره پیام بدهید:\nhttps://t.me/sabadyaar_bot';
 
 @Injectable()
 export class TelegramAssistantService {
@@ -48,16 +53,17 @@ export class TelegramAssistantService {
   private pollInFlight = false;
   private skippedBacklog = false;
   private busyChats = new Set<string>();
+  private heavyJobs = 0;
 
   constructor(
     private readonly prisma: PrismaService,
-    private readonly config: ConfigService,
     private readonly llm: LlmService,
     private readonly users: UsersService,
+    private readonly aiUsage: AiUsageService,
   ) {}
 
   private encKey() {
-    return this.config.get<string>('LLM_TOKEN_ENCRYPTION_KEY') ?? '0123456789abcdef0123456789abcdef';
+    return encryptionKey();
   }
 
   async getPublicConfig() {
@@ -167,6 +173,8 @@ export class TelegramAssistantService {
   private async handleUpdate(token: string, update: TgUpdate) {
     const msg = update.message;
     if (!msg?.chat?.id) return;
+    // فقط گفتگوی خصوصی؛ در گروه هویت فرستنده با حساب سبدیار یکی نیست.
+    if (msg.chat.type && msg.chat.type !== 'private') return;
     const chatId = String(msg.chat.id);
     const text = `${msg.text ?? ''} ${msg.caption ?? ''}`.trim();
 
@@ -184,31 +192,44 @@ export class TelegramAssistantService {
       return;
     }
 
+    const userId = await this.assistantUser(chatId);
+    if (!userId) {
+      await this.sendText(token, chatId, NOT_LINKED_FA);
+      return;
+    }
+    try {
+      await this.aiUsage.assertAllowed(userId, 'telegram_assistant_qa');
+    } catch (e) {
+      await this.sendText(token, chatId, (e as Error).message);
+      return;
+    }
+
     if (this.busyChats.has(chatId)) {
       await this.sendText(token, chatId, 'درخواست قبلی هنوز تمام نشده. لطفاً کمی صبر کنید.');
       return;
     }
     this.busyChats.add(chatId);
     try {
-      if (msg.document && this.isPdf(msg.document)) {
-        await this.handlePdf(token, chatId, msg.document, text);
+      const doc = msg.document;
+      if (doc && this.isPdf(doc)) {
+        await this.runHeavy(token, chatId, () => this.handlePdf(token, chatId, userId, doc, text));
         return;
       }
       const yt = extractYoutubeId(text);
       if (yt) {
-        await this.handleYoutube(token, chatId, yt, text);
+        await this.runHeavy(token, chatId, () => this.handleYoutube(token, chatId, userId, yt, text));
         return;
       }
       const urls = extractHttpUrls(text).filter((u) => !extractYoutubeId(u));
       if (urls[0]) {
-        await this.handlePage(token, chatId, urls[0], text);
+        await this.handlePage(token, chatId, userId, urls[0], text);
         return;
       }
       if (!text) {
         await this.sendText(token, chatId, 'متن، لینک، PDF یا لینک یوتیوب بفرستید.');
         return;
       }
-      await this.handleQuestion(token, chatId, text);
+      await this.handleQuestion(token, chatId, userId, text);
     } catch (e) {
       await this.sendText(
         token,
@@ -220,13 +241,36 @@ export class TelegramAssistantService {
     }
   }
 
+  /** کاربر فعال سبدیار که ربات اصلی را با همین حساب تلگرام وصل کرده است. */
+  private async assistantUser(chatId: string): Promise<string | null> {
+    const profile = await this.prisma.userProfile.findFirst({
+      where: { telegramChatId: chatId, user: { isActive: true } },
+      orderBy: { telegramLinkedAt: 'desc' },
+      select: { userId: true },
+    });
+    return profile?.userId ?? null;
+  }
+
+  private async runHeavy(token: string, chatId: string, job: () => Promise<void>) {
+    if (this.heavyJobs >= MAX_HEAVY_JOBS) {
+      await this.sendText(token, chatId, 'دستیار الان مشغول کار سنگین دیگری است. چند دقیقهٔ دیگر دوباره بفرستید.');
+      return;
+    }
+    this.heavyJobs += 1;
+    try {
+      await job();
+    } finally {
+      this.heavyJobs -= 1;
+    }
+  }
+
   private isPdf(doc: TgDocument) {
     const mime = (doc.mime_type ?? '').toLowerCase();
     const name = (doc.file_name ?? '').toLowerCase();
     return mime.includes('pdf') || name.endsWith('.pdf');
   }
 
-  private async handleQuestion(token: string, chatId: string, text: string) {
+  private async handleQuestion(token: string, chatId: string, userId: string, text: string) {
     await this.progress(token, chatId, 'typing', 'سؤال دریافت شد؛ لطفاً صبر کنید، در حال پاسخ با مدل زبانی…');
     const adminId = (await this.users.getAdminUserId()) ?? undefined;
     const lang = explicitLanguage(text);
@@ -241,12 +285,12 @@ export class TelegramAssistantService {
           ? `به زبان ${lang} پاسخ بده`
           : 'حتماً به فارسی روان و مناسب نمایش راست‌چین پاسخ بده',
       }),
-      adminId,
+      userId,
     );
     await this.sendText(token, chatId, reply || 'پاسخی دریافت نشد.');
   }
 
-  private async handlePage(token: string, chatId: string, url: string, userText: string) {
+  private async handlePage(token: string, chatId: string, userId: string, url: string, userText: string) {
     const summarize = wantsSummary(userText);
     await this.progress(
       token,
@@ -269,12 +313,12 @@ export class TelegramAssistantService {
         title: page.title,
         body: page.text.slice(0, 28_000),
       }),
-      adminId,
+      userId,
     );
     await this.sendText(token, chatId, reply || 'ترجمه خالی برگشت.');
   }
 
-  private async handlePdf(token: string, chatId: string, doc: TgDocument, caption: string) {
+  private async handlePdf(token: string, chatId: string, userId: string, doc: TgDocument, caption: string) {
     if ((doc.file_size ?? 0) > 18_000_000) {
       await this.sendText(token, chatId, 'حجم PDF بیشتر از حد مجاز ربات است.');
       return;
@@ -306,7 +350,7 @@ export class TelegramAssistantService {
           'عنوان اضافه مثل «ترجمهٔ سند» نگذار',
         ],
       }),
-      adminId,
+      userId,
     );
     await this.progress(token, chatId, 'upload_document', 'در حال ساخت PDF راست‌چین با فونت فارسی…');
     const pdf = await buildRtlPdf({
@@ -318,10 +362,10 @@ export class TelegramAssistantService {
     await this.sendDocument(token, chatId, pdf, 'tarjome-farsi.pdf', 'PDF فارسی آماده است.');
   }
 
-  private async handleYoutube(token: string, chatId: string, videoId: string, userText: string) {
+  private async handleYoutube(token: string, chatId: string, userId: string, videoId: string, userText: string) {
     const summarize = wantsSummary(userText);
     if (!summarize) {
-      await this.handleYoutubeVideo(token, chatId, videoId);
+      await this.handleYoutubeVideo(token, chatId, userId, videoId);
       return;
     }
     await this.progress(
@@ -372,7 +416,7 @@ export class TelegramAssistantService {
         videoId,
         transcript: sourceText.slice(0, 36_000),
       }),
-      adminId,
+      userId,
     );
     const spoken = (fa || '').trim();
     if (spoken) {
@@ -405,7 +449,7 @@ export class TelegramAssistantService {
     }
   }
 
-  private async handleYoutubeVideo(token: string, chatId: string, videoId: string) {
+  private async handleYoutubeVideo(token: string, chatId: string, userId: string, videoId: string) {
     try {
       await this.sendText(token, chatId, '🔗 لینک دریافت شد');
       const adminId = (await this.users.getAdminUserId()) ?? undefined;
@@ -415,7 +459,7 @@ export class TelegramAssistantService {
         transcribeBaseUrl: access.baseUrl,
         transcribeApiKey: access.apiKey,
         translate: (system, user) =>
-          this.llm.chatText('telegram_assistant_youtube_subs', system, user, adminId),
+          this.llm.chatText('telegram_assistant_youtube_subs', system, user, userId),
         onStep: async (text) => {
           await this.sendText(token, chatId, text);
         },

@@ -1,4 +1,5 @@
-import { Injectable, NotFoundException, ForbiddenException, BadRequestException } from '@nestjs/common';
+import { Injectable, Logger, NotFoundException, ForbiddenException, BadRequestException } from '@nestjs/common';
+import { Cron } from '@nestjs/schedule';
 import {
   AssetType,
   PortfolioEventType,
@@ -38,6 +39,7 @@ import {
   type MarketState,
   type HedgeCandidate,
   type StockFact,
+  SCREEN_SHORTLIST,
   SIZE_LEVELS,
   STOCKS_PER_CALL,
   allocationState,
@@ -52,8 +54,11 @@ import {
   readLevelPct,
   readNoul,
   stockQuestions,
+  stockSignalsFa,
   stockState,
 } from './suggest-system-one';
+import { attachStockSignals } from './stock-signals';
+import { StockScreenService } from './stock-screen.service';
 
 type PortfolioNewsRow = {
   batch: { newsDateKey: string };
@@ -132,6 +137,8 @@ function splitNewsForPortfolio(rows: PortfolioNewsRow[]) {
 
 @Injectable()
 export class PortfoliosService {
+  private readonly logger = new Logger(PortfoliosService.name);
+
   constructor(
     private readonly prisma: PrismaService,
     private readonly llm: LlmService,
@@ -141,7 +148,45 @@ export class PortfoliosService {
     private readonly wallet: WalletService,
     private readonly tradeFees: TradeFeesService,
     private readonly market: MarketService,
+    private readonly screen: StockScreenService,
   ) {}
+
+  /** بعد از اینجست شبانه، غربال روزانهٔ سهم‌ها یک‌بار ساخته می‌شود تا پیشنهاد کاربر منتظر کل بازار نماند. */
+  @Cron('*/10 * * * *', { timeZone: 'Asia/Tehran', name: 'stock-screen-prewarm' })
+  async prewarmStockScreen() {
+    try {
+      const snapshot = await this.tradableSnapshot(AssetType.STOCK);
+      if (!snapshot.tradeDate || !snapshot.rows.length) return;
+      if (await this.screen.has(snapshot.tradeDate)) return;
+      if (!this.screen.canRetry(snapshot.tradeDate)) return;
+      if (!(await this.screen.ingestSettled(snapshot.tradeDate))) return;
+      const adminId = await this.users.getAdminUserId();
+      if (!adminId) return;
+      await this.screen.run(snapshot.tradeDate, snapshot.rows, await this.decisionMarket(adminId));
+      await this.screen.prune();
+    } catch (e) {
+      this.logger.warn(`غربال روزانهٔ سهام: ${(e as Error).message.slice(0, 300)}`);
+    }
+  }
+
+  /**
+   * سهم‌های برتر غربال روزانه با ارقام همین امروز. اگر غربالی در هفت روز اخیر نباشد همان لحظه ساخته می‌شود.
+   * سهم صف‌شدهٔ امروز در فهرست نمی‌آید حتی اگر دیروز امتیاز بالا گرفته باشد.
+   */
+  private async stockShortlist(market: MarketState): Promise<StockFact[]> {
+    const snapshot = await this.tradableSnapshot(AssetType.STOCK);
+    if (!snapshot.tradeDate || !snapshot.rows.length) return [];
+    const screen =
+      (await this.screen.latest(snapshot.tradeDate)) ??
+      (await this.screen.run(snapshot.tradeDate, snapshot.rows.map((row) => ({ ...row })), market));
+    const shortlist = snapshot.rows
+      .filter((row) => screen.scores.has(row.symbol))
+      .sort((a, b) => (screen.scores.get(b.symbol) ?? 0) - (screen.scores.get(a.symbol) ?? 0))
+      .slice(0, SCREEN_SHORTLIST);
+    await attachStockSignals(this.prisma, shortlist, snapshot.tradeDate);
+    for (const row of shortlist) row.sp = Math.round((screen.scores.get(row.symbol) ?? 0) * 100);
+    return shortlist;
+  }
 
   list(userId: string) {
     return this.prisma.portfolio.findMany({
@@ -491,13 +536,14 @@ export class PortfoliosService {
       classQuestions(),
     );
     const weights = normalizeClassWeights(classAnswers);
-    const stocks = weights.stock > 0 ? await this.tradableOnLatest(AssetType.STOCK) : [];
+    const stocks = weights.stock > 0 ? await this.stockShortlist(market) : [];
     const picks: Array<{
       symbol: string;
       nameFa: string;
       price: number;
       noul: number;
       sizePct: number;
+      whyFa: string;
     }> = [];
     for (let offset = 0; offset < stocks.length; offset += STOCKS_PER_CALL) {
       const batch = stocks.slice(offset, offset + STOCKS_PER_CALL);
@@ -514,6 +560,7 @@ export class PortfoliosService {
           price: stock.price,
           noul: readNoul(answers[`p${index}`]),
           sizePct: readLevelPct(answers[`s${index}`], SIZE_LEVELS),
+          whyFa: stockSignalsFa(stock),
         });
       });
     }
@@ -681,6 +728,11 @@ export class PortfoliosService {
   }
 
   private async tradableOnLatest(assetType: AssetType): Promise<StockFact[]> {
+    return (await this.tradableSnapshot(assetType)).rows;
+  }
+
+  /** نمادهای معامله‌شده و بدون صف در آخرین روز معاملاتی، همراه همان تاریخ. */
+  private async tradableSnapshot(assetType: AssetType): Promise<{ tradeDate: Date | null; rows: StockFact[] }> {
     const visible = await visibleInstrumentsWhere(this.prisma);
     const latest = await this.prisma.priceBar.findFirst({
       where: {
@@ -690,7 +742,7 @@ export class PortfoliosService {
       orderBy: { tradeDate: 'desc' },
       select: { tradeDate: true },
     });
-    if (!latest) return [];
+    if (!latest) return { tradeDate: null, rows: [] };
     const bars = await this.prisma.priceBar.findMany({
       where: {
         tradeDate: latest.tradeDate,
@@ -727,7 +779,7 @@ export class PortfoliosService {
       );
     }
     rows.sort((a, b) => a.symbol.localeCompare(b.symbol, 'fa'));
-    return rows;
+    return { tradeDate: latest.tradeDate, rows };
   }
 
   private async busiestTradable(assetType: AssetType): Promise<StockFact | null> {

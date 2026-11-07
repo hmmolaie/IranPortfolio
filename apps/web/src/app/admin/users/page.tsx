@@ -573,7 +573,7 @@ export default function AdminUsersPage() {
             <input
               className="input"
               type="password"
-              minLength={6}
+              minLength={8}
               value={newPassword}
               onChange={(e) => setNewPassword(e.target.value)}
               required
@@ -686,7 +686,7 @@ export default function AdminUsersPage() {
           <input
             className="input"
             type="password"
-            minLength={6}
+            minLength={8}
             value={newUser.password}
             onChange={(e) => setNewUser({ ...newUser, password: e.target.value })}
             required

@@ -1,5 +1,6 @@
 import { BadRequestException } from '@nestjs/common';
 import { PrismaService } from '../prisma/prisma.service';
+import { encryptionKey } from '../common/app-secrets';
 import { decryptSecret, encryptSecret } from '../common/secret-box';
 
 export const DEFAULT_BRS_BASE_URL = 'https://Api.BrsApi.ir';
@@ -148,7 +149,7 @@ export const BRS_FUNCTIONS = [
 export type BrsFunctionInfo = (typeof BRS_FUNCTIONS)[number];
 
 function encKey(): string {
-  return process.env.LLM_TOKEN_ENCRYPTION_KEY ?? '0123456789abcdef0123456789abcdef';
+  return encryptionKey();
 }
 
 export function normalizeBrsBaseUrl(raw: string): string {
