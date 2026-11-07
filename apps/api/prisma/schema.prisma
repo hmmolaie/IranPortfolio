@@ -715,6 +715,41 @@ model TelegramSharedDigest {
   updatedAt   DateTime @updatedAt
 }
 
+/** خبرنامهٔ شخصی مدیر: ربات تلگرام جدا، هر چند ساعت پست‌های فنی X در سه موضوع */
+model PersonalDigestConfig {
+  id                String   @id @default("default")
+  botUsername       String?
+  botTokenEncrypted String?
+  /// شناسهٔ چت تلگرام مدیر (عدد)
+  chatId            String?
+  /// دورهٔ تناوب به ساعت؛ مثلاً ۶ یعنی هر ۶ ساعت
+  intervalHours     Int      @default(6)
+  /// ساعت شروع شمارش دوره به وقت تهران (۰ تا ۲۳)
+  startHour         Int      @default(0)
+  sendMinute        Int      @default(0)
+  /// سرفصل‌ها: [{ titleFa, focusFa, itemsCount }]؛ خالی یعنی سرفصل‌های پیش‌فرض
+  topics            Json?
+  enabled           Boolean  @default(true)
+  createdAt         DateTime @default(now())
+  updatedAt         DateTime @updatedAt
+}
+
+/** هر نوبت خبرنامهٔ شخصی؛ slotKey یکتا جلوی ارسال دوباره در همان نوبت را می‌گیرد */
+model PersonalDigestRun {
+  id        String   @id @default(cuid())
+  slotKey   String   @unique
+  manual    Boolean  @default(false)
+  status    String   @default("running")
+  itemCount Int      @default(0)
+  /// عنوان‌های فرستاده‌شده تا نوبت بعد تکرار نشوند
+  titles    String[] @default([])
+  errorFa   String?  @db.Text
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([createdAt])
+}
+
 /** تنظیمات تک‌ردیفی آدرس API قیمت لحظه‌ای دلار و طلا */
 model SpotPriceApiConfig {
   id        String   @id @default("default")

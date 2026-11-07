@@ -55,6 +55,7 @@ const SECTION_LABELS: Record<string, string> = {
   tts: 'گفتار',
   transcription: 'رونویسی صدا',
   llm_test: 'تست اتصال مدل',
+  personal_digest: 'خبرنامهٔ شخصی تلگرام',
 };
 
 /** کارهایی که خود سرور بدون درخواست یک کاربر انجام می‌دهد. در سوابق به‌جای نام کاربر «سیستم» می‌آید. */
@@ -69,6 +70,7 @@ export const SYSTEM_HISTORY_PURPOSES = new Set([
   'telegram_digest_voice',
   'tts',
   'portfolio_stock_screen',
+  'personal_digest',
 ]);
 
 export function sectionKey(purpose: string): string {

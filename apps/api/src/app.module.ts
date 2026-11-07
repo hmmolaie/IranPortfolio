@@ -24,6 +24,7 @@ import { BackupModule } from './backup/backup.module';
 import { MobileLoginModule } from './mobile-login/mobile-login.module';
 import { TradeFeesModule } from './trade-fees/trade-fees.module';
 import { AiUsageModule } from './ai-usage/ai-usage.module';
+import { PersonalDigestModule } from './personal-digest/personal-digest.module';
 
 @Module({
   imports: [
@@ -51,6 +52,7 @@ import { AiUsageModule } from './ai-usage/ai-usage.module';
     MobileLoginModule,
     TradeFeesModule,
     AiUsageModule,
+    PersonalDigestModule,
   ],
   controllers: [HealthController],
 })
