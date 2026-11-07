@@ -880,8 +880,17 @@ export class LlmService {
   async speakTts(
     text: string,
     userId?: string,
-    opts?: { model?: string; voice?: string; instructions?: string; baseUrl?: string; apiKey?: string },
+    opts?: {
+      model?: string;
+      voice?: string;
+      instructions?: string;
+      baseUrl?: string;
+      apiKey?: string;
+      /** بخش سوابق هوش مصنوعی؛ پیش‌فرض tts که «سیستم» نشان داده می‌شود */
+      purpose?: string;
+    },
   ): Promise<Buffer> {
+    const purpose = opts?.purpose ?? 'tts';
     const creds = await this.resolveTtsCredentials(userId);
     const baseUrl = opts?.baseUrl?.trim() || creds.baseUrl;
     const apiKey = opts?.apiKey?.trim() || creds.apiKey;
@@ -909,11 +918,11 @@ export class LlmService {
       }
       audio = Buffer.concat(pieces);
     } catch (e) {
-      await this.recordFailure('tts', userId, e, { prompt: input, model });
+      await this.recordFailure(purpose, userId, e, { prompt: input, model });
       throw e;
     }
     const promptTokens = Math.max(1, Math.ceil(input.length / 4));
-    await this.aiUsage.record(userId, 'tts', model, {
+    await this.aiUsage.record(userId, purpose, model, {
       promptTokens,
       completionTokens: 0,
       totalTokens: promptTokens,
@@ -1115,24 +1124,47 @@ export class LlmService {
     return { baseUrl: creds.baseUrl, apiKey: creds.apiKey };
   }
 
-  async transcribeAudio(audio: Buffer, filename: string, userId?: string): Promise<string> {
+  async transcribeAudio(
+    audio: Buffer,
+    filename: string,
+    userId?: string,
+    purpose = 'transcription',
+    requestFa?: string,
+  ): Promise<string> {
     const access = await this.transcriptionAccess(userId);
     const pieces = await transcribeBytes(audio, filename || 'audio.m4a', access.baseUrl, access.apiKey);
     const text = pieces
       .map((p) => p.text)
       .join(' ')
       .trim();
-    const tokens = Math.max(1, Math.ceil(text.length / 4));
-    await this.aiUsage.record(userId, 'transcription', 'whisper-1', {
-      promptTokens: tokens,
-      completionTokens: 0,
-      totalTokens: tokens,
-      estimated: true,
-    }, {
-      prompt: `فایل صوتی: ${filename || 'audio'}\nحجم: ${audio.length.toLocaleString('en-US')} بایت`,
-      response: text,
+    await this.recordTranscription(userId, purpose, {
+      text,
+      requestFa: [requestFa, `فایل صوتی: ${filename || 'audio'}`, `حجم: ${audio.length.toLocaleString('en-US')} بایت`]
+        .filter(Boolean)
+        .join('\n'),
     });
     return text;
+  }
+
+  /**
+   * ثبت مصرف رونویسی صدا که بیرون از transcribeAudio انجام شده (مثل زیرنویس ویدئو).
+   * توکن از طول متن تخمین زده می‌شود چون whisper توکن برنمی‌گرداند.
+   */
+  async recordTranscription(
+    userId: string | undefined,
+    purpose: string,
+    info: { text: string; requestFa: string; seconds?: number | null },
+  ) {
+    const tokens = Math.max(1, Math.ceil(info.text.length / 4));
+    const duration =
+      info.seconds && info.seconds > 0 ? `مدت صدا: ${Math.round(info.seconds).toLocaleString('en-US')} ثانیه` : '';
+    await this.aiUsage.record(
+      userId,
+      purpose,
+      'whisper-1',
+      { promptTokens: tokens, completionTokens: 0, totalTokens: tokens, estimated: true },
+      { prompt: [info.requestFa, duration].filter(Boolean).join('\n'), response: info.text },
+    );
   }
 
   private async resolveTtsCredentials(userId?: string): Promise<LlmCreds> {

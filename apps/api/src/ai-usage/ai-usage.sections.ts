@@ -23,6 +23,8 @@ export const QUOTA_PURPOSES = new Set([
   'telegram_assistant_pdf',
   'telegram_assistant_youtube',
   'telegram_assistant_youtube_subs',
+  'telegram_assistant_transcription',
+  'telegram_assistant_tts',
 ]);
 
 const SECTION_LABELS: Record<string, string> = {
@@ -47,6 +49,8 @@ const SECTION_LABELS: Record<string, string> = {
   telegram_assistant_pdf: 'دستیار تلگرام — PDF',
   telegram_assistant_youtube: 'دستیار تلگرام — یوتیوب',
   telegram_assistant_youtube_subs: 'زیرنویس یوتیوب',
+  telegram_assistant_transcription: 'دستیار تلگرام — رونویسی صدا',
+  telegram_assistant_tts: 'دستیار تلگرام — فایل صوتی',
   telegram_digest_voice: 'متن اخبار تلگرام',
   tts: 'گفتار',
   transcription: 'رونویسی صدا',

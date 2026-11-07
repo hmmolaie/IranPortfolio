@@ -394,7 +394,13 @@ export class TelegramAssistantService {
       }
       const filename = youtubeAudioFilename(audio, videoId);
       this.logger.log(`رونویسی یوتیوب ${videoId} حجم=${audio.length} فایل=${filename}`);
-      sourceText = await this.llm.transcribeAudio(audio, filename, adminId);
+      sourceText = await this.llm.transcribeAudio(
+        audio,
+        filename,
+        userId,
+        'telegram_assistant_transcription',
+        `خلاصهٔ یوتیوب: https://youtu.be/${videoId}`,
+      );
     }
     if (!sourceText?.trim()) {
       await this.sendText(token, chatId, 'متن ویدیو خالی بود.');
@@ -430,7 +436,7 @@ export class TelegramAssistantService {
     await this.progress(token, chatId, 'record_voice', 'در حال ساخت فایل صوتی فارسی…');
     try {
       for (let i = 0; i < parts.length; i++) {
-        const mp3 = await this.llm.speakTts(parts[i], adminId);
+        const mp3 = await this.llm.speakTts(parts[i], userId, { purpose: 'telegram_assistant_tts' });
         await this.sendAudio(
           token,
           chatId,
@@ -463,6 +469,11 @@ export class TelegramAssistantService {
         onStep: async (text) => {
           await this.sendText(token, chatId, text);
         },
+        onTranscribed: (info) =>
+          this.llm.recordTranscription(userId, 'telegram_assistant_transcription', {
+            ...info,
+            requestFa: `زیرنویس فارسی یوتیوب: https://youtu.be/${videoId}`,
+          }),
         log: (line) => this.logger.log(redactSecrets(line)),
       });
       try {

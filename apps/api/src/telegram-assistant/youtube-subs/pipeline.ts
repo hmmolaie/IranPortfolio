@@ -151,6 +151,8 @@ export async function runYoutubeSubtitleJob(opts: {
   transcribeApiKey: string;
   onStep: (text: string) => Promise<void>;
   log: (line: string) => void;
+  /** بعد از رونویسی صدا (نه زیرنویس آماده)، برای ثبت مصرف */
+  onTranscribed?: (info: { seconds: number | null; text: string }) => Promise<void>;
 }): Promise<PipelineResult> {
   const jobId = randomBytes(6).toString('hex');
   const cleanup = () => cleanupJobDir(jobId);
@@ -213,6 +215,7 @@ export async function runYoutubeSubtitleJob(opts: {
       );
       segments = normalizeSegments(pieces);
       log(`Transcription completed: ${segments.length} segments`);
+      await opts.onTranscribed?.({ seconds: duration, text: segments.map((s) => s.originalText).join(' ') });
     }
     if (segments.length < 1) throw new TranscriptionError('زیرنویس انگلیسی و رونویسی هر دو خالی بودند.');
     await fs.writeFile(path.join(dir, 'transcript.json'), JSON.stringify(segments), 'utf8');
