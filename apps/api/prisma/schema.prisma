@@ -6,7 +6,6 @@ datasource db {
   // برای Docker/production: postgresql
   // برای توسعه محلی بدون Docker می‌توانید موقتاً به sqlite برگردید
   provider = "postgresql"
-  url      = env("DATABASE_URL")
 }
 
 enum AssetType {

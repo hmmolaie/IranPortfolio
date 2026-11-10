@@ -8,8 +8,8 @@
 
 | مسیر | نقش |
 |------|-----|
-| `apps/web` | Next.js 15 + React 19 + Tailwind (`@sabadyar/web`) |
-| `apps/api` | NestJS 11 + Prisma (`@sabadyar/api`) — پیشوند `/api` |
+| `apps/web` | Next.js 16 + React 19 + Tailwind (`@sabadyar/web`) |
+| `apps/api` | NestJS 11 + Prisma 7 (`@sabadyar/api`) — پیشوند `/api` |
 | `packages/shared` | انواع و لیبل‌های مشترک (`@sabadyar/shared`) |
 | `docker/` | Dockerfileهای api/web، nginx reverse proxy، و نمونه env سرور |
 | `docker-compose.yml` | استک کامل: nginx + web + api + postgres |
@@ -30,7 +30,7 @@ npm run dev:web          # :3000
 npm run build
 ```
 
-Node `>=20`. با Docker دیتابیس PostgreSQL است. کلاینت وب API را از همان origin صفحه روی مسیر `/api` صدا می‌زند (بدون پورت ۳۰۰۱). `CORS_ORIGIN` باید دامنه یا IP عمومی بدون پورت باشد. دامنه‌های عمومی `sabad-yar.ir` و `piiip.ir` و `piiip.ai` هستند و گواهی HTTPS باید هر سه را بپوشاند.
+Node `>=22` (ایمیج‌ها `node:22-alpine`؛ Nest CLI 12 حداقل 22.22.3 می‌خواهد). Prisma 7 است: نشانی دیتابیس در `apps/api/prisma.config.ts` است نه در `schema.prisma`، و `PrismaService` با `@prisma/adapter-pg` وصل می‌شود و `connection_limit` و `pool_timeout` و `schema` را از `DATABASE_URL` به تنظیم pg برمی‌گرداند. `prisma db push` دیگر کلاینت نمی‌سازد؛ `db:generate` جدا زده می‌شود. با Docker دیتابیس PostgreSQL است. کلاینت وب API را از همان origin صفحه روی مسیر `/api` صدا می‌زند (بدون پورت ۳۰۰۱). `CORS_ORIGIN` باید دامنه یا IP عمومی بدون پورت باشد. دامنه‌های عمومی `sabad-yar.ir` و `piiip.ir` و `piiip.ai` هستند و گواهی HTTPS باید هر سه را بپوشاند.
 
 ## محیط کار ایجنت
 

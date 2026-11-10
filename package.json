@@ -16,6 +16,6 @@
     "db:push": "npm run prisma:push -w @sabadyar/api"
   },
   "engines": {
-    "node": ">=20"
+    "node": ">=22"
   }
 }

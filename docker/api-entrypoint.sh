@@ -42,7 +42,7 @@ export PGOPTIONS="-c lock_timeout=20s -c statement_timeout=120000"
 push_ok=0
 for attempt in 1 2 3; do
   # ایندکس یکتای کد معرف هشدار «احتمال از دست رفتن داده» می‌دهد؛ مقدار تکراری اگر باشد خود PostgreSQL خطا می‌دهد
-  if CI=true npx prisma db push --skip-generate --accept-data-loss; then
+  if CI=true npx prisma db push --accept-data-loss; then
     push_ok=1
     break
   fi

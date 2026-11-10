@@ -8,10 +8,8 @@
     "start": "next start -p 3000"
   },
   "dependencies": {
-    "@nestjs/cli": "12.0.12",
     "@sabadyar/shared": "*",
     "clsx": "^2.1.1",
-    "multer": "2.5.0",
     "next": "^16.4.6",
     "react": "^19.0.0",
     "react-dom": "^19.0.0"
