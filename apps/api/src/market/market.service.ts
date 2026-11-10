@@ -197,11 +197,6 @@ function tehranNow(): Date {
   return new Date(new Date().toLocaleString('en-US', { timeZone: 'Asia/Tehran' }));
 }
 
-function todayDateOnly(): Date {
-  const d = tehranNow();
-  return new Date(Date.UTC(d.getFullYear(), d.getMonth(), d.getDate()));
-}
-
 function toDEven(d = tehranNow()): string {
   const y = d.getFullYear();
   const m = String(d.getMonth() + 1).padStart(2, '0');
@@ -249,6 +244,26 @@ function isTehranWeekend(dEven: string): boolean {
 const MAX_INGEST_TRADING_DAYS = 5;
 const MAX_LOOKBACK_CALENDAR_DAYS = 14;
 
+/** پیش‌گشایش ۸:۳۰ و شروع معاملات ۹:۰۰ تهران */
+const MARKET_PREOPEN_MIN = 8 * 60 + 30;
+const MARKET_OPEN_MIN = 9 * 60;
+
+/**
+ * ارقام لحظه‌ای منبع مال کدام روز معاملاتی است: امروز اگر معاملات شروع شده،
+ * وگرنه آخرین روز معاملاتی قبل (بعد از نیمه‌شب، پیش از گشایش، پنجشنبه و جمعه).
+ */
+function snapshotTradingDEven(): string {
+  const now = tehranNow();
+  const today = toDEven(now);
+  const nowMin = now.getHours() * 60 + now.getMinutes();
+  const opened = !isTehranWeekend(today) && nowMin >= MARKET_OPEN_MIN;
+  for (let back = opened ? 0 : 1; back <= MAX_LOOKBACK_CALENDAR_DAYS; back++) {
+    const day = shiftDEven(today, back);
+    if (!isTehranWeekend(day)) return day;
+  }
+  return today;
+}
+
 type IngestRow = Record<string, unknown>;
 
 @Injectable()
@@ -290,12 +305,15 @@ export class MarketService implements OnModuleInit {
     await this.syncMarketIfDue(false);
   }
 
+  /**
+   * سر ساعت تنظیم‌شده یک‌بار می‌خواند. اگر میلهٔ سهامِ آخرین روز معاملاتی ذخیره نشده باشد
+   * (خطای منبع، خاموش بودن سرویس در همان ساعت) خودش جبران می‌کند، حتی بعد از نیمه‌شب تا پیش از گشایش فردا.
+   */
   private async syncMarketIfDue(fromClock: boolean) {
     const schedule = await readRefreshSchedule(this.prisma);
     const now = tehranTimeParts();
     const nowMin = now.hour * 60 + now.minute;
     const atMin = schedule.marketHour * 60 + schedule.marketMinute;
-    if (nowMin < atMin) return;
 
     const slot = isRefreshSlot(nowMin, atMin, true);
     const label = `${String(schedule.marketHour).padStart(2, '0')}:${String(schedule.marketMinute).padStart(2, '0')}`;
@@ -307,38 +325,44 @@ export class MarketService implements OnModuleInit {
       return;
     }
 
-    const hasStocks = await this.hasBarsForLatestTradingDay();
+    const today = toDEven();
+    const day = snapshotTradingDEven();
+    const sameDay = day === today;
+    // نوبت زمان‌بندی همین روز معاملاتی هنوز نرسیده است
+    if (sameDay && (atMin < MARKET_OPEN_MIN || nowMin < atMin)) return;
+    // بین پیش‌گشایش و شروع معاملات ارقام منبع نه مال دیروز است نه امروز
+    if (!sameDay && !isTehranWeekend(today) && nowMin >= MARKET_PREOPEN_MIN) return;
+
+    const retrySlot = fromClock && slot === 'retry';
+    const blocked = this.ingestInFlight || Date.now() < this.marketRetryAfter;
+    if (blocked && !retrySlot) return;
+
+    const hasStocks = await this.hasBarsForTradingDay(day);
     if (hasStocks) {
-      if (fromClock && slot === 'retry') {
-        await this.ingestOptionsIfMissing();
+      if (retrySlot) {
+        await this.ingestOptionsIfMissing(day);
         await this.ensureLatestIndexValues(true);
       }
       return;
     }
-    if (this.ingestInFlight || Date.now() < this.marketRetryAfter) return;
+    if (blocked) return;
 
     this.logger.log(
       fromClock
-        ? `میلهٔ سهام این روز معاملاتی نیست؛ تلاش دوباره (${label} تهران)`
-        : `پس از راه‌اندازی: ساعت ${label} گذشته و میلهٔ سهام این روز معاملاتی نیست`,
+        ? `میلهٔ سهام روز معاملاتی ${day} نیست؛ تلاش دوباره (نوبت ${label} تهران)`
+        : `پس از راه‌اندازی: نوبت ${label} گذشته و میلهٔ سهام روز معاملاتی ${day} نیست`,
     );
-    this.marketRetryAfter = Date.now() + 15 * 60 * 1000;
+    // همان شب هر ۱۵ دقیقه؛ بعد از نیمه‌شب و روز تعطیل هر ساعت
+    this.marketRetryAfter = Date.now() + (sameDay ? 15 : 60) * 60 * 1000;
     this.beginIngest(false);
   }
 
-  private latestTradingDEven(): string | null {
-    const today = toDEven();
-    for (let back = 0; back <= MAX_LOOKBACK_CALENDAR_DAYS; back++) {
-      const day = shiftDEven(today, back);
-      if (!isTehranWeekend(day)) return day;
-    }
-    return null;
-  }
+  private barsSeen: { day: string; at: number } | null = null;
 
   /** میلهٔ شاخص یا سپرده کافی نیست؛ باید خود سهام، صندوق یا طلای بورسی همان روز ذخیره شده باشد. */
-  private async hasBarsForLatestTradingDay(): Promise<boolean> {
-    const day = this.latestTradingDEven();
-    if (!day) return false;
+  private async hasBarsForTradingDay(day: string): Promise<boolean> {
+    // کرون هر دقیقه می‌پرسد؛ جواب مثبت ده دقیقه معتبر می‌ماند
+    if (this.barsSeen?.day === day && Date.now() - this.barsSeen.at < 10 * 60 * 1000) return true;
     const count = await this.prisma.priceBar.count({
       where: {
         tradeDate: dEvenToDate(day),
@@ -348,13 +372,13 @@ export class MarketService implements OnModuleInit {
         OR: [{ lastPrice: { gt: 0 } }, { closePrice: { gt: 0 } }],
       },
     });
+    this.barsSeen = count > 0 ? { day, at: Date.now() } : null;
     return count > 0;
   }
 
   /** میلهٔ سهام مانع تکرار کل اینجست است؛ اختیار اگر برای همان روز نباشد جدا خوانده می‌شود */
-  private async ingestOptionsIfMissing() {
-    const day = this.latestTradingDEven();
-    if (!day || this.ingestInFlight) return;
+  private async ingestOptionsIfMissing(day: string) {
+    if (this.ingestInFlight) return;
     const count = await this.prisma.priceBar.count({
       where: {
         tradeDate: dEvenToDate(day),
@@ -1209,7 +1233,7 @@ export class MarketService implements OnModuleInit {
 
   private async finishOptionsRefresh() {
     try {
-      const saved = await this.ingestOptions(todayDateOnly());
+      const saved = await this.ingestOptions(dEvenToDate(snapshotTradingDEven()));
       this.optionsRefresh = {
         running: false,
         error: false,
@@ -1301,7 +1325,8 @@ export class MarketService implements OnModuleInit {
   }
 
   private async runIngestCatchUp() {
-    const todayDEven = toDEven();
+    // آخرین روز فهرست همان روزی است که ارقام لحظه‌ای منبع به آن تعلق دارد، نه لزوماً تاریخ تقویمی امروز
+    const todayDEven = snapshotTradingDEven();
     const datesToIngest: string[] = [];
     for (let back = 0; back <= MAX_LOOKBACK_CALENDAR_DAYS && datesToIngest.length < MAX_INGEST_TRADING_DAYS; back++) {
       const day = shiftDEven(todayDEven, back);
@@ -1353,10 +1378,10 @@ export class MarketService implements OnModuleInit {
 
   private async ingestForDate(dEven: string, runExtras: boolean) {
     const tradeDate = dEvenToDate(dEven);
-    const isToday = dEven === toDEven();
     this.logger.log(`اینجست روز ${dEven} (تهران)`);
 
-    const { rows, source } = await this.fetchRowsForDate(dEven, isToday);
+    // runExtras یعنی آخرین روز معاملاتی؛ فقط همان از ارقام لحظه‌ای منبع خوانده می‌شود
+    const { rows, source } = await this.fetchRowsForDate(dEven, runExtras);
     this.logger.log(`منبع ${dEven}: ${source} — ${rows.length} ردیف خام`);
 
     if (!rows.length) {
@@ -1417,7 +1442,7 @@ export class MarketService implements OnModuleInit {
       await this.ensureDepositInstrument(tradeDate);
       upserted += await this.saveOptions(tradeDate);
       if (source.startsWith('cdn.') || source.startsWith('webgw.') || source.startsWith('brsapi.')) {
-        await this.enrichEpsPe(80);
+        await this.enrichEpsPe(80, tradeDate);
       }
     }
 
@@ -1590,7 +1615,7 @@ export class MarketService implements OnModuleInit {
         `شاخص لحظه‌ای: کل ${snaps.total?.lastValue ?? '—'} ، هم‌وزن ${snaps.equalWeight?.lastValue ?? '—'}`,
       );
     }
-      const tradeDate = todayDateOnly();
+      const tradeDate = dEvenToDate(snapshotTradingDEven());
     let upserted = 0;
       for (const def of MARKET_INDICES) {
       const snap = snaps[def.key];
@@ -2070,13 +2095,12 @@ export class MarketService implements OnModuleInit {
     return rows;
   }
 
-  private async enrichEpsPe(limit: number) {
+  private async enrichEpsPe(limit: number, tradeDate: Date) {
     const stocks = await this.prisma.instrument.findMany({
       where: { assetType: AssetType.STOCK, insCode: { not: null } },
       take: limit,
       orderBy: { updatedAt: 'desc' },
     });
-    const tradeDate = todayDateOnly();
     for (const s of stocks) {
       if (!s.insCode) continue;
       try {
