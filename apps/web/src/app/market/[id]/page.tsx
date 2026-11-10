@@ -65,6 +65,18 @@ type LiveOptions = {
   items: LiveEquivalent[];
 };
 
+type FundHolder = {
+  fundDefinitionId: string;
+  fundNameFa: string;
+  fundSymbol: string | null;
+  fundInstrumentId: string | null;
+  weightPct: number | null;
+  amountRial: number | null;
+  quantity: number | null;
+  reportYear: number | null;
+  reportMonthNum: number | null;
+};
+
 /** در ساعت بازار، صف و قیمت اختیارها هر دقیقه دوباره خوانده می‌شود. */
 const LIVE_REFRESH_MS = 60_000;
 
@@ -330,6 +342,7 @@ export default function MarketInstrumentPage() {
   const [range, setRange] = useState<RangeKey>('1M');
   const [optionPack, setOptionPack] = useState<UnderlyingOptions | null>(null);
   const [liveOptions, setLiveOptions] = useState<LiveOptions | null>(null);
+  const [fundHolders, setFundHolders] = useState<FundHolder[]>([]);
 
   useEffect(() => {
     if (!getToken()) {
@@ -348,6 +361,9 @@ export default function MarketInstrumentPage() {
     api<UnderlyingOptions>(`/market/instruments/${id}/options`)
       .then(setOptionPack)
       .catch(() => setOptionPack(null));
+    api<{ items: FundHolder[] }>(`/market/instruments/${id}/funds`)
+      .then((data) => setFundHolders(data.items))
+      .catch(() => setFundHolders([]));
   }, [id, router]);
 
   useEffect(() => {
@@ -622,6 +638,63 @@ export default function MarketInstrumentPage() {
             <p className="text-sm text-navy-800/60">{optionPack.disclaimerFa}</p>
           )}
           <OptionsValueTable items={optionPack.items} />
+        </section>
+      )}
+
+      {fundHolders.length > 0 && (
+        <section className="space-y-4">
+          <div>
+            <h2 className="text-base font-semibold text-navy-900">صندوق‌هایی که این نماد را دارند</h2>
+            <p className="mt-2 text-sm text-navy-800/70">
+              از آخرین گزارش ماهانهٔ ثبت‌شدهٔ هر صندوق. «سهم از صندوق» یعنی چند درصد دارایی آن صندوق همین نماد است.
+            </p>
+          </div>
+          <div className="overflow-x-auto">
+            <table className="w-full min-w-[34rem] text-sm">
+              <thead>
+                <tr className="border-b border-navy-900/10 text-right text-xs text-navy-800/50">
+                  <th className="px-2 py-2 font-medium">صندوق</th>
+                  <th className="px-2 py-2 font-medium">سهم از صندوق</th>
+                  <th className="px-2 py-2 font-medium">ارزش (ریال)</th>
+                  <th className="px-2 py-2 font-medium">تعداد</th>
+                  <th className="px-2 py-2 font-medium">گزارش</th>
+                </tr>
+              </thead>
+              <tbody>
+                {fundHolders.map((row) => (
+                  <tr key={row.fundDefinitionId} className="border-b border-navy-900/5">
+                    <td className="px-2 py-2.5">
+                      {row.fundInstrumentId ? (
+                        <Link
+                          href={`/market/${row.fundInstrumentId}`}
+                          className="font-medium text-navy-900 hover:underline"
+                        >
+                          {row.fundNameFa}
+                        </Link>
+                      ) : (
+                        <span className="font-medium text-navy-900">{row.fundNameFa}</span>
+                      )}
+                      {row.fundSymbol && (
+                        <span className="ms-2 text-xs text-navy-800/45">{row.fundSymbol}</span>
+                      )}
+                    </td>
+                    <td className="px-2 py-2.5">
+                      {row.weightPct != null
+                        ? `${row.weightPct.toLocaleString('fa-IR', { maximumFractionDigits: 2 })}٪`
+                        : '—'}
+                    </td>
+                    <td className="px-2 py-2.5">{formatNum(row.amountRial)}</td>
+                    <td className="px-2 py-2.5">{formatNum(row.quantity)}</td>
+                    <td className="px-2 py-2.5 text-navy-800/60">
+                      {row.reportYear != null && row.reportMonthNum != null
+                        ? `${row.reportYear.toLocaleString('fa-IR', { useGrouping: false })}/${row.reportMonthNum.toLocaleString('fa-IR', { minimumIntegerDigits: 2 })}`
+                        : '—'}
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
         </section>
       )}
 

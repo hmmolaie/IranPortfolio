@@ -42,6 +42,7 @@ import {
   type LiveBook,
   type LiveEquivalent,
 } from './live-equivalents';
+import { symbolKey } from '../portfolios/stock-signals';
 import {
   brsEndpoint,
   readBrsApiAccess,
@@ -843,6 +844,92 @@ export class MarketService implements OnModuleInit {
       items: valued.items,
       optionCodes,
     };
+  }
+
+  /**
+   * صندوق‌هایی که این نماد را در آخرین گزارش ماهانهٔ ثبت‌شده‌شان دارند، با سهم نماد از دارایی صندوق.
+   * فقط از گزارش‌های بارگذاری‌شده در دیتابیس؛ صندوقی که گزارشش ثبت نشده اینجا نمی‌آید.
+   */
+  async getFundHolders(id: string) {
+    const inst = await this.prisma.instrument.findUnique({
+      where: { id },
+      select: { symbol: true, nameFa: true, assetType: true },
+    });
+    if (!inst) return null;
+    if (inst.assetType === AssetType.OPTION || inst.assetType === AssetType.INDEX) return { items: [] };
+
+    const reports = await this.prisma.fundReport.findMany({
+      where: {
+        fundDefinitionId: { not: null },
+        fundDefinition: { isActive: true },
+        reportYear: { not: null },
+        reportMonthNum: { not: null },
+      },
+      select: {
+        id: true,
+        fundDefinitionId: true,
+        reportYear: true,
+        reportMonthNum: true,
+        fundDefinition: { select: { nameFa: true, symbolCode: true } },
+      },
+    });
+    const monthIndex = (r: { reportYear: number | null; reportMonthNum: number | null }) =>
+      (r.reportYear ?? 0) * 12 + (r.reportMonthNum ?? 0);
+    const latestByFund = new Map<string, (typeof reports)[number]>();
+    for (const report of reports) {
+      const fundId = report.fundDefinitionId;
+      if (!fundId) continue;
+      const current = latestByFund.get(fundId);
+      if (!current || monthIndex(report) > monthIndex(current)) latestByFund.set(fundId, report);
+    }
+    if (!latestByFund.size) return { items: [] };
+
+    const latest = [...latestByFund.values()];
+    const holdings = await this.prisma.fundHolding.findMany({
+      where: { fundReportId: { in: latest.map((r) => r.id) }, action: 'HELD' },
+      select: { fundReportId: true, symbol: true, nameFa: true, weightPct: true, amountRial: true, quantity: true },
+    });
+    // نماد گزارش صندوق دست‌نویس مدل است؛ با همان کلید نرمال‌شدهٔ پیشنهاد سبد تطبیق می‌دهیم.
+    const wanted = new Set([symbolKey(inst.symbol), symbolKey(inst.nameFa)].filter(Boolean));
+    const best = new Map<string, (typeof holdings)[number]>();
+    for (const row of holdings) {
+      if (!wanted.has(symbolKey(row.symbol)) && !wanted.has(symbolKey(row.nameFa))) continue;
+      const current = best.get(row.fundReportId);
+      if (!current || (row.weightPct ?? 0) > (current.weightPct ?? 0)) best.set(row.fundReportId, row);
+    }
+    const matched = latest.filter((report) => best.has(report.id));
+    if (!matched.length) return { items: [] };
+
+    // اگر خود صندوق در بازار نماد دارد، صفحه به آن پیوند می‌دهد.
+    const codes = matched
+      .map((report) => report.fundDefinition?.symbolCode?.trim())
+      .filter((code): code is string => Boolean(code));
+    const listed = codes.length
+      ? await this.prisma.instrument.findMany({
+          where: { symbol: { in: codes }, isActive: true },
+          select: { id: true, symbol: true },
+        })
+      : [];
+    const instrumentBySymbol = new Map(listed.map((row) => [symbolKey(row.symbol), row.id]));
+
+    const items = matched
+      .map((report) => {
+        const row = best.get(report.id)!;
+        const symbolCode = report.fundDefinition?.symbolCode?.trim() || null;
+        return {
+          fundDefinitionId: report.fundDefinitionId!,
+          fundNameFa: report.fundDefinition?.nameFa ?? '',
+          fundSymbol: symbolCode,
+          fundInstrumentId: symbolCode ? instrumentBySymbol.get(symbolKey(symbolCode)) ?? null : null,
+          weightPct: row.weightPct,
+          amountRial: row.amountRial,
+          quantity: row.quantity,
+          reportYear: report.reportYear,
+          reportMonthNum: report.reportMonthNum,
+        };
+      })
+      .sort((a, b) => (b.weightPct ?? -1) - (a.weightPct ?? -1) || (b.amountRial ?? 0) - (a.amountRial ?? 0));
+    return { items };
   }
 
   private async latestInflationPct(): Promise<number | null> {
