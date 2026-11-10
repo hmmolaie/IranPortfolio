@@ -27,7 +27,21 @@ import {
   valuableOptionsForUnderlying,
   type BoardSource,
   type OptionBoard,
+  type QueueSide,
+  type ValuableOption,
 } from './option-board';
+import {
+  LIVE_SESSION_END_MIN,
+  LIVE_SESSION_START_MIN,
+  buildEquivalent,
+  liveQueue,
+  pickEquivalentCandidates,
+  readBestLimit,
+  readLastTrade,
+  readPriceLimits,
+  type LiveBook,
+  type LiveEquivalent,
+} from './live-equivalents';
 import {
   brsEndpoint,
   readBrsApiAccess,
@@ -245,6 +259,24 @@ const MAX_INGEST_TRADING_DAYS = 5;
 const MAX_LOOKBACK_CALENDAR_DAYS = 14;
 
 /** پیش‌گشایش ۸:۳۰ و شروع معاملات ۹:۰۰ تهران */
+/** کد عددی نماد در tsetmc؛ شناسه‌های ساختگی مثل USD-TEDPIX رد می‌شوند. */
+const TSETMC_CODE = /^\d{5,20}$/;
+const LIVE_FETCH_TIMEOUT_MS = 8_000;
+/** بازدیدهای پشت‌سرهم یک صفحه، tsetmc را دوباره صدا نمی‌زنند. */
+const LIVE_EQUIVALENT_TTL_MS = 30_000;
+
+type LiveEquivalentsView = {
+  inSession: boolean;
+  hasOptions: boolean;
+  /** false یعنی tsetmc جواب نداد و قیمت‌ها ذخیره‌شده است. */
+  live: boolean;
+  queue: QueueSide | null;
+  spot: number | null;
+  noteFa: string;
+  disclaimerFa: string;
+  checkedAt: string;
+  items: LiveEquivalent[];
+};
 const MARKET_PREOPEN_MIN = 8 * 60 + 30;
 const MARKET_OPEN_MIN = 9 * 60;
 
@@ -270,6 +302,7 @@ type IngestRow = Record<string, unknown>;
 export class MarketService implements OnModuleInit {
   private readonly logger = new Logger(MarketService.name);
   private ingestInFlight = false;
+  private readonly liveEquivalentCache = new Map<string, { at: number; value: LiveEquivalentsView }>();
   /** بعد از تلاش ناموفق، تا این لحظه دوباره API بورس صدا زده نمی‌شود */
   private marketRetryAfter = 0;
   private optionsRefresh: { running: boolean; messageFa: string; error: boolean } = {
@@ -571,6 +604,133 @@ export class MarketService implements OnModuleInit {
   }
 
   async getUnderlyingOptions(id: string) {
+    const pack = await this.underlyingOptionPack(id);
+    if (!pack) return null;
+    return {
+      symbol: pack.symbol,
+      spot: pack.spot,
+      hasOptions: pack.hasOptions,
+      disclaimerFa: pack.disclaimerFa,
+      inflationPct: pack.inflationPct,
+      items: pack.items,
+    };
+  }
+
+  /**
+   * فقط شنبه تا چهارشنبه، ۹:۰۰ تا ۱۲:۳۰ تهران: صف زندهٔ سهم از tsetmc و اختیارهای نزدیک سررسیدی
+   * که خریدشان جای خرید یا فروش خود سهم را می‌گیرد. بیرون از این بازه tsetmc صدا زده نمی‌شود.
+   */
+  async getLiveEquivalents(id: string) {
+    const now = tehranNow();
+    const nowMin = now.getHours() * 60 + now.getMinutes();
+    const inSession =
+      !isTehranWeekend(toDEven(now)) && nowMin >= LIVE_SESSION_START_MIN && nowMin <= LIVE_SESSION_END_MIN;
+    const idle: LiveEquivalentsView = {
+      inSession,
+      hasOptions: false,
+      live: false,
+      queue: null,
+      spot: null,
+      noteFa: '',
+      disclaimerFa: '',
+      checkedAt: new Date().toISOString(),
+      items: [],
+    };
+    if (!inSession) {
+      const exists = await this.prisma.instrument.findUnique({ where: { id }, select: { id: true } });
+      return exists ? idle : null;
+    }
+    const cached = this.liveEquivalentCache.get(id);
+    if (cached && Date.now() - cached.at < LIVE_EQUIVALENT_TTL_MS) return cached.value;
+
+    const pack = await this.underlyingOptionPack(id);
+    if (!pack) return null;
+    if (!pack.hasOptions) return idle;
+
+    const board = await this.readLiveBoard(pack.insCode);
+    const queue = board?.queue ?? null;
+    const spot = board?.last ?? pack.spot;
+    let items: LiveEquivalent[] = [];
+    if (spot != null && spot > 0) {
+      const candidates = pickEquivalentCandidates(pack.items, spot, queue);
+      const built = await Promise.all(
+        candidates.map(async (option) => {
+          const code = pack.optionCodes.get(option.id);
+          // اگر خود سهم از tsetmc خوانده نشد، برای هر اختیار هم دوباره منتظر همان خطا نمی‌مانیم.
+          const book = board && code ? await this.readLiveBook(code) : null;
+          if (book) {
+            // خریدار بهترین عرضه را می‌پردازد؛ بدون فروشنده، این اختیار الان قابل خرید نیست.
+            if (book.askPrice == null || book.askVolume == null) return null;
+            return buildEquivalent(option, spot, book.askPrice, 'live', book.askVolume);
+          }
+          if (option.premium == null || !(option.premium > 0)) return null;
+          return buildEquivalent(option, spot, option.premium, 'stored', null);
+        }),
+      );
+      items = built
+        .filter((row): row is LiveEquivalent => row != null)
+        .sort((a, b) => a.gapPct - b.gapPct || a.daysLeft - b.daysLeft);
+    }
+    const noteFa = !board
+      ? 'خواندن زنده از tsetmc در این لحظه ممکن نشد؛ وضعیت صف نامشخص است و قیمت‌ها آخرین قیمت ذخیره‌شده است.'
+      : queue === 'buy'
+        ? 'سهم الان صف خرید است و خرید خود سهم عملاً ممکن نیست. اختیارهای خرید زیر، اگر در سررسید اعمال شوند، همان سهم را می‌دهند.'
+        : queue === 'sell'
+          ? 'سهم الان صف فروش است و فروش خود سهم عملاً ممکن نیست. اختیارهای فروش زیر، اگر در سررسید اعمال شوند، همان سهم را می‌فروشند.'
+          : 'سهم الان صف خرید یا فروش نیست. اختیار خرید جای خرید سهم و اختیار فروش جای فروش سهم را می‌گیرد.';
+    const value: LiveEquivalentsView = {
+      inSession: true,
+      hasOptions: true,
+      live: Boolean(board),
+      queue,
+      spot,
+      noteFa,
+      disclaimerFa:
+        'این فهرست از قیمت همین لحظه حساب شده و توصیهٔ قطعی معامله نیست. کارمزد در آن نیامده و اعمال اختیار فقط در سررسید ممکن است.',
+      checkedAt: new Date().toISOString(),
+      items,
+    };
+    if (this.liveEquivalentCache.size > 300) this.liveEquivalentCache.clear();
+    this.liveEquivalentCache.set(id, { at: Date.now(), value });
+    return value;
+  }
+
+  /** صف و آخرین قیمت سهم از tsetmc. null یعنی خواندن ناموفق بود یا کد نماد نداریم. */
+  private async readLiveBoard(
+    insCode: string | null,
+  ): Promise<{ queue: QueueSide | null; last: number | null } | null> {
+    if (!insCode || !TSETMC_CODE.test(insCode)) return null;
+    try {
+      const [bookData, infoData, priceData] = await Promise.all([
+        this.fetchJson(`https://cdn.tsetmc.com/api/BestLimits/${insCode}`, LIVE_FETCH_TIMEOUT_MS),
+        this.fetchJson(`https://cdn.tsetmc.com/api/Instrument/GetInstrumentInfo/${insCode}`, LIVE_FETCH_TIMEOUT_MS),
+        this.fetchJson(
+          `https://cdn.tsetmc.com/api/ClosingPrice/GetClosingPriceInfo/${insCode}`,
+          LIVE_FETCH_TIMEOUT_MS,
+        ).catch(() => null),
+      ]);
+      const book = readBestLimit(bookData);
+      const limits = readPriceLimits(infoData);
+      if (!book || !limits) return null;
+      return { queue: liveQueue(book, limits), last: readLastTrade(priceData) };
+    } catch (e) {
+      this.logger.warn(`صف زندهٔ tsetmc (${insCode}): ${(e as Error).message}`);
+      return null;
+    }
+  }
+
+  private async readLiveBook(insCode: string): Promise<LiveBook | null> {
+    if (!TSETMC_CODE.test(insCode)) return null;
+    try {
+      return readBestLimit(
+        await this.fetchJson(`https://cdn.tsetmc.com/api/BestLimits/${insCode}`, LIVE_FETCH_TIMEOUT_MS),
+      );
+    } catch {
+      return null;
+    }
+  }
+
+  private async underlyingOptionPack(id: string) {
     const inst = await this.prisma.instrument.findUnique({
       where: { id },
       include: {
@@ -590,11 +750,13 @@ export class MarketService implements OnModuleInit {
     if (!eligible) {
       return {
         symbol: inst.symbol,
+        insCode: inst.insCode,
         spot,
         hasOptions: false,
         disclaimerFa: '',
         inflationPct: null,
-        items: [],
+        items: [] as ValuableOption[],
+        optionCodes: new Map<string, string>(),
       };
     }
     const options = await this.prisma.$queryRaw<
@@ -607,6 +769,7 @@ export class MarketService implements OnModuleInit {
         closePrice: number | null;
         volume: number | null;
         baseId: string | null;
+        optionCode: string | null;
         buyQueueVolume: number | null;
         sellQueueVolume: number | null;
       }>
@@ -614,6 +777,7 @@ export class MarketService implements OnModuleInit {
       SELECT i.id, i.symbol, i."nameFa", i.meta,
              b."lastPrice", b."closePrice", b.volume,
              NULLIF(b.raw->>'base_id', '') AS "baseId",
+             COALESCE(i."insCode", NULLIF(b.raw->>'id', '')) AS "optionCode",
              ${bookVolumeSql('qd')} AS "buyQueueVolume",
              ${bookVolumeSql('qo')} AS "sellQueueVolume"
       FROM "Instrument" i
@@ -665,13 +829,19 @@ export class MarketService implements OnModuleInit {
       }),
       inflationPct,
     );
+    const optionCodes = new Map<string, string>();
+    for (const row of options) {
+      if (row.optionCode) optionCodes.set(row.id, row.optionCode);
+    }
     return {
       symbol: inst.symbol,
+      insCode: inst.insCode,
       spot,
       hasOptions: valued.hasOptions,
       disclaimerFa: 'این فهرست از قیمت ذخیره‌شدهٔ اختیار و دارایی پایه حساب شده و توصیهٔ قطعی معامله نیست.',
       inflationPct,
       items: valued.items,
+      optionCodes,
     };
   }
 
@@ -2412,10 +2582,10 @@ export class MarketService implements OnModuleInit {
     return Boolean(e && typeof e === 'object' && 'code' in e && (e as { code?: string }).code === 'P2002');
   }
 
-  private async fetchJson(url: string) {
+  private async fetchJson(url: string, timeoutMs = 45_000) {
     const res = await fetch(url, {
       headers: FETCH_HEADERS,
-      signal: AbortSignal.timeout(45_000),
+      signal: AbortSignal.timeout(timeoutMs),
     });
     if (!res.ok) throw new Error(`${res.status} ${redactBrsUrl(url)}`);
     const text = await res.text();

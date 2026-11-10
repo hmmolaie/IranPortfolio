@@ -126,6 +126,13 @@ export class MarketController {
     return data;
   }
 
+  @Get('instruments/:id/live-options')
+  async liveOptions(@Param('id') id: string) {
+    const data = await this.market.getLiveEquivalents(id);
+    if (!data) throw new NotFoundException('نماد یافت نشد');
+    return data;
+  }
+
   @Get('instruments/:id/history')
   history(@Param('id') id: string, @Query('limit') limit?: string) {
     return this.market.getPriceHistory(id, limit ? Number(limit) : 90);

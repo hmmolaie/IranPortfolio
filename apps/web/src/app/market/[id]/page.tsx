@@ -37,6 +37,37 @@ type UnderlyingOptions = {
   items: OptionsTableRow[];
 };
 
+type LiveEquivalent = {
+  id: string;
+  symbol: string;
+  side: 'CALL' | 'PUT';
+  sideFa: string;
+  strike: number;
+  daysLeft: number;
+  premium: number;
+  premiumSource: 'live' | 'stored';
+  askVolume: number | null;
+  effectivePrice: number;
+  gapPct: number;
+  costPerContract: number;
+  noteFa: string;
+};
+
+type LiveOptions = {
+  inSession: boolean;
+  hasOptions: boolean;
+  live: boolean;
+  queue: 'buy' | 'sell' | null;
+  spot: number | null;
+  noteFa: string;
+  disclaimerFa: string;
+  checkedAt: string;
+  items: LiveEquivalent[];
+};
+
+/** در ساعت بازار، صف و قیمت اختیارها هر دقیقه دوباره خوانده می‌شود. */
+const LIVE_REFRESH_MS = 60_000;
+
 type QuoteKind = 'rial' | 'point' | 'usd';
 
 const UNIT_FA: Record<QuoteKind, string> = {
@@ -298,6 +329,7 @@ export default function MarketInstrumentPage() {
   const [history, setHistory] = useState<Bar[]>([]);
   const [range, setRange] = useState<RangeKey>('1M');
   const [optionPack, setOptionPack] = useState<UnderlyingOptions | null>(null);
+  const [liveOptions, setLiveOptions] = useState<LiveOptions | null>(null);
 
   useEffect(() => {
     if (!getToken()) {
@@ -318,7 +350,31 @@ export default function MarketInstrumentPage() {
       .catch(() => setOptionPack(null));
   }, [id, router]);
 
-  const visible = useMemo(() => filterBars(history, range), [history, range]);
+  useEffect(() => {
+    if (!getToken()) return;
+    let stopped = false;
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    const load = () => {
+      api<LiveOptions>(`/market/instruments/${id}/live-options`)
+        .then((data) => {
+          if (stopped) return;
+          setLiveOptions(data);
+          // بیرون از ساعت بازار یا برای سهم بدون اختیار، دیگر چیزی برای تازه‌کردن نیست.
+          if (data.inSession && data.hasOptions) timer = setTimeout(load, LIVE_REFRESH_MS);
+        })
+        .catch(() => {
+          if (!stopped) setLiveOptions(null);
+        });
+    };
+    setLiveOptions(null);
+    load();
+    return () => {
+      stopped = true;
+      if (timer) clearTimeout(timer);
+    };
+  }, [id]);
+
+  const visible =useMemo(() => filterBars(history, range), [history, range]);
 
   const stats = useMemo(() => {
     const prices = visible.map(priceOf).filter((p) => p > 0);
@@ -453,6 +509,103 @@ export default function MarketInstrumentPage() {
           <StatRow label="پایانی قبل" value={formatValue(stats.prev)} />
         </div>
       </div>
+
+      {liveOptions?.inSession && liveOptions.hasOptions && (
+        <section className="space-y-4">
+          <div>
+            <div className="flex flex-wrap items-center gap-2">
+              <h2 className="text-base font-semibold text-navy-900">فرصت‌های زنده با اختیار معامله</h2>
+              <span
+                className={clsx(
+                  'rounded-full px-3 py-1 text-xs font-medium',
+                  !liveOptions.live
+                    ? 'bg-navy-900/5 text-navy-800/60'
+                    : liveOptions.queue === 'buy'
+                      ? 'bg-emerald-50 text-emerald-800'
+                      : liveOptions.queue === 'sell'
+                        ? 'bg-red-50 text-red-800'
+                        : 'bg-navy-900/5 text-navy-800/70',
+                )}
+              >
+                {!liveOptions.live
+                  ? 'وضعیت صف نامشخص'
+                  : liveOptions.queue === 'buy'
+                    ? 'صف خرید'
+                    : liveOptions.queue === 'sell'
+                      ? 'صف فروش'
+                      : 'بدون صف'}
+              </span>
+            </div>
+            <p className="mt-2 text-sm text-navy-800/70">{liveOptions.noteFa}</p>
+            <p className="mt-1 text-xs text-navy-800/45">
+              قیمت سهم: {formatNum(liveOptions.spot)} ریال · آخرین بررسی:{' '}
+              {new Date(liveOptions.checkedAt).toLocaleTimeString('fa-IR', {
+                timeZone: 'Asia/Tehran',
+                hour: '2-digit',
+                minute: '2-digit',
+              })}
+            </p>
+          </div>
+          {liveOptions.items.length ? (
+            <div className="overflow-x-auto">
+              <table className="w-full min-w-[44rem] text-sm">
+                <thead>
+                  <tr className="border-b border-navy-900/10 text-right text-xs text-navy-800/50">
+                    <th className="px-2 py-2 font-medium">نماد</th>
+                    <th className="px-2 py-2 font-medium">نوع</th>
+                    <th className="px-2 py-2 font-medium">قیمت اعمال</th>
+                    <th className="px-2 py-2 font-medium">قیمت اختیار</th>
+                    <th className="px-2 py-2 font-medium">روز مانده</th>
+                    <th className="px-2 py-2 font-medium">قیمت تمام‌شده</th>
+                    <th className="px-2 py-2 font-medium">فاصله با سهم</th>
+                    <th className="px-2 py-2 font-medium">هزینهٔ هر قرارداد</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {liveOptions.items.map((row) => (
+                    <tr key={row.id} className="border-b border-navy-900/5 align-top">
+                      <td className="px-2 py-2.5">
+                        <Link href={`/market/${row.id}`} className="font-medium text-navy-900 hover:underline">
+                          {row.symbol}
+                        </Link>
+                        <p className="mt-1 max-w-xs text-xs leading-5 text-navy-800/55">{row.noteFa}</p>
+                      </td>
+                      <td
+                        className={clsx(
+                          'px-2 py-2.5',
+                          row.side === 'CALL' ? 'text-emerald-700' : 'text-red-700',
+                        )}
+                      >
+                        {row.sideFa}
+                      </td>
+                      <td className="px-2 py-2.5">{formatNum(row.strike)}</td>
+                      <td className="px-2 py-2.5">
+                        {formatNum(row.premium)}
+                        <span className="block text-xs text-navy-800/45">
+                          {row.premiumSource === 'live'
+                            ? `عرضهٔ الان${row.askVolume != null ? ` · ${formatNum(row.askVolume)} قرارداد` : ''}`
+                            : 'قیمت ذخیره‌شده'}
+                        </span>
+                      </td>
+                      <td className="px-2 py-2.5">{formatNum(row.daysLeft)}</td>
+                      <td className="px-2 py-2.5">{formatNum(row.effectivePrice)}</td>
+                      <td className="px-2 py-2.5">{formatPct(row.side === 'CALL' ? row.gapPct : -row.gapPct)}</td>
+                      <td className="px-2 py-2.5">{formatNum(row.costPerContract)}</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          ) : (
+            <p className="text-sm text-navy-800/60">
+              الان اختیار نزدیک سررسیدی که قیمت تمام‌شده‌اش نزدیک قیمت سهم باشد و فروشنده داشته باشد پیدا نشد.
+            </p>
+          )}
+          {liveOptions.disclaimerFa && (
+            <p className="text-sm text-navy-800/60">{liveOptions.disclaimerFa}</p>
+          )}
+        </section>
+      )}
 
       {optionPack?.hasOptions && (
         <section className="space-y-4">
