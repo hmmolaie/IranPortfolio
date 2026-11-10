@@ -21,7 +21,8 @@ RUN apk add --no-cache libc6-compat openssl
 WORKDIR /app
 COPY --from=deps /app/node_modules ./node_modules
 COPY --from=deps /app/package.json /app/package-lock.json ./
-COPY --from=deps /app/apps/api/package.json ./apps/api/
+# npm ابزارهایی مثل Nest CLI را گاهی داخل خود workspace نصب می‌کند، نه در ریشه
+COPY --from=deps /app/apps/api ./apps/api
 COPY --from=deps /app/apps/web/package.json ./apps/web/
 COPY --from=deps /app/packages/shared/package.json ./packages/shared/
 COPY packages/shared ./packages/shared
