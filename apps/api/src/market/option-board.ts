@@ -150,7 +150,8 @@ export function parseOptionMeta(item: Record<string, unknown>, symbol: string, n
       item.buyBaqimandeTaSarresId,
     );
   const contractSize = marketNumber(item.size_contract ?? item.buyAndazeyeQarardad ?? item.contractSize);
-  const underlyingPrice = marketNumber(item.base_pl ?? item.base_pc ?? item.qeymateMabna);
+  // underlyingPrice همان چیزی است که در meta ذخیره می‌شود؛ بدون آن قیمت پایهٔ ذخیره‌شده دوباره خوانده نمی‌شود.
+  const underlyingPrice = firstPositive(item.base_pl, item.base_pc, item.qeymateMabna, item.underlyingPrice);
   return {
     side,
     sideFa: side === 'CALL' ? 'اختیار خرید' : side === 'PUT' ? 'اختیار فروش' : null,
@@ -391,15 +392,17 @@ export function optionTradePrice(source: {
     const n = marketNumber(value);
     return n != null && n > 0 ? n : null;
   };
+  // قرارداد بدون معامله: خریدار بهترین عرضه (po1) را می‌پردازد، نه بهترین تقاضا (pd1).
+  // تقاضای خیلی پایین روی اختیار فروشِ کم‌معامله سود را چند برابر واقعی نشان می‌داد.
   const last =
     positive(source.lastPrice) ??
     positive(raw.pl) ??
-    positive(raw.pd1) ??
     positive(raw.po1) ??
     positive(raw.pf) ??
     positive(raw.py) ??
     positive(raw.pDrCotVal) ??
-    positive(raw.lastPrice);
+    positive(raw.lastPrice) ??
+    positive(raw.pd1);
   const close = positive(source.closePrice) ?? positive(raw.pc) ?? positive(raw.py) ?? last;
   return { last, close };
 }
