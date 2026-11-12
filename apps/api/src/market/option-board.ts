@@ -636,10 +636,9 @@ function realProfitForHolding(input: {
   profitPerUnit: number;
   premium: number;
   daysLeft: number;
-  contractSize: number | null;
   inflationPct: number | null;
 }): { realProfitRial: number; realProfitPct: number } | null {
-  const { profitPerUnit, premium, daysLeft, contractSize, inflationPct } = input;
+  const { profitPerUnit, premium, daysLeft, inflationPct } = input;
   if (inflationPct == null || !Number.isFinite(inflationPct) || !(premium > 0) || !(daysLeft > 0)) return null;
   const annual = inflationPct / 100;
   if (annual <= -1) return null;
@@ -648,7 +647,8 @@ function realProfitForHolding(input: {
   const real = (1 + profitPerUnit / premium) / periodFactor - 1;
   return {
     realProfitPct: Math.round(real * 100),
-    realProfitRial: Math.round(real * premium * (contractSize ?? 1)),
+    // برای یک سهم پایه، نه کل قرارداد؛ اندازهٔ قرارداد جدا نشان داده می‌شود
+    realProfitRial: Math.round(real * premium),
   };
 }
 
@@ -685,7 +685,6 @@ export function listValuableOptions(rows: BoardSource[], inflationPct: number | 
             profitPerUnit,
             premium,
             daysLeft: parsed.daysLeft,
-            contractSize,
             inflationPct,
           });
     const daysNote =
@@ -703,7 +702,7 @@ export function listValuableOptions(rows: BoardSource[], inflationPct: number | 
       daysLeft: parsed.daysLeft,
       contractSize,
       profitPerUnit,
-      profitRial: profitPerUnit == null ? null : profitPerUnit * (contractSize ?? 1),
+      profitRial: profitPerUnit,
       profitPct: profitPct == null ? null : Math.round(profitPct * 10) / 10,
       realProfitRial: real?.realProfitRial ?? null,
       realProfitPct: real?.realProfitPct ?? null,
