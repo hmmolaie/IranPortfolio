@@ -625,19 +625,8 @@ export default function MarketInstrumentPage() {
 
       {optionPack?.hasOptions && (
         <section className="space-y-4">
-          <div>
-            <h2 className="text-base font-semibold text-navy-900">اختیار معامله این سهم</h2>
-            <p className="mt-2 text-sm text-navy-800/70">
-              همهٔ اختیارهای سررسیدنشدهٔ این سهم، از سود بیشتر به کمتر. سود واقعی، همین سود را پس از تورمِ روزهای مانده تا سررسید نشان می‌دهد.
-              {optionPack.inflationPct != null
-                ? ` نرخ تورم سالانه: ${optionPack.inflationPct.toLocaleString('fa-IR')}٪.`
-                : ' نرخ تورم سالانه در اقتصاد ایران ثبت نشده است.'}
-            </p>
-          </div>
-          {optionPack.disclaimerFa && (
-            <p className="text-sm text-navy-800/60">{optionPack.disclaimerFa}</p>
-          )}
-          <OptionsValueTable items={optionPack.items} />
+          <h2 className="text-base font-semibold text-navy-900">اختیار معامله این سهم</h2>
+          <OptionsValueTable items={optionPack.items} compact />
         </section>
       )}
 

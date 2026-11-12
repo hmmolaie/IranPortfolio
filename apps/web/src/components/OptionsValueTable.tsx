@@ -134,16 +134,20 @@ function sortValue(row: OptionsTableRow, key: SortKey): string | number | null {
 export function OptionsValueTable({
   items,
   loading,
+  compact,
 }: {
   items: OptionsTableRow[] | null;
   loading?: boolean;
+  /** صفحهٔ یک سهم: بدون فیلتر، اول ۵ ردیف و با «نمایش بیشتر» همهٔ فهرست */
+  compact?: boolean;
 }) {
   const router = useRouter();
+  const pageSize = compact ? 5 : 40;
   const [draft, setDraft] = useState<OptionFilters>(INITIAL_FILTERS);
   const [applied, setApplied] = useState<OptionFilters>(INITIAL_FILTERS);
   const [sort, setSort] = useState<SortKey>('profit');
   const [sortDir, setSortDir] = useState<'asc' | 'desc'>('desc');
-  const [visible, setVisible] = useState(40);
+  const [visible, setVisible] = useState(pageSize);
 
   const rows = useMemo(() => {
     const text = applied.q.trim();
@@ -188,8 +192,8 @@ export function OptionsValueTable({
   }, [items, applied, sort, sortDir]);
 
   useEffect(() => {
-    setVisible(40);
-  }, [items, applied, sort, sortDir]);
+    setVisible(pageSize);
+  }, [items, applied, sort, sortDir, pageSize]);
 
   const shown = rows.slice(0, visible);
 
@@ -204,7 +208,7 @@ export function OptionsValueTable({
 
   return (
     <>
-      <form
+      {!compact && <form
         className="card flex flex-wrap items-center gap-3"
         onSubmit={(e) => {
           e.preventDefault();
@@ -296,7 +300,7 @@ export function OptionsValueTable({
             {rows.length.toLocaleString('fa-IR')} نماد
           </span>
         )}
-      </form>
+      </form>}
 
       <section className="card overflow-x-auto p-0">
         <table className="min-w-full text-sm">
@@ -374,9 +378,15 @@ export function OptionsValueTable({
         )}
         {shown.length < rows.length && (
           <div className="flex justify-center p-4">
-            <button type="button" className="btn-secondary" onClick={() => setVisible((count) => count + 40)}>
-              نمایش {Math.min(40, rows.length - shown.length).toLocaleString('fa-IR')} ردیف دیگر
-            </button>
+            {compact ? (
+              <button type="button" className="btn-secondary" onClick={() => setVisible(rows.length)}>
+                نمایش بیشتر ({(rows.length - shown.length).toLocaleString('fa-IR')} ردیف دیگر)
+              </button>
+            ) : (
+              <button type="button" className="btn-secondary" onClick={() => setVisible((count) => count + 40)}>
+                نمایش {Math.min(40, rows.length - shown.length).toLocaleString('fa-IR')} ردیف دیگر
+              </button>
+            )}
           </div>
         )}
         {!items && loading && <p className="p-6 text-sm text-navy-800/60">در حال بارگذاری...</p>}
