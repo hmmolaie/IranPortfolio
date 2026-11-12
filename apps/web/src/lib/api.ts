@@ -211,6 +211,11 @@ function jsonSummary(body: { message?: unknown; error?: unknown }): string {
   if (Array.isArray(body.message)) return body.message.map(String).join('، ');
   if (typeof body.message === 'string' && body.message.trim()) return body.message.trim();
   if (typeof body.error === 'string' && body.error.trim()) return body.error.trim();
+  // قالب سرویس‌های بیرونی: { error: { message } }
+  if (body.error && typeof body.error === 'object') {
+    const nested = (body.error as { message?: unknown }).message;
+    if (typeof nested === 'string' && nested.trim()) return nested.trim();
+  }
   return '';
 }
 

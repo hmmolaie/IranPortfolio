@@ -1,5 +1,5 @@
-import { Body, Controller, Get, Param, Post, Put, UseGuards } from '@nestjs/common';
-import { IsString, MaxLength } from 'class-validator';
+import { Body, Controller, Get, Param, Post, Put, Req, UseGuards } from '@nestjs/common';
+import { IsInt, IsString, Max, MaxLength, Min } from 'class-validator';
 import { WorldMarketsService } from './world-markets.service';
 import { JwtAuthGuard } from '../auth/jwt-auth.guard';
 import { AdminGuard } from '../auth/admin.guard';
@@ -12,6 +12,17 @@ class SaveWorldSourceApiDto {
   @IsString()
   @MaxLength(500)
   yahooQuoteUrl!: string;
+}
+
+class RefreshErrorDto {
+  @IsInt()
+  @Min(0)
+  @Max(599)
+  status!: number;
+
+  @IsString()
+  @MaxLength(8000)
+  detail!: string;
 }
 
 @Controller('world-markets')
@@ -37,6 +48,11 @@ export class WorldMarketsController {
   @Post('refresh')
   refresh() {
     return this.worldMarkets.refreshFromBitpin();
+  }
+
+  @Post('refresh-error')
+  refreshError(@Req() req: { user: { userId: string } }, @Body() body: RefreshErrorDto) {
+    return this.worldMarkets.recordClientRefreshError(req.user.userId, body.status, body.detail);
   }
 
   @Get(':code/history')

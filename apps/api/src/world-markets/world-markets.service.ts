@@ -1,4 +1,12 @@
-import { BadRequestException, Injectable, Logger, NotFoundException, OnModuleInit } from '@nestjs/common';
+import {
+  BadRequestException,
+  HttpException,
+  Injectable,
+  Logger,
+  NotFoundException,
+  OnModuleInit,
+} from '@nestjs/common';
+import { ObservedErrorService } from '../common/observed-error.service';
 import { Cron } from '@nestjs/schedule';
 import { Prisma } from '@prisma/client';
 import { PrismaService } from '../prisma/prisma.service';
@@ -9,6 +17,28 @@ import { LlmService } from '../llm/llm.service';
 import { UsersService } from '../users/users.service';
 import { readMarketSourceApi, saveMarketSourceApi } from '../market-source/market-source-api';
 import { fetchYahooCryptoPrices, fetchYahooDailyHistory, yahooSymbolFor } from './yahoo-crypto';
+
+/** پیام، پاسخ HTTP، stack و زنجیرهٔ cause یک خطا برای صفحهٔ خطاهای مشاهده‌شده */
+function errorDetail(e: unknown): string {
+  const parts: string[] = [];
+  let cur: unknown = e;
+  for (let depth = 0; cur != null && depth < 5; depth += 1) {
+    if (!(cur instanceof Error)) {
+      parts.push(typeof cur === 'string' ? cur : JSON.stringify(cur));
+      break;
+    }
+    const lines: string[] = [];
+    if (cur instanceof HttpException) {
+      lines.push(`HTTP ${cur.getStatus()} ${JSON.stringify(cur.getResponse())}`);
+    }
+    const code = (cur as { code?: unknown }).code;
+    if (code != null) lines.push(`code: ${String(code)}`);
+    lines.push(cur.stack ?? cur.message);
+    parts.push(lines.join('\n'));
+    cur = (cur as { cause?: unknown }).cause;
+  }
+  return parts.join('\n--- علت ---\n');
+}
 
 const REFRESH_ID = 'latest';
 const CREATE_CHUNK = 250;
@@ -127,6 +157,7 @@ export class WorldMarketsService implements OnModuleInit {
     private readonly prices: PricesService,
     private readonly llm: LlmService,
     private readonly users: UsersService,
+    private readonly observed: ObservedErrorService,
   ) {}
 
   onModuleInit() {
@@ -155,7 +186,8 @@ export class WorldMarketsService implements OnModuleInit {
     try {
       await this.refreshFromBitpin();
     } catch (e) {
-      this.logger.error(`خطا در همگام‌سازی اقتصاد دنیا: ${(e as Error).message}`);
+      // متن کامل همین خطا را refreshFromBitpin در خطاهای مشاهده‌شده نوشته است
+      this.logger.warn(`خطا در همگام‌سازی اقتصاد دنیا: ${(e as Error).message}`);
     }
   }
 
@@ -347,7 +379,39 @@ export class WorldMarketsService implements OnModuleInit {
     };
   }
 
+  /** هر خطای به‌روزرسانی (دستی یا زمان‌بندی‌شده) با متن فنی کامل در «خطاهای مشاهده شده» می‌ماند */
   async refreshFromBitpin(opts?: { macroNews?: boolean }) {
+    try {
+      return await this.runRefresh(opts);
+    } catch (e) {
+      await this.observe('به‌روزرسانی اقتصاد دنیا ناموفق بود', e);
+      throw e;
+    }
+  }
+
+  /** پاسخی که پیش از رسیدن به API ساخته شده (nginx یا شبکه) و فقط مرورگر ادمین آن را دیده است */
+  async recordClientRefreshError(userId: string, status: number, detail: string) {
+    await this.observed.record({
+      purpose: 'world_markets_refresh',
+      statusCode: status > 0 ? status : null,
+      userId,
+      message: `به‌روزرسانی فوری اقتصاد دنیا در مرورگر خطا داد${status > 0 ? ` (HTTP ${status})` : ''}`,
+      detail: `پاسخ دریافتی مرورگر؛ این خطا در خود API ثبت نشده است.\n${detail}`,
+    });
+    return { ok: true };
+  }
+
+  private async observe(stepFa: string, e: unknown) {
+    const status = e instanceof HttpException ? e.getStatus() : null;
+    await this.observed.record({
+      purpose: 'world_markets_refresh',
+      statusCode: status,
+      message: `${stepFa}: ${(e as Error)?.message ?? String(e)}`,
+      detail: `${stepFa}\n${errorDetail(e)}`,
+    });
+  }
+
+  private async runRefresh(opts?: { macroNews?: boolean }) {
     if (this.refreshInFlight) {
       throw new BadRequestException('همگام‌سازی قبلی هنوز تمام نشده است');
     }
@@ -402,12 +466,14 @@ export class WorldMarketsService implements OnModuleInit {
         }
       } catch (e) {
         this.logger.warn(`ذخیره دلار/طلا از بیت‌پین: ${(e as Error).message.slice(0, 180)}`);
+        await this.observe('ذخیرهٔ دلار و طلا از بیت‌پین ناموفق بود', e);
       }
       if (opts?.macroNews !== false) {
         try {
           await this.refreshMacroNews(dateKey, fetchedAt);
         } catch (e) {
           this.logger.warn(`اخبار کلان جهان: ${(e as Error).message.slice(0, 180)}`);
+          await this.observe('اخبار کلان جهان ناموفق بود', e);
         }
       }
       return this.list();
@@ -610,6 +676,7 @@ export class WorldMarketsService implements OnModuleInit {
       yahooPrices = await fetchYahooCryptoPrices(symbols, yahooQuoteUrl);
     } catch (e) {
       this.logger.warn(`یاهو فایننس: ${(e as Error).message.slice(0, 180)}`);
+      await this.observe('خواندن قیمت از یاهو فایننس ناموفق بود', e);
     }
 
     const usdtIrt =
@@ -665,19 +732,24 @@ export class WorldMarketsService implements OnModuleInit {
       } catch (e) {
         throw new BadRequestException(
           `اتصال به بیت‌پین برقرار نشد: ${(e as Error).message || 'خطای شبکه'}`,
+          { cause: e },
         );
       }
 
       const text = await res.text();
       if (!res.ok) {
-        throw new BadRequestException(`بیت‌پین پاسخ ${res.status} داد`);
+        throw new BadRequestException(`بیت‌پین پاسخ ${res.status} داد`, {
+          cause: new Error(`${url}\n${text.slice(0, 4000)}`),
+        });
       }
 
       let json: unknown;
       try {
         json = JSON.parse(text);
       } catch {
-        throw new BadRequestException('پاسخ بیت‌پین JSON معتبر نیست');
+        throw new BadRequestException('پاسخ بیت‌پین JSON معتبر نیست', {
+          cause: new Error(`${url}\n${text.slice(0, 4000)}`),
+        });
       }
 
       const rec = asRecord(json);

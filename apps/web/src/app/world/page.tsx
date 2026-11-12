@@ -4,7 +4,7 @@ import { memo, useEffect, useMemo, useState } from 'react';
 import Link from 'next/link';
 import { useRouter } from 'next/navigation';
 import clsx from 'clsx';
-import { api, formatNum, getToken, getUserRole, setUserRole } from '@/lib/api';
+import { adminApiErrorText, api, ApiError, formatNum, getToken, getUserRole, setUserRole } from '@/lib/api';
 import { useToast } from '@/components/Toast';
 import { WaitingOverlay } from '@/components/WaitingOverlay';
 import { formatShamsiDateTime } from '@/lib/shamsi-date';
@@ -277,6 +277,7 @@ export default function WorldEconomyPage() {
   const [data, setData] = useState<WorldList | null>(null);
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
+  const [refreshError, setRefreshError] = useState('');
   const [query, setQuery] = useState('');
   const [quote, setQuote] = useState<QuoteFilter>('ALL');
   const [sort, setSort] = useState<SortKey>('volume');
@@ -326,11 +327,25 @@ export default function WorldEconomyPage() {
 
   async function refresh() {
     setRefreshing(true);
+    setRefreshError('');
     try {
       const res = await api<WorldList>('/world-markets/refresh', { method: 'POST' });
       setData(res);
       toast.success(`${res.symbolCount.toLocaleString('fa-IR')} نماد جایگزین شد.`);
     } catch (e) {
+      // این صفحه فقط برای ادمین است؛ متن کامل پاسخ سرور نشان داده می‌شود تا علت خطا معلوم باشد
+      const detail = adminApiErrorText(e);
+      setRefreshError(detail);
+      // خطای خود API همان‌جا ثبت شده؛ پاسخی که از nginx یا شبکه آمده فقط اینجا دیده می‌شود
+      if (!detail.includes('"statusCode"')) {
+        api('/world-markets/refresh-error', {
+          method: 'POST',
+          body: JSON.stringify({
+            status: e instanceof ApiError ? e.status : 0,
+            detail: detail.slice(0, 8000),
+          }),
+        }).catch(() => undefined);
+      }
       toast.error((e as Error).message);
     } finally {
       setRefreshing(false);
@@ -439,6 +454,14 @@ export default function WorldEconomyPage() {
               <p className="text-xs text-white/55">آخرین به‌روزرسانی: {fetchedLabel}</p>
             </div>
           </div>
+          {refreshError && (
+            <pre
+              dir="auto"
+              className="relative mt-4 max-h-60 overflow-auto whitespace-pre-wrap break-words rounded-2xl bg-red-950/60 p-4 text-xs leading-6 text-red-100"
+            >
+              {refreshError}
+            </pre>
+          )}
           <div className="relative mt-6 grid gap-3 sm:grid-cols-4">
             <div className="rounded-2xl bg-white/10 px-4 py-3">
               <div className="text-xs text-white/55">تعداد نماد</div>
@@ -446,12 +469,30 @@ export default function WorldEconomyPage() {
                 {(data?.symbolCount ?? 0).toLocaleString('fa-IR')}
               </div>
             </div>
-            {(data?.quotes ?? []).slice(0, 2).map((q) => (
-              <div key={q.code} className="rounded-2xl bg-white/10 px-4 py-3">
-                <div className="text-xs text-white/55">بازار {q.titleFa}</div>
-                <div className="mt-1 text-2xl font-semibold tabular-nums">{q.count.toLocaleString('fa-IR')}</div>
-              </div>
-            ))}
+            {[
+              { label: 'تتر به تومان', base: 'USDT', quote: 'IRT' },
+              { label: 'بیت‌کوین به تتر', base: 'BTC', quote: 'USDT' },
+            ].map((spec) => {
+              const m = data?.markets.find((x) => x.baseCode === spec.base && x.quoteCode === spec.quote);
+              const pct = formatChange(m?.changePct);
+              return (
+                <div key={spec.label} className="rounded-2xl bg-white/10 px-4 py-3">
+                  <div className="text-xs text-white/55">{spec.label}</div>
+                  <div className="mt-1 text-2xl font-semibold tabular-nums">
+                    {m ? formatPrice(String(m.price), m.quoteCode) : '—'}
+                  </div>
+                  {pct && (
+                    <div
+                      className={`mt-0.5 text-xs tabular-nums ${
+                        (m?.changePct ?? 0) >= 0 ? 'text-emerald-300' : 'text-red-300'
+                      }`}
+                    >
+                      تغییر ۲۴ ساعت: <span dir="ltr">{pct}</span>
+                    </div>
+                  )}
+                </div>
+              );
+            })}
             <div className="rounded-2xl bg-white/10 px-4 py-3">
               <div className="text-xs text-white/55">آخرین ذخیره</div>
               <div className="mt-1 text-sm font-medium leading-6">{fetchedLabel}</div>
