@@ -65,6 +65,15 @@ class LlmHttpError extends Error {
   get isGatewayTimeout() {
     return this.status === 502 || this.status === 503 || this.status === 504 || this.status === 524;
   }
+
+  /** سرویس ابزار جستجو را پیش از اجرای مدل رد کرده؛ هزینه‌ای مصرف نشده و ابزار بعدی قابل امتحان است */
+  get isUnsupportedTool() {
+    if (this.status !== 400 && this.status !== 404 && this.status !== 422) return false;
+    return (
+      /tool/i.test(this.body) &&
+      /not supported|unsupported|unknown|unrecognized|not available|invalid/i.test(this.body)
+    );
+  }
 }
 
 export function isLlmGatewayFailure(err: unknown): boolean {
@@ -607,6 +616,11 @@ export class LlmService {
     if (!sets.length && search.x !== false) {
       sets.push([xTool]);
     }
+    // سرویس‌هایی که x_search ندارند (مثل Coarena) با جستجوی وب استاندارد امتحان می‌شوند
+    if (!creds.baseUrl.includes('openrouter.ai')) {
+      const hasWebOnly = sets.some((s) => s.length === 1 && s[0].type === 'web_search');
+      if (!hasWebOnly) sets.push([{ type: 'web_search' }]);
+    }
     return sets;
   }
 
@@ -714,8 +728,7 @@ export class LlmService {
     const models = once ? ordered.slice(0, 1) : ordered;
     let lastErr: unknown;
     for (const model of models) {
-      const toolSets = this.searchToolSets(creds, model, search);
-      const sets = once ? toolSets.slice(0, 1) : toolSets;
+      const sets = this.searchToolSets(creds, model, search);
       for (const tools of sets) {
         const baseBody: Record<string, unknown> = {
           model,
@@ -729,9 +742,19 @@ export class LlmService {
           text: { format: { type: 'json_object' } },
         };
         if (once) {
-          const r = await this.postResponses(creds, withJson);
-          this.logger.log(`جستجوی زنده مدل=${model} ابزار=${tools.map((t) => String(t.type ?? '')).join(',')}`);
-          return { ...r, model };
+          // فقط یک فراخوانی واقعی مدل؛ ابزار ردشده پیش از اجرای مدل برمی‌گردد و ابزار بعدی امتحان می‌شود
+          try {
+            const r = await this.postResponses(creds, withJson);
+            this.logger.log(`جستجوی زنده مدل=${model} ابزار=${tools.map((t) => String(t.type ?? '')).join(',')}`);
+            return { ...r, model };
+          } catch (e) {
+            if (!(e instanceof LlmHttpError && e.isUnsupportedTool)) throw e;
+            lastErr = e;
+            this.logger.warn(
+              `ابزار ${tools.map((t) => String(t.type ?? '')).join(',')} روی این سرویس نیست؛ ابزار بعدی`,
+            );
+            continue;
+          }
         }
         try {
           const r = await this.postResponses(creds, withJson);
@@ -742,7 +765,7 @@ export class LlmService {
           this.logger.warn(
             `responses+json مدل=${model}: ${(e as Error).message.slice(0, 180)}`,
           );
-          if (e instanceof LlmHttpError && e.isRateLimited) continue;
+          if (e instanceof LlmHttpError && (e.isRateLimited || e.isUnsupportedTool)) continue;
           try {
             const r = await this.postResponses(creds, baseBody);
             this.logger.log(`جستجوی زنده مدل=${model} بدون json_object`);
