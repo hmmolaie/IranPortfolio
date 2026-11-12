@@ -40,6 +40,15 @@ function errorDetail(e: unknown): string {
   return parts.join('\n--- علت ---\n');
 }
 
+/** فهرست نمادها در پاسخ بیت‌پین: آرایهٔ خام، یا زیر results یا markets */
+function bitpinItems(json: unknown): unknown[] | null {
+  if (Array.isArray(json)) return json;
+  const rec = json && typeof json === 'object' ? (json as Record<string, unknown>) : null;
+  if (Array.isArray(rec?.results)) return rec.results;
+  if (Array.isArray(rec?.markets)) return rec.markets;
+  return null;
+}
+
 /** صفحهٔ خطای HTML را به متن دیدنی‌اش کوتاه می‌کند تا در خطاهای مشاهده‌شده خوانا باشد */
 function visibleText(body: string): string {
   if (!body.trimStart().startsWith('<')) return body;
@@ -299,6 +308,8 @@ export class WorldMarketsService implements OnModuleInit {
       dateLabelFa: refresh?.fetchedAt ? tehranDateFa(refresh.fetchedAt) : null,
       symbolCount: refresh?.symbolCount ?? markets.length,
       sourceUrl: sourceApi.bitpinMarketsUrl,
+      /** آخرین داده از فایل آپلودی آمده، نه از API */
+      fromUpload: refresh?.sourceUrl === 'manual-json-upload',
       yahooQuoteUrl: sourceApi.yahooQuoteUrl,
       yahooComparedCount: markets.filter((m) => m.diffPct != null && m.yahooPriceNum != null).length,
       quotes: Object.entries(quoteCounts)
@@ -396,11 +407,11 @@ export class WorldMarketsService implements OnModuleInit {
    * به‌روزرسانی دستی در پس‌زمینه. کل کار چند دقیقه طول می‌کشد و CDN جلوی سایت
    * درخواست طولانی را با خطای ۴۰۰ می‌بُرد؛ پس پاسخ فوری است و صفحه وضعیت را می‌پرسد.
    */
-  startManualRefresh() {
+  startManualRefresh(rawMarkets?: BitpinMarket[]) {
     if (!this.refreshInFlight) {
       this.manualStartedAt = new Date().toISOString();
       this.manualError = null;
-      void this.refreshFromBitpin().catch((e) => {
+      void this.refreshFromBitpin(rawMarkets ? { rawMarkets } : undefined).catch((e) => {
         this.manualError = {
           at: new Date().toISOString(),
           message: (e as Error)?.message ?? String(e),
@@ -409,6 +420,37 @@ export class WorldMarketsService implements OnModuleInit {
       });
     }
     return this.refreshStatus();
+  }
+
+  /**
+   * فایل JSON با همان قالب پاسخ API بیت‌پین؛ برای وقتی که سرور به بیت‌پین نمی‌رسد.
+   * بقیهٔ مسیر (مقایسه با یاهو، ذخیره، اخبار کلان) همان به‌روزرسانی معمول است.
+   */
+  startUploadRefresh(file: { buffer?: Buffer; size?: number } | undefined) {
+    if (!file?.buffer?.length) throw new BadRequestException('فایل JSON را انتخاب کنید');
+    if (this.refreshInFlight) {
+      throw new BadRequestException('همگام‌سازی قبلی هنوز تمام نشده است');
+    }
+    let json: unknown;
+    try {
+      json = JSON.parse(file.buffer.toString('utf8').replace(/^﻿/, ''));
+    } catch (e) {
+      throw new BadRequestException(`فایل JSON معتبر نیست: ${(e as Error).message.slice(0, 200)}`);
+    }
+    const items = bitpinItems(json);
+    if (!items) {
+      throw new BadRequestException(
+        'ساختار فایل ناشناخته است. فایل باید همان پاسخ API بیت‌پین باشد: آرایه‌ای از نمادها یا شیئی با کلید results یا markets.',
+      );
+    }
+    const rawMarkets = items
+      .map((item) => asRecord(item))
+      .filter((row): row is Record<string, unknown> => Boolean(row)) as BitpinMarket[];
+    const usable = rawMarkets.filter((m) => typeof m.code === 'string' && m.code.trim()).length;
+    if (!usable) {
+      throw new BadRequestException('در این فایل هیچ نمادی با فیلد code پیدا نشد');
+    }
+    return { ...this.startManualRefresh(rawMarkets), symbolCount: usable };
   }
 
   refreshStatus() {
@@ -420,7 +462,7 @@ export class WorldMarketsService implements OnModuleInit {
   }
 
   /** هر خطای به‌روزرسانی (دستی یا زمان‌بندی‌شده) با متن فنی کامل در «خطاهای مشاهده شده» می‌ماند */
-  async refreshFromBitpin(opts?: { macroNews?: boolean }) {
+  async refreshFromBitpin(opts?: { macroNews?: boolean; rawMarkets?: BitpinMarket[] }) {
     try {
       return await this.runRefresh(opts);
     } catch (e) {
@@ -451,13 +493,14 @@ export class WorldMarketsService implements OnModuleInit {
     });
   }
 
-  private async runRefresh(opts?: { macroNews?: boolean }) {
+  private async runRefresh(opts?: { macroNews?: boolean; rawMarkets?: BitpinMarket[] }) {
     if (this.refreshInFlight) {
       throw new BadRequestException('همگام‌سازی قبلی هنوز تمام نشده است');
     }
     this.refreshInFlight = true;
     try {
-      const rawMarkets = await this.fetchAllPages();
+      const uploaded = Boolean(opts?.rawMarkets);
+      const rawMarkets = opts?.rawMarkets ?? (await this.fetchAllPages());
       const fetchedAt = new Date();
       const dateKey = tehranDateKey(fetchedAt);
       const byCode = new Map<string, Prisma.WorldMarketCreateManyInput>();
@@ -466,6 +509,7 @@ export class WorldMarketsService implements OnModuleInit {
         if (row) byCode.set(row.code, row);
       }
       const sourceApi = await readMarketSourceApi(this.prisma);
+      const sourceUrl = uploaded ? 'manual-json-upload' : sourceApi.bitpinMarketsUrl;
       const rows = await this.attachYahooDiffs([...byCode.values()], sourceApi.yahooQuoteUrl);
       if (!rows.length) {
         throw new BadRequestException('پاسخ بیت‌پین هیچ نمادی نداشت');
@@ -484,13 +528,13 @@ export class WorldMarketsService implements OnModuleInit {
               fetchedAt,
               dateKey,
               symbolCount: rows.length,
-              sourceUrl: sourceApi.bitpinMarketsUrl,
+              sourceUrl,
             },
             update: {
               fetchedAt,
               dateKey,
               symbolCount: rows.length,
-              sourceUrl: sourceApi.bitpinMarketsUrl,
+              sourceUrl,
             },
           });
         },
@@ -797,13 +841,7 @@ export class WorldMarketsService implements OnModuleInit {
       }
 
       const rec = asRecord(json);
-      const pageItems = Array.isArray(json)
-        ? json
-        : Array.isArray(rec?.results)
-          ? rec.results
-          : Array.isArray(rec?.markets)
-            ? rec.markets
-            : null;
+      const pageItems = bitpinItems(json);
 
       if (!pageItems) {
         throw new BadRequestException('ساختار پاسخ بیت‌پین ناشناخته است');

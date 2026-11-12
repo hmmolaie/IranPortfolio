@@ -1,4 +1,16 @@
-import { Body, Controller, Get, Param, Post, Put, Req, UseGuards } from '@nestjs/common';
+import {
+  Body,
+  Controller,
+  Get,
+  Param,
+  Post,
+  Put,
+  Req,
+  UploadedFile,
+  UseGuards,
+  UseInterceptors,
+} from '@nestjs/common';
+import { FileInterceptor } from '@nestjs/platform-express';
 import { IsInt, IsString, Max, MaxLength, Min } from 'class-validator';
 import { WorldMarketsService } from './world-markets.service';
 import { JwtAuthGuard } from '../auth/jwt-auth.guard';
@@ -48,6 +60,13 @@ export class WorldMarketsController {
   @Post('refresh')
   refresh() {
     return this.worldMarkets.startManualRefresh();
+  }
+
+  /** فایل JSON با قالب پاسخ API بیت‌پین؛ مثل به‌روزرسانی فوری ولی بدون تماس با بیت‌پین */
+  @Post('upload')
+  @UseInterceptors(FileInterceptor('file', { limits: { fileSize: 30 * 1024 * 1024 } }))
+  upload(@UploadedFile() file: Express.Multer.File) {
+    return this.worldMarkets.startUploadRefresh(file);
   }
 
   @Get('refresh-status')

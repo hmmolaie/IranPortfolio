@@ -1,6 +1,6 @@
 'use client';
 
-import { memo, useEffect, useMemo, useState } from 'react';
+import { memo, useEffect, useMemo, useRef, useState } from 'react';
 import Link from 'next/link';
 import { useRouter } from 'next/navigation';
 import clsx from 'clsx';
@@ -278,6 +278,7 @@ export default function WorldEconomyPage() {
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
   const [refreshError, setRefreshError] = useState('');
+  const uploadInputRef = useRef<HTMLInputElement>(null);
   const [query, setQuery] = useState('');
   const [quote, setQuote] = useState<QuoteFilter>('ALL');
   const [sort, setSort] = useState<SortKey>('volume');
@@ -325,7 +326,8 @@ export default function WorldEconomyPage() {
     };
   }, [router]);
 
-  async function refresh() {
+  /** با file همان مسیر به‌روزرسانی، ولی داده از فایل JSON آپلودی می‌آید نه از API بیت‌پین */
+  async function refresh(file?: File) {
     setRefreshing(true);
     setRefreshError('');
     try {
@@ -334,10 +336,17 @@ export default function WorldEconomyPage() {
         running: boolean;
         error: { at: string; message: string; detail: string } | null;
       };
-      let status = await api<RefreshStatus>('/world-markets/refresh', {
-        method: 'POST',
-        body: JSON.stringify({}),
-      });
+      let status: RefreshStatus;
+      if (file) {
+        const form = new FormData();
+        form.append('file', file);
+        status = await api<RefreshStatus>('/world-markets/upload', { method: 'POST', body: form });
+      } else {
+        status = await api<RefreshStatus>('/world-markets/refresh', {
+          method: 'POST',
+          body: JSON.stringify({}),
+        });
+      }
       const deadline = Date.now() + 15 * 60 * 1000;
       while (status.running && Date.now() < deadline) {
         await new Promise((resolve) => setTimeout(resolve, 4000));
@@ -471,9 +480,35 @@ export default function WorldEconomyPage() {
               )}
             </div>
             <div className="flex flex-col items-start gap-1 sm:items-end">
-              <button className="btn-primary bg-gold-400 text-navy-900 hover:bg-gold-500" onClick={refresh} disabled={refreshing}>
-                {refreshing ? 'در حال به‌روزرسانی...' : 'به‌روزرسانی فوری'}
-              </button>
+              <div className="flex flex-wrap gap-2">
+                <button
+                  className="btn-primary bg-gold-400 text-navy-900 hover:bg-gold-500"
+                  onClick={() => void refresh()}
+                  disabled={refreshing}
+                >
+                  {refreshing ? 'در حال به‌روزرسانی...' : 'به‌روزرسانی فوری'}
+                </button>
+                <button
+                  type="button"
+                  className="btn-secondary"
+                  onClick={() => uploadInputRef.current?.click()}
+                  disabled={refreshing}
+                  title="فایل JSON با همان قالب پاسخ API بیت‌پین"
+                >
+                  آپلود JSON
+                </button>
+                <input
+                  ref={uploadInputRef}
+                  type="file"
+                  accept=".json,application/json"
+                  className="hidden"
+                  onChange={(e) => {
+                    const picked = e.target.files?.[0];
+                    e.target.value = '';
+                    if (picked) void refresh(picked);
+                  }}
+                />
+              </div>
               <p className="text-xs text-white/55">آخرین به‌روزرسانی: {fetchedLabel}</p>
             </div>
           </div>
