@@ -6,6 +6,7 @@ import { useParams, useRouter } from 'next/navigation';
 import { ASSET_TYPE_LABELS_FA, AssetType } from '@sabadyar/shared';
 import { api, formatNum, getToken } from '@/lib/api';
 import { OptionsTableRow, OptionsValueTable } from '@/components/OptionsValueTable';
+import { CodalNotices } from '@/components/CodalNotices';
 import clsx from 'clsx';
 import { formatShamsiDate } from '@/lib/shamsi-date';
 
@@ -437,12 +438,25 @@ export default function MarketInstrumentPage() {
 
   return (
     <div className="space-y-6 bg-transparent">
-      <Link
-        href={inst.assetType === 'OPTION' ? '/options' : '/market'}
-        className="text-sm text-navy-800/50 transition hover:text-navy-900"
-      >
-        {inst.assetType === 'OPTION' ? '← بازگشت به بازار اختیار معامله' : '← بازگشت به بازار سهام تهران'}
-      </Link>
+      <div className="flex flex-wrap items-center gap-x-4 gap-y-2">
+        <button
+          type="button"
+          className="btn-secondary text-sm"
+          onClick={() => {
+            // اگر صفحه مستقیم باز شده و صفحهٔ قبلی در تاریخچه نیست، به فهرست بازار می‌رود
+            if (window.history.length > 1) router.back();
+            else router.push(inst.assetType === 'OPTION' ? '/options' : '/market');
+          }}
+        >
+          ← بازگشت به صفحهٔ قبل
+        </button>
+        <Link
+          href={inst.assetType === 'OPTION' ? '/options' : '/market'}
+          className="text-sm text-navy-800/50 transition hover:text-navy-900"
+        >
+          {inst.assetType === 'OPTION' ? 'بازار اختیار معامله' : 'بازار سهام تهران'}
+        </Link>
+      </div>
 
       <div>
         <div className="flex flex-wrap items-start gap-x-3 gap-y-2">
@@ -699,6 +713,8 @@ export default function MarketInstrumentPage() {
           <li>تعداد روزهای نمودار: {visible.length.toLocaleString('fa-IR')}</li>
         </ul>
       </section>
+
+      <CodalNotices instrumentId={id} />
     </div>
   );
 }

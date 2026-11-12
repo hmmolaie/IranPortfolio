@@ -871,6 +871,32 @@ model WorldMacroNews {
   @@index([sortOrder])
 }
 
+/** آخرین واکشی اطلاعیه‌های کدال هر نماد؛ در هر روز تهران فقط یک‌بار کرال می‌شود */
+model CodalNoticeFetch {
+  symbol    String   @id
+  dateKey   String
+  fetchedAt DateTime
+}
+
+/** ده اطلاعیهٔ آخر کدال هر نماد، با متن استخراج‌شده از صفحهٔ اطلاعیه */
+model CodalNotice {
+  id            String   @id @default(cuid())
+  symbol        String
+  tracingNo     Int
+  titleFa       String
+  letterCode    String?
+  /// زمان انتشار به همان شکل شمسی کدال
+  publishedAtFa String
+  url           String
+  hasHtml       Boolean  @default(false)
+  bodyText      String?
+  sortOrder     Int      @default(0)
+  fetchedAt     DateTime
+  createdAt     DateTime @default(now())
+
+  @@index([symbol, sortOrder])
+}
+
 /** پنج سیگنال خرید/فروش از فضای X روی نمادهای اقتصاد دنیا */
 model WorldMarketSignal {
   id             String   @id @default(cuid())

@@ -15,6 +15,7 @@ import {
 import { AssetType } from '@prisma/client';
 import { IsOptional, IsString, MaxLength, MinLength } from 'class-validator';
 import { MarketService } from './market.service';
+import { CodalService } from './codal.service';
 import { UsersService } from '../users/users.service';
 import { JwtAuthGuard } from '../auth/jwt-auth.guard';
 import { AdminGuard } from '../auth/admin.guard';
@@ -50,6 +51,7 @@ export class MarketController {
   constructor(
     private readonly market: MarketService,
     private readonly users: UsersService,
+    private readonly codal: CodalService,
   ) {}
 
   @Get('quotes')
@@ -136,6 +138,13 @@ export class MarketController {
   @Get('instruments/:id/funds')
   async fundHolders(@Param('id') id: string) {
     const data = await this.market.getFundHolders(id);
+    if (!data) throw new NotFoundException('نماد یافت نشد');
+    return data;
+  }
+
+  @Get('instruments/:id/codal')
+  async codalNotices(@Param('id') id: string) {
+    const data = await this.codal.getNotices(id);
     if (!data) throw new NotFoundException('نماد یافت نشد');
     return data;
   }
