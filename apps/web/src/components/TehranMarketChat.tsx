@@ -62,6 +62,7 @@ export function TehranMarketChat() {
     setChatInput('');
     setErrorFa('');
     setChatBusy(true);
+    setChat((prev) => [...prev, { id: `pending-${Date.now()}`, role: 'user', contentFa: text }]);
     try {
       await api<ChatMessage>('/market/chat', {
         method: 'POST',
@@ -71,6 +72,7 @@ export function TehranMarketChat() {
     } catch (err) {
       setErrorFa((err as Error).message);
       setChatInput(text);
+      await loadChat().catch(() => undefined);
     } finally {
       setChatBusy(false);
     }
@@ -118,8 +120,17 @@ export function TehranMarketChat() {
           </div>
         ))}
         {chatBusy && (
-          <div className="me-8 rounded-lg bg-navy-900/70 px-3 py-2 text-sm text-white/90">
-            در حال پاسخ با دادهٔ بازار و صندوق‌ها...
+          <div
+            role="status"
+            aria-live="polite"
+            className="me-8 flex items-center gap-3 rounded-lg bg-navy-900/70 px-3 py-2 text-sm text-white/90"
+          >
+            <span className="flex items-center gap-1" aria-hidden>
+              <span className="h-2 w-2 animate-bounce rounded-full bg-white/90 [animation-delay:-0.3s]" />
+              <span className="h-2 w-2 animate-bounce rounded-full bg-white/90 [animation-delay:-0.15s]" />
+              <span className="h-2 w-2 animate-bounce rounded-full bg-white/90" />
+            </span>
+            <span>در حال گرفتن پاسخ از هوش مصنوعی؛ ممکن است تا یک دقیقه طول بکشد. لطفاً صبر کنید...</span>
           </div>
         )}
         <div ref={chatEndRef} />
@@ -135,7 +146,7 @@ export function TehranMarketChat() {
           maxLength={800}
         />
         <button type="submit" className="btn-primary" disabled={chatBusy || !chatInput.trim()}>
-          {chatBusy ? '...' : 'ارسال'}
+          {chatBusy ? 'در حال ارسال...' : 'ارسال'}
         </button>
       </form>
     </section>

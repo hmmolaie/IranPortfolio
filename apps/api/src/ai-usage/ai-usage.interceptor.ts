@@ -12,7 +12,11 @@ export class AiUsageInterceptor implements NestInterceptor {
           next: (data) => {
             const hits = aiUsageStore.getStore()?.hits ?? [];
             if (hits.length) {
-              res.setHeader?.('X-Ai-Usage', JSON.stringify(sumHits(hits)));
+              try {
+                res.setHeader?.('X-Ai-Usage', asciiJson(sumHits(hits)));
+              } catch {
+                /* هدر مصرف نباید پاسخ اصلی را خراب کند */
+              }
             }
             subscriber.next(attachUsage(data));
           },
@@ -22,6 +26,14 @@ export class AiUsageInterceptor implements NestInterceptor {
       });
     });
   }
+}
+
+/** هدر HTTP حرف فارسی نمی‌پذیرد و Node با آن خطای ۵۰۰ می‌دهد؛ حروف غیر ASCII به شکل \uXXXX می‌روند */
+function asciiJson(value: unknown): string {
+  return JSON.stringify(value).replace(
+    /[\u007f-￿]/g,
+    (ch) => `\\u${ch.charCodeAt(0).toString(16).padStart(4, '0')}`,
+  );
 }
 
 function attachUsage(data: unknown): unknown {
