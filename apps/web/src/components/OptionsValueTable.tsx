@@ -208,99 +208,142 @@ export function OptionsValueTable({
 
   return (
     <>
-      {!compact && <form
-        className="card flex flex-wrap items-center gap-3"
-        onSubmit={(e) => {
-          e.preventDefault();
-          setApplied(draft);
-        }}
-      >
-        <input
-          className="input max-w-xs"
-          placeholder="جستجوی نماد..."
-          value={draft.q}
-          onChange={(e) => setDraft({ ...draft, q: e.target.value })}
-        />
-        <select
-          className="input max-w-xs"
-          value={draft.side}
-          onChange={(e) => setDraft({ ...draft, side: e.target.value as '' | 'CALL' | 'PUT' })}
+      {!compact && (
+        <form
+          className="card space-y-4"
+          onSubmit={(e) => {
+            e.preventDefault();
+            setApplied(draft);
+          }}
         >
-          <option value="">همهٔ انواع</option>
-          <option value="CALL">اختیار خرید</option>
-          <option value="PUT">اختیار فروش</option>
-        </select>
-        <select
-          className="input max-w-xs"
-          value={draft.listing}
-          onChange={(e) => setDraft({ ...draft, listing: e.target.value as 'all' | 'traded' })}
-        >
-          <option value="all">تمام نمادها</option>
-          <option value="traded">نمادهای معامله شده</option>
-        </select>
-        <label className="flex items-center gap-2 text-sm text-navy-800/80">
-          اختیار بزرگتر از
-          <input
-            className="input w-28"
-            dir="ltr"
-            inputMode="decimal"
-            value={draft.minPremium}
-            onChange={(e) => setDraft({ ...draft, minPremium: e.target.value })}
-          />
-        </label>
-        <label className="flex items-center gap-2 text-sm text-navy-800/80">
-          حجم صف خرید از
-          <input
-            className="input w-28"
-            dir="ltr"
-            inputMode="decimal"
-            value={draft.minBuyQueue}
-            onChange={(e) => setDraft({ ...draft, minBuyQueue: e.target.value })}
-            placeholder="خالی"
-          />
-        </label>
-        <label className="flex items-center gap-2 text-sm text-navy-800/80">
-          حجم صف فروش از
-          <input
-            className="input w-28"
-            dir="ltr"
-            inputMode="decimal"
-            value={draft.minSellQueue}
-            onChange={(e) => setDraft({ ...draft, minSellQueue: e.target.value })}
-            placeholder="خالی"
-          />
-        </label>
-        <label className="flex items-center gap-2 text-sm text-navy-800/80">
-          روز مانده از
-          <input
-            className="input w-24"
-            dir="ltr"
-            inputMode="numeric"
-            value={draft.minDays}
-            onChange={(e) => setDraft({ ...draft, minDays: e.target.value })}
-            placeholder="خالی"
-          />
-        </label>
-        <label className="flex items-center gap-2 text-sm text-navy-800/80">
-          روز مانده تا
-          <input
-            className="input w-24"
-            dir="ltr"
-            inputMode="numeric"
-            value={draft.maxDays}
-            onChange={(e) => setDraft({ ...draft, maxDays: e.target.value })}
-            placeholder="خالی"
-          />
-        </label>
-        <button type="submit" className="btn-primary">
-          اعمال
-        </button>
-        {items && (
-          <span className="self-center text-sm text-navy-800/55">
-            {rows.length.toLocaleString('fa-IR')} نماد
-          </span>
-        )}
-      </form>}
+          <div className="grid grid-cols-2 gap-x-4 gap-y-3 md:grid-cols-4">
+            <div className="col-span-2 md:col-span-2">
+              <label className="label" htmlFor="opt-q">
+                جستجوی نماد
+              </label>
+              <input
+                id="opt-q"
+                className="input"
+                placeholder="مثلاً ضملی"
+                value={draft.q}
+                onChange={(e) => setDraft({ ...draft, q: e.target.value })}
+              />
+            </div>
+            <div>
+              <label className="label" htmlFor="opt-side">
+                نوع اختیار
+              </label>
+              <select
+                id="opt-side"
+                className="input"
+                value={draft.side}
+                onChange={(e) => setDraft({ ...draft, side: e.target.value as '' | 'CALL' | 'PUT' })}
+              >
+                <option value="">همهٔ انواع</option>
+                <option value="CALL">اختیار خرید</option>
+                <option value="PUT">اختیار فروش</option>
+              </select>
+            </div>
+            <div>
+              <label className="label" htmlFor="opt-listing">
+                وضعیت معامله
+              </label>
+              <select
+                id="opt-listing"
+                className="input"
+                value={draft.listing}
+                onChange={(e) => setDraft({ ...draft, listing: e.target.value as 'all' | 'traded' })}
+              >
+                <option value="all">تمام نمادها</option>
+                <option value="traded">فقط معامله‌شده</option>
+              </select>
+            </div>
+            <div>
+              <label className="label" htmlFor="opt-premium">
+                قیمت اختیار بیشتر از
+              </label>
+              <input
+                id="opt-premium"
+                className="input"
+                dir="ltr"
+                inputMode="decimal"
+                value={draft.minPremium}
+                onChange={(e) => setDraft({ ...draft, minPremium: e.target.value })}
+              />
+            </div>
+            <div>
+              <label className="label" htmlFor="opt-buy">
+                حداقل حجم صف خرید
+              </label>
+              <input
+                id="opt-buy"
+                className="input"
+                dir="ltr"
+                inputMode="decimal"
+                value={draft.minBuyQueue}
+                onChange={(e) => setDraft({ ...draft, minBuyQueue: e.target.value })}
+              />
+            </div>
+            <div>
+              <label className="label" htmlFor="opt-sell">
+                حداقل حجم صف فروش
+              </label>
+              <input
+                id="opt-sell"
+                className="input"
+                dir="ltr"
+                inputMode="decimal"
+                value={draft.minSellQueue}
+                onChange={(e) => setDraft({ ...draft, minSellQueue: e.target.value })}
+              />
+            </div>
+            <div>
+              <span className="label">روز مانده تا سررسید</span>
+              <div className="flex items-center gap-2">
+                <input
+                  className="input"
+                  dir="ltr"
+                  inputMode="numeric"
+                  aria-label="حداقل روز مانده"
+                  placeholder="از"
+                  value={draft.minDays}
+                  onChange={(e) => setDraft({ ...draft, minDays: e.target.value })}
+                />
+                <span className="text-sm text-navy-800/50">تا</span>
+                <input
+                  className="input"
+                  dir="ltr"
+                  inputMode="numeric"
+                  aria-label="حداکثر روز مانده"
+                  placeholder="تا"
+                  value={draft.maxDays}
+                  onChange={(e) => setDraft({ ...draft, maxDays: e.target.value })}
+                />
+              </div>
+            </div>
+          </div>
+          <div className="flex flex-wrap items-center justify-between gap-3 border-t border-navy-900/10 pt-4">
+            <span className="text-sm text-navy-800/55">
+              {items ? `${rows.length.toLocaleString('fa-IR')} نماد` : ''}
+            </span>
+            <div className="flex gap-2">
+              <button
+                type="button"
+                className="btn-secondary"
+                onClick={() => {
+                  setDraft(INITIAL_FILTERS);
+                  setApplied(INITIAL_FILTERS);
+                }}
+              >
+                پاک کردن فیلترها
+              </button>
+              <button type="submit" className="btn-primary">
+                اعمال فیلتر
+              </button>
+            </div>
+          </div>
+        </form>
+      )}
 
       <section className="card overflow-x-auto p-0">
         <table className="min-w-full text-sm">
