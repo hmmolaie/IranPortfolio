@@ -91,10 +91,15 @@ function parseYahooChart(data: unknown): number | null {
   return asFinite(meta?.regularMarketPrice) ?? asFinite(meta?.previousClose);
 }
 
-async function fetchYahooQuoteV7(pairs: PairDef[]): Promise<QuotedPair[]> {
-  const symbols = pairs.map((p) => p.yahoo).join(',');
-  const url = `https://query1.finance.yahoo.com/v7/finance/quote?symbols=${encodeURIComponent(symbols)}`;
-  const data = asRecord(await fetchJson(url, 18_000));
+/** مسیرهای spark و chart روی همان دامنهٔ نشانی یاهو در تنظیمات ادمین ساخته می‌شوند */
+function yahooOrigin(yahooQuoteUrl: string): string {
+  return new URL(yahooQuoteUrl).origin;
+}
+
+async function fetchYahooQuoteV7(pairs: PairDef[], yahooQuoteUrl: string): Promise<QuotedPair[]> {
+  const u = new URL(yahooQuoteUrl);
+  u.searchParams.set('symbols', pairs.map((p) => p.yahoo).join(','));
+  const data = asRecord(await fetchJson(u.toString(), 18_000));
   const result = asRecord(data?.quoteResponse)?.result;
   const bySym = new Map<string, { rate: number; bid: number | null; ask: number | null }>();
   if (Array.isArray(result)) {
@@ -115,9 +120,9 @@ async function fetchYahooQuoteV7(pairs: PairDef[]): Promise<QuotedPair[]> {
   return out;
 }
 
-async function fetchYahooBatch(pairs: PairDef[]): Promise<QuotedPair[]> {
+async function fetchYahooBatch(pairs: PairDef[], yahooQuoteUrl: string): Promise<QuotedPair[]> {
   const symbols = pairs.map((p) => p.yahoo).join(',');
-  const url = `https://query1.finance.yahoo.com/v8/finance/spark?symbols=${encodeURIComponent(symbols)}&range=1d&interval=1m`;
+  const url = `${yahooOrigin(yahooQuoteUrl)}/v8/finance/spark?symbols=${encodeURIComponent(symbols)}&range=1d&interval=1m`;
   const prices = parseYahooSpark(await fetchJson(url, 18_000));
   const out: QuotedPair[] = [];
   for (const pair of pairs) {
@@ -127,8 +132,8 @@ async function fetchYahooBatch(pairs: PairDef[]): Promise<QuotedPair[]> {
   return out;
 }
 
-async function fetchYahooChart(pair: PairDef): Promise<QuotedPair | null> {
-  const url = `https://query1.finance.yahoo.com/v8/finance/chart/${encodeURIComponent(pair.yahoo)}?interval=1m&range=1d`;
+async function fetchYahooChart(pair: PairDef, yahooQuoteUrl: string): Promise<QuotedPair | null> {
+  const url = `${yahooOrigin(yahooQuoteUrl)}/v8/finance/chart/${encodeURIComponent(pair.yahoo)}?interval=1m&range=1d`;
   const rate = parseYahooChart(await fetchJson(url));
   return rate ? quoted(pair, rate, 'yahoo-chart') : null;
 }
@@ -201,7 +206,7 @@ function mergeQuotes(chunks: QuotedPair[][]): QuotedPair[] {
   return [...byPair.values()];
 }
 
-async function fillMissingFromYahoo(have: QuotedPair[]): Promise<QuotedPair[]> {
+async function fillMissingFromYahoo(have: QuotedPair[], yahooQuoteUrl: string): Promise<QuotedPair[]> {
   const haveSet = new Set(have.map((q) => q.pairSymbol));
   const missing = FOREX_PAIRS.filter((p) => !haveSet.has(pairSymbol(p.base, p.quote)));
   const extras: QuotedPair[] = [];
@@ -211,7 +216,7 @@ async function fillMissingFromYahoo(have: QuotedPair[]): Promise<QuotedPair[]> {
     const rows = await Promise.all(
       batch.map(async (pair) => {
         try {
-          return await fetchYahooChart(pair);
+          return await fetchYahooChart(pair, yahooQuoteUrl);
         } catch {
           return null;
         }
@@ -224,16 +229,18 @@ async function fillMissingFromYahoo(have: QuotedPair[]): Promise<QuotedPair[]> {
   return extras;
 }
 
-export async function fetchForexQuotes(): Promise<{ quotes: QuotedPair[]; sources: string[] }> {
+export async function fetchForexQuotes(
+  yahooQuoteUrl: string,
+): Promise<{ quotes: QuotedPair[]; sources: string[] }> {
   const chunks: QuotedPair[][] = [];
 
   try {
-    chunks.push(await fetchYahooBatch(FOREX_PAIRS));
+    chunks.push(await fetchYahooBatch(FOREX_PAIRS, yahooQuoteUrl));
   } catch {
     /* بعداً تکی پر می‌شود */
   }
   try {
-    chunks.push(await fetchYahooQuoteV7(FOREX_PAIRS));
+    chunks.push(await fetchYahooQuoteV7(FOREX_PAIRS, yahooQuoteUrl));
   } catch {
     /* اختیاری */
   }
@@ -249,7 +256,7 @@ export async function fetchForexQuotes(): Promise<{ quotes: QuotedPair[]; source
 
   let quotes = mergeQuotes(chunks);
   if (quotes.length < FOREX_PAIRS.length) {
-    const extras = await fillMissingFromYahoo(quotes);
+    const extras = await fillMissingFromYahoo(quotes, yahooQuoteUrl);
     quotes = mergeQuotes([quotes, extras]);
   }
 

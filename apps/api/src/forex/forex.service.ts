@@ -2,6 +2,7 @@ import { Injectable, Logger, NotFoundException, ServiceUnavailableException } fr
 import { Cron } from '@nestjs/schedule';
 import { Prisma } from '@prisma/client';
 import { PrismaService } from '../prisma/prisma.service';
+import { readMarketSourceApi } from '../market-source/market-source-api';
 import { buildWeightedGraph, type BuiltGraph, type ForexAnalysis } from './forex-analyze';
 import { fetchForexQuotes } from './forex-quotes';
 import { currencyMeta } from './forex-universe';
@@ -87,7 +88,8 @@ export class ForexService {
   }
 
   private async runRefresh(): Promise<ForexSnapshotDto> {
-    const { quotes, sources } = await fetchForexQuotes();
+    const { yahooQuoteUrl } = await readMarketSourceApi(this.prisma);
+    const { quotes, sources } = await fetchForexQuotes(yahooQuoteUrl);
     if (quotes.length < 8) {
       throw new ServiceUnavailableException(
         'نرخ کافی از یاهو/منابع کمکی دریافت نشد. بعداً دوباره تلاش کنید.',

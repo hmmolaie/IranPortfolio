@@ -23,8 +23,30 @@ function toNumber(v: unknown): number | null {
   return null;
 }
 
+const TOMAN_TO_RIAL = 10;
+
+/**
+ * قالب «نبض بازار»: شیء تخت با usd و gold_18k (هر گرم) به تومان؛ هر فیلد ممکن است null باشد.
+ * از روی شکل پاسخ شناخته می‌شود، نه از روی نشانی.
+ */
+function extractTomanFeedSpot(payload: unknown): ParsedSpot | null {
+  if (!payload || typeof payload !== 'object' || Array.isArray(payload)) return null;
+  const obj = payload as Record<string, unknown>;
+  if (!('gold_18k' in obj) || !('usd' in obj)) return null;
+  const usdToman = toNumber(obj.usd);
+  const goldToman = toNumber(obj.gold_18k);
+  if (usdToman == null && goldToman == null) return null;
+  return {
+    usdIrr: usdToman != null ? Math.round(usdToman * TOMAN_TO_RIAL) : null,
+    goldGramRial: goldToman != null ? Math.round(goldToman * TOMAN_TO_RIAL) : null,
+  };
+}
+
 /** استخراج انعطاف‌پذیر فیلدها از JSONهای رایج APIهای قیمت ایران */
 function extractSpotPrices(payload: unknown): ParsedSpot {
+  const tomanFeed = extractTomanFeedSpot(payload);
+  if (tomanFeed) return tomanFeed;
+
   const usdKeys = [
     'usdIrr',
     'usd',
@@ -295,16 +317,25 @@ export class PricesService {
   }
 
   async refreshFromApi() {
+    const uri = (await this.getConfig())?.uri?.trim();
+    if (!uri) return this.refreshFromBitpin();
     try {
-      return await this.refreshFromBitpin();
+      return await this.refreshFromConfiguredUri(uri);
     } catch (e) {
-      const config = await this.getConfig();
-      if (!config?.uri) throw e;
       this.logger.warn(
-        `بیت‌پین ناموفق بود، API تنظیمات امتحان می‌شود: ${(e as Error).message.slice(0, 160)}`,
+        `API تنظیمات ناموفق بود، بیت‌پین امتحان می‌شود: ${(e as Error).message.slice(0, 160)}`,
       );
-      return this.refreshFromConfiguredUri(config.uri);
+      try {
+        return await this.refreshFromBitpin();
+      } catch {
+        throw e;
+      }
     }
+  }
+
+  /** وقتی نشانی قیمت در تنظیمات هست، بیت‌پین فقط پشتیبان است و نباید همان قیمت را بازنویسی کند */
+  async hasConfiguredUri(): Promise<boolean> {
+    return Boolean((await this.getConfig())?.uri?.trim());
   }
 
   async refreshFromBitpin() {

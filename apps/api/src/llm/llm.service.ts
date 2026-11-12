@@ -1115,11 +1115,8 @@ export class LlmService {
     return { baseUrl: creds.baseUrl, apiKey: creds.apiKey };
   }
 
-  /** نشانی و کلید رونویسی. مدل همیشه در کلاینت whisper-1 ثابت است. */
+  /** نشانی و کلید رونویسی فقط از تنظیمات ادمین. مدل همیشه در کلاینت whisper-1 ثابت است. */
   async transcriptionAccess(userId?: string): Promise<{ baseUrl: string; apiKey: string }> {
-    const base = this.config.get<string>('GAPGPT_BASE_URL')?.trim();
-    const key = this.config.get<string>('GAPGPT_API_KEY')?.trim();
-    if (base && key) return { baseUrl: base, apiKey: key };
     const creds = await this.resolveTtsCredentials(userId);
     return { baseUrl: creds.baseUrl, apiKey: creds.apiKey };
   }

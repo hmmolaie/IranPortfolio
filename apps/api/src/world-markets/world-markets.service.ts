@@ -395,9 +395,11 @@ export class WorldMarketsService implements OnModuleInit {
 
       this.logger.log(`اقتصاد دنیا: ${rows.length} نماد برای ${dateKey} ذخیره شد`);
       try {
-        await this.prices.upsertFromBitpinMarkets(
-          rows.map((r) => ({ code: r.code, priceNum: r.priceNum ?? null })),
-        );
+        if (!(await this.prices.hasConfiguredUri())) {
+          await this.prices.upsertFromBitpinMarkets(
+            rows.map((r) => ({ code: r.code, priceNum: r.priceNum ?? null })),
+          );
+        }
       } catch (e) {
         this.logger.warn(`ذخیره دلار/طلا از بیت‌پین: ${(e as Error).message.slice(0, 180)}`);
       }
@@ -697,10 +699,24 @@ export class WorldMarketsService implements OnModuleInit {
       }
 
       const next = rec && typeof rec.next === 'string' && rec.next.trim() ? rec.next.trim() : null;
-      url = next && next !== url ? next : null;
+      const nextUrl = next ? this.onConfiguredHost(next, sourceApi.bitpinMarketsUrl) : null;
+      url = nextUrl && nextUrl !== url ? nextUrl : null;
     }
 
     return out;
+  }
+
+  /** صفحهٔ بعد هم از همان نشانی تنظیمات خوانده می‌شود، نه دامنه‌ای که در پاسخ آمده */
+  private onConfiguredHost(next: string, configured: string): string | null {
+    try {
+      const base = new URL(configured);
+      const target = new URL(next, base);
+      if (target.origin === base.origin) return target.toString();
+      base.search = target.search;
+      return base.toString();
+    } catch {
+      return null;
+    }
   }
 
   private mapMarket(item: BitpinMarket, fetchedAt: Date): Prisma.WorldMarketCreateManyInput | null {
