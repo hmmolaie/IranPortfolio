@@ -637,6 +637,19 @@ export default function MarketInstrumentPage() {
         </section>
       )}
 
+      <section>
+        <h2 className="text-base font-semibold text-navy-900">خلاصه معاملات بازه</h2>
+        <ul className="mt-3 list-disc space-y-2 pe-5 text-sm text-navy-800/70">
+          <li>
+            دامنه: {formatValue(stats.low)} – {formatValue(stats.high)} {unitLabel}
+          </li>
+          {stats.changePct != null && (
+            <li>تغییر نسبت به روز قبل: {formatPct(stats.changePct)}</li>
+          )}
+          <li>تعداد روزهای نمودار: {visible.length.toLocaleString('fa-IR')}</li>
+        </ul>
+      </section>
+
       {optionPack?.hasOptions && (
         <section className="space-y-4">
           <h2 className="text-base font-semibold text-navy-900">اختیار معامله این سهم</h2>
@@ -700,19 +713,6 @@ export default function MarketInstrumentPage() {
           </div>
         </section>
       )}
-
-      <section>
-        <h2 className="text-base font-semibold text-navy-900">خلاصه معاملات بازه</h2>
-        <ul className="mt-3 list-disc space-y-2 pe-5 text-sm text-navy-800/70">
-          <li>
-            دامنه: {formatValue(stats.low)} – {formatValue(stats.high)} {unitLabel}
-          </li>
-          {stats.changePct != null && (
-            <li>تغییر نسبت به روز قبل: {formatPct(stats.changePct)}</li>
-          )}
-          <li>تعداد روزهای نمودار: {visible.length.toLocaleString('fa-IR')}</li>
-        </ul>
-      </section>
 
       <CodalNotices instrumentId={id} />
     </div>

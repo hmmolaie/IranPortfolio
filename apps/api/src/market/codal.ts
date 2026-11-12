@@ -50,6 +50,14 @@ export function codalReportListUrl(symbol: string): string {
   return `${CODAL_SITE}/ReportList.aspx?search&Symbol=${encodeURIComponent(symbol)}`;
 }
 
+/** fetch در Node دلیل واقعی قطع شبکه را در cause می‌گذارد؛ همان را کنار پیام می‌آورد */
+export function describeCodalError(e: unknown): string {
+  const err = e as { name?: string; message?: string; cause?: { code?: string; message?: string } };
+  if (err?.name === 'TimeoutError' || err?.name === 'AbortError') return 'کدال در زمان مجاز پاسخ نداد';
+  const cause = err?.cause?.code || err?.cause?.message || '';
+  return [err?.message || 'خطای نامشخص', cause].filter(Boolean).join(' · ').slice(0, 200);
+}
+
 /** آخرین اطلاعیه‌های یک نماد، از جدید به قدیم */
 export async function fetchCodalLetters(symbol: string): Promise<CodalLetter[]> {
   const url = new URL(CODAL_SEARCH);

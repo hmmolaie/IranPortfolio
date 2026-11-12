@@ -4,6 +4,7 @@ import { PrismaService } from '../prisma/prisma.service';
 import { tehranDateKey } from '../news/tehran-date';
 import {
   codalReportListUrl,
+  describeCodalError,
   fetchCodalLetterText,
   fetchCodalLetters,
   type CodalLetter,
@@ -11,7 +12,7 @@ import {
 
 /** نمادهایی که در کدال اطلاعیه دارند */
 const CODAL_ASSET_TYPES = new Set<AssetType>([AssetType.STOCK, AssetType.FUND, AssetType.GOLD_ETF]);
-const RETRY_AFTER_FAIL_MS = 10 * 60 * 1000;
+const RETRY_AFTER_FAIL_MS = 2 * 60 * 1000;
 const TEXT_CONCURRENCY = 3;
 
 export type CodalNoticesDto = {
@@ -38,6 +39,7 @@ export class CodalService {
   private readonly logger = new Logger(CodalService.name);
   private readonly inFlight = new Map<string, Promise<void>>();
   private readonly failedAt = new Map<string, number>();
+  private readonly failReason = new Map<string, string>();
 
   constructor(private readonly prisma: PrismaService) {}
 
@@ -68,7 +70,9 @@ export class CodalService {
     if (state?.dateKey !== today) {
       const lastFail = this.failedAt.get(symbol) ?? 0;
       if (Date.now() - lastFail < RETRY_AFTER_FAIL_MS) {
-        errorFa = 'واکشی از کدال چند دقیقه پیش ناموفق بود؛ کمی بعد دوباره تلاش می‌شود.';
+        errorFa = `واکشی از کدال چند دقیقه پیش ناموفق بود؛ کمی بعد دوباره تلاش می‌شود. دلیل: ${
+          this.failReason.get(symbol) ?? 'نامشخص'
+        }`;
       } else {
         try {
           await this.crawlOnce(symbol, today);
@@ -76,8 +80,10 @@ export class CodalService {
           state = await this.prisma.codalNoticeFetch.findUnique({ where: { symbol } });
         } catch (e) {
           this.failedAt.set(symbol, Date.now());
-          this.logger.warn(`کدال ${symbol}: ${(e as Error).message.slice(0, 180)}`);
-          errorFa = 'الان اتصال به کدال برقرار نشد.';
+          const reason = describeCodalError(e);
+          this.failReason.set(symbol, reason);
+          this.logger.warn(`کدال ${symbol}: ${reason}`);
+          errorFa = `الان اتصال به کدال برقرار نشد. دلیل: ${reason}`;
         }
       }
     }
