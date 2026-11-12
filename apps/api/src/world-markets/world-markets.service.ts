@@ -40,6 +40,17 @@ function errorDetail(e: unknown): string {
   return parts.join('\n--- علت ---\n');
 }
 
+/** صفحهٔ خطای HTML را به متن دیدنی‌اش کوتاه می‌کند تا در خطاهای مشاهده‌شده خوانا باشد */
+function visibleText(body: string): string {
+  if (!body.trimStart().startsWith('<')) return body;
+  return body
+    .replace(/<(script|style|svg)[\s\S]*?<\/\1>/gi, ' ')
+    .replace(/<[^>]+>/g, ' ')
+    .replace(/&nbsp;/gi, ' ')
+    .replace(/\s+/g, ' ')
+    .trim();
+}
+
 const REFRESH_ID = 'latest';
 const CREATE_CHUNK = 250;
 const MAX_MACRO_NEWS = 5;
@@ -151,6 +162,8 @@ export class WorldMarketsService implements OnModuleInit {
   private yahooBackfill: Promise<void> | null = null;
   private yahooMissAt = 0;
   private refreshInFlight = false;
+  private manualStartedAt: string | null = null;
+  private manualError: { at: string; message: string; detail: string } | null = null;
 
   constructor(
     private readonly prisma: PrismaService,
@@ -376,6 +389,33 @@ export class WorldMarketsService implements OnModuleInit {
       unitFa,
       noteFa,
       bars,
+    };
+  }
+
+  /**
+   * به‌روزرسانی دستی در پس‌زمینه. کل کار چند دقیقه طول می‌کشد و CDN جلوی سایت
+   * درخواست طولانی را با خطای ۴۰۰ می‌بُرد؛ پس پاسخ فوری است و صفحه وضعیت را می‌پرسد.
+   */
+  startManualRefresh() {
+    if (!this.refreshInFlight) {
+      this.manualStartedAt = new Date().toISOString();
+      this.manualError = null;
+      void this.refreshFromBitpin().catch((e) => {
+        this.manualError = {
+          at: new Date().toISOString(),
+          message: (e as Error)?.message ?? String(e),
+          detail: errorDetail(e).slice(0, 8000),
+        };
+      });
+    }
+    return this.refreshStatus();
+  }
+
+  refreshStatus() {
+    return {
+      running: this.refreshInFlight,
+      startedAt: this.manualStartedAt,
+      error: this.manualError,
     };
   }
 
@@ -738,9 +778,13 @@ export class WorldMarketsService implements OnModuleInit {
 
       const text = await res.text();
       if (!res.ok) {
-        throw new BadRequestException(`بیت‌پین پاسخ ${res.status} داد`, {
-          cause: new Error(`${url}\n${text.slice(0, 4000)}`),
-        });
+        const blocked = res.status === 403 || res.status === 451;
+        throw new BadRequestException(
+          blocked
+            ? `بیت‌پین درخواست سرور را رد کرد (کد ${res.status}): آی‌پی یا موقعیت سرور از سمت بیت‌پین بسته است. نشانی API بیت‌پین را در تنظیمات به نشانی‌ای عوض کنید که از این سرور در دسترس باشد.`
+            : `بیت‌پین پاسخ ${res.status} داد`,
+          { cause: new Error(`${url}\n${visibleText(text).slice(0, 2000)}`) },
+        );
       }
 
       let json: unknown;

@@ -329,7 +329,30 @@ export default function WorldEconomyPage() {
     setRefreshing(true);
     setRefreshError('');
     try {
-      const res = await api<WorldList>('/world-markets/refresh', { method: 'POST' });
+      // کار در پس‌زمینهٔ سرور انجام می‌شود؛ درخواست چنددقیقه‌ای را CDN جلوی سایت قطع می‌کند
+      type RefreshStatus = {
+        running: boolean;
+        error: { at: string; message: string; detail: string } | null;
+      };
+      let status = await api<RefreshStatus>('/world-markets/refresh', {
+        method: 'POST',
+        body: JSON.stringify({}),
+      });
+      const deadline = Date.now() + 15 * 60 * 1000;
+      while (status.running && Date.now() < deadline) {
+        await new Promise((resolve) => setTimeout(resolve, 4000));
+        status = await api<RefreshStatus>('/world-markets/refresh-status');
+      }
+      if (status.running) {
+        toast.error('به‌روزرسانی هنوز در سرور در جریان است؛ چند دقیقهٔ دیگر صفحه را تازه کنید.');
+        return;
+      }
+      if (status.error) {
+        setRefreshError(status.error.detail || status.error.message);
+        toast.error(status.error.message);
+        return;
+      }
+      const res = await api<WorldList>('/world-markets');
       setData(res);
       toast.success(`${res.symbolCount.toLocaleString('fa-IR')} نماد جایگزین شد.`);
     } catch (e) {

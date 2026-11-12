@@ -47,7 +47,12 @@ export class WorldMarketsController {
 
   @Post('refresh')
   refresh() {
-    return this.worldMarkets.refreshFromBitpin();
+    return this.worldMarkets.startManualRefresh();
+  }
+
+  @Get('refresh-status')
+  refreshStatus() {
+    return this.worldMarkets.refreshStatus();
   }
 
   @Post('refresh-error')
