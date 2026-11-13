@@ -15,7 +15,7 @@ import { assertPublicHttpUrl } from '../common/safe-url';
 import { bucketAsset, fundShift, ClassKey } from '../intelligence/engine';
 
 /** آنالیز گزارش صندوق متن بلند دارد و بیشتر از پیش‌فرض ۲ دقیقه طول می‌کشد */
-const FUND_ANALYSIS_TIMEOUT_MS = 5 * 60_000;
+const FUND_ANALYSIS_TIMEOUT_MS = 10 * 60_000;
 /** اگر با متن کامل time out شد، تلاش دوم با همین مقدار نویسه */
 const RETRY_TEXT_CHARS = 25_000;
 
@@ -433,7 +433,7 @@ export class FundsService implements OnApplicationBootstrap {
       try {
         analysis = await this.runFundAnalysis(report.userId, report.fundName, report.reportMonth, kind, fullText, sheets);
       } catch (e) {
-        // مدل با متن کامل در ۵ دقیقه جواب نداد؛ یک‌بار با متن کوتاه‌تر (همهٔ بخش‌ها، هرکدام کوتاه‌تر) دوباره
+        // مدل با متن کامل در ۱۰ دقیقه جواب نداد؛ یک‌بار با متن کوتاه‌تر (همهٔ بخش‌ها، هرکدام کوتاه‌تر) دوباره
         if (!isModelTimeout(e) || fullText.length <= RETRY_TEXT_CHARS) throw e;
         this.logger.warn(`آنالیز گزارش صندوق ${id}: time out؛ تلاش دوباره با متن کوتاه‌تر`);
         analysis = await this.runFundAnalysis(

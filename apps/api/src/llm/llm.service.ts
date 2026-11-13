@@ -1,4 +1,5 @@
 import { randomUUID } from 'crypto';
+import { Agent, fetch as undiciFetch } from 'undici';
 import { Injectable, Logger, BadRequestException } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import { UserRole } from '@prisma/client';
@@ -549,12 +550,18 @@ export class LlmService {
     body: Record<string, unknown>,
     timeoutMs = 120_000,
   ): Promise<{ content: string; usage: TokenUse }> {
-    const res = await fetch(`${creds.baseUrl}/chat/completions`, {
+    const init = {
       method: 'POST',
       headers: this.requestHeaders(creds),
       body: JSON.stringify(body),
       signal: AbortSignal.timeout(timeoutMs),
-    });
+    };
+    // fetch داخلی Node بیشتر از ۵ دقیقه منتظر پاسخ نمی‌ماند (headersTimeout)؛ برای سقف بلندتر کلاینت جدا
+    const res = (
+      timeoutMs > NODE_FETCH_WAIT_MS
+        ? await undiciFetch(`${creds.baseUrl}/chat/completions`, { ...init, dispatcher: longWaitAgent(timeoutMs) })
+        : await fetch(`${creds.baseUrl}/chat/completions`, init)
+    ) as Response;
 
     const text = await res.text();
     if (!res.ok) {
@@ -1426,9 +1433,29 @@ export class LlmService {
   }
 }
 
+/** پیش‌فرض headersTimeout و bodyTimeout در fetch داخلی Node */
+const NODE_FETCH_WAIT_MS = 300_000;
+const longWaitAgents = new Map<number, Agent>();
+
+/** کلاینتی که تا سقف خواسته‌شده منتظر سرآیند و بدنهٔ پاسخ مدل می‌ماند؛ برای هر سقف یکی ساخته و نگه داشته می‌شود */
+function longWaitAgent(timeoutMs: number): Agent {
+  let agent = longWaitAgents.get(timeoutMs);
+  if (!agent) {
+    agent = new Agent({ headersTimeout: timeoutMs + 5_000, bodyTimeout: timeoutMs + 5_000 });
+    longWaitAgents.set(timeoutMs, agent);
+  }
+  return agent;
+}
+
 function isRequestTimeout(error: unknown): boolean {
   if (!(error instanceof Error)) return false;
-  return error.name === 'TimeoutError' || error.name === 'AbortError' || /aborted due to timeout/i.test(error.message);
+  const cause = (error as { cause?: { code?: string } }).cause?.code ?? '';
+  return (
+    error.name === 'TimeoutError' ||
+    error.name === 'AbortError' ||
+    /UND_ERR_(HEADERS|BODY)_TIMEOUT/.test(cause) ||
+    /aborted due to timeout/i.test(error.message)
+  );
 }
 
 function isSpeechTimeout(error: unknown): boolean {
