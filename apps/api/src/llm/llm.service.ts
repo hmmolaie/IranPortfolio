@@ -198,11 +198,23 @@ export class LlmService {
       systemModel?: string;
       systemOneBaseUrl?: string;
       systemOneApiToken?: string;
+      searchBaseUrl?: string;
+      searchModel?: string;
+      searchApiToken?: string;
       apiToken?: string;
       usePlatformFallback?: boolean;
     },
   ) {
+    const searchBaseUrl = data.searchBaseUrl?.trim().replace(/\/+$/, '');
+    if (searchBaseUrl && !/^https?:\/\//i.test(searchBaseUrl)) {
+      throw new BadRequestException('نشانی سرویس جستجوی زنده باید با http یا https شروع شود');
+    }
     const update: Record<string, unknown> = {};
+    if (searchBaseUrl !== undefined) update.searchBaseUrl = searchBaseUrl;
+    if (data.searchModel !== undefined) update.searchModel = data.searchModel.trim();
+    if (data.searchApiToken?.trim()) {
+      update.searchTokenEncrypted = this.encryptToken(data.searchApiToken.trim());
+    }
     if (data.baseUrl !== undefined) update.baseUrl = data.baseUrl.trim().replace(/\/$/, '');
     if (data.model !== undefined) update.model = data.model.trim();
     if (data.systemModel !== undefined) update.systemModel = data.systemModel.trim();
@@ -226,6 +238,11 @@ export class LlmService {
         systemOneTokenEncrypted: data.systemOneApiToken
           ? this.encryptToken(data.systemOneApiToken.trim())
           : undefined,
+        searchBaseUrl: searchBaseUrl ?? '',
+        searchModel: data.searchModel?.trim() ?? '',
+        searchTokenEncrypted: data.searchApiToken?.trim()
+          ? this.encryptToken(data.searchApiToken.trim())
+          : undefined,
         usePlatformFallback: data.usePlatformFallback ?? true,
       },
       update,
@@ -243,6 +260,9 @@ export class LlmService {
       usePlatformFallback: s.usePlatformFallback,
       hasToken: Boolean(s.apiTokenEncrypted),
       hasSystemOneToken: Boolean(s.systemOneTokenEncrypted),
+      searchBaseUrl: s.searchBaseUrl,
+      searchModel: s.searchModel,
+      hasSearchToken: Boolean(s.searchTokenEncrypted),
     };
   }
 
@@ -338,6 +358,28 @@ export class LlmService {
       fallbackModels: [...models.slice(1), ...envFallbacks],
       apiKey,
     };
+  }
+
+  /**
+   * اتصال جستجوی زنده (وب و X) از تنظیمات ادمین، جدا از مدل زبانی.
+   * اگر نشانی یا کلید آن ذخیره نشده باشد، همان اتصال مدل زبانی برمی‌گردد.
+   */
+  private async searchCredentials(creds: LlmCreds): Promise<LlmCreds> {
+    const adminId = await this.adminUserId();
+    const row = adminId ? await this.prisma.llmSetting.findUnique({ where: { userId: adminId } }) : null;
+    const baseUrl = row?.searchBaseUrl?.trim().replace(/\/+$/, '') ?? '';
+    if (!baseUrl || !row?.searchTokenEncrypted) return creds;
+    let apiKey = '';
+    try {
+      apiKey = this.decryptToken(row.searchTokenEncrypted);
+    } catch {
+      throw new Error('کلید سرویس جستجوی زنده خوانده نشد. آن را دوباره در تنظیمات ذخیره کنید.');
+    }
+    const models = parseModelList(row.searchModel ?? '');
+    if (!models.length) {
+      throw new Error('مدل سرویس جستجوی زنده در تنظیمات ادمین خالی است.');
+    }
+    return { baseUrl, apiKey, model: models[0], fallbackModels: models.slice(1) };
   }
 
   /** تصمیم System One. خروجی متن نیست؛ هر سؤال choice یا score یا noul است. */
@@ -856,7 +898,7 @@ export class LlmService {
     if (search) {
       try {
         const r = await this.callResponsesForJson(
-          creds,
+          await this.searchCredentials(creds),
           system,
           userPrompt,
           search,

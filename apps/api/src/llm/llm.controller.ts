@@ -1,5 +1,5 @@
 import { Body, Controller, Delete, Get, Param, Post, Put, Req, UseGuards } from '@nestjs/common';
-import { IsBoolean, IsOptional, IsString } from 'class-validator';
+import { IsBoolean, IsOptional, IsString, MaxLength } from 'class-validator';
 import { LlmService } from './llm.service';
 import { JwtAuthGuard } from '../auth/jwt-auth.guard';
 import { AdminGuard } from '../auth/admin.guard';
@@ -24,6 +24,21 @@ class UpdateLlmDto {
   @IsOptional()
   @IsString()
   systemOneApiToken?: string;
+
+  @IsOptional()
+  @IsString()
+  @MaxLength(300)
+  searchBaseUrl?: string;
+
+  @IsOptional()
+  @IsString()
+  @MaxLength(300)
+  searchModel?: string;
+
+  @IsOptional()
+  @IsString()
+  @MaxLength(400)
+  searchApiToken?: string;
 
   @IsOptional()
   @IsString()

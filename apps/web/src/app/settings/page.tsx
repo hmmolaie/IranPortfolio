@@ -158,10 +158,14 @@ export default function SettingsPage() {
     systemModel: '',
     systemOneBaseUrl: 'https://system-one.dev/v1',
     systemOneApiToken: '',
+    searchBaseUrl: '',
+    searchModel: '',
+    searchApiToken: '',
     apiToken: '',
     usePlatformFallback: true,
     hasToken: false,
     hasSystemOneToken: false,
+    hasSearchToken: false,
   });
   const [fundDefs, setFundDefs] = useState<FundDefinition[]>([]);
   const [newFund, setNewFund] = useState({ nameFa: '', symbolCode: '', description: '', websiteUrl: '' });
@@ -550,6 +554,9 @@ export default function SettingsPage() {
       usePlatformFallback: boolean;
       hasToken: boolean;
       hasSystemOneToken?: boolean;
+      searchBaseUrl?: string;
+      searchModel?: string;
+      hasSearchToken?: boolean;
     } | null>('/llm/settings')
       .then((s) => {
         if (!s) return;
@@ -563,6 +570,9 @@ export default function SettingsPage() {
           usePlatformFallback: s.usePlatformFallback,
           hasToken: s.hasToken,
           hasSystemOneToken: Boolean(s.hasSystemOneToken),
+          searchBaseUrl: s.searchBaseUrl ?? '',
+          searchModel: s.searchModel ?? '',
+          hasSearchToken: Boolean(s.hasSearchToken),
         }));
       })
       .catch(() => undefined);
@@ -928,14 +938,19 @@ export default function SettingsPage() {
           usePlatformFallback: llm.usePlatformFallback,
           ...(llm.apiToken ? { apiToken: llm.apiToken } : {}),
           ...(llm.systemOneApiToken ? { systemOneApiToken: llm.systemOneApiToken } : {}),
+          searchBaseUrl: llm.searchBaseUrl,
+          searchModel: llm.searchModel,
+          ...(llm.searchApiToken ? { searchApiToken: llm.searchApiToken } : {}),
         }),
       });
       setLlm((prev) => ({
         ...prev,
         apiToken: '',
         systemOneApiToken: '',
+        searchApiToken: '',
         hasToken: prev.hasToken || Boolean(llm.apiToken),
         hasSystemOneToken: prev.hasSystemOneToken || Boolean(llm.systemOneApiToken),
+        hasSearchToken: prev.hasSearchToken || Boolean(llm.searchApiToken),
       }));
       toast.success('تنظیمات LLM ذخیره شد.');
     } catch (err) {
@@ -1722,6 +1737,42 @@ export default function SettingsPage() {
               value={llm.systemOneApiToken}
               onChange={(e) => setLlm({ ...llm, systemOneApiToken: e.target.value })}
               placeholder={llm.hasSystemOneToken ? 'برای جایگزینی کلید جدید وارد کنید' : ''}
+              dir="ltr"
+            />
+          </div>
+          <div>
+            <label className="label">نشانی سرویس جستجوی زنده (وب و X)</label>
+            <input
+              className="input"
+              value={llm.searchBaseUrl}
+              onChange={(e) => setLlm({ ...llm, searchBaseUrl: e.target.value })}
+              dir="ltr"
+              placeholder="https://api.x.ai/v1"
+            />
+            <p className="mt-1 text-xs leading-6 text-navy-800/55">
+              فقط برای بخش‌هایی که خبر را از جستجوی زنده می‌گیرند: اخبار روزانه، اخبار کلان اقتصاد دنیا و
+              خبرنامهٔ شخصی. باید سرویسی باشد که ابزار جستجو دارد. اگر نشانی یا کلید خالی باشد، همان اتصال
+              مدل زبانی بالا استفاده می‌شود.
+            </p>
+          </div>
+          <div>
+            <label className="label">مدل سرویس جستجوی زنده</label>
+            <input
+              className="input"
+              value={llm.searchModel}
+              onChange={(e) => setLlm({ ...llm, searchModel: e.target.value })}
+              dir="ltr"
+              placeholder="grok-4"
+            />
+          </div>
+          <div>
+            <label className="label">کلید سرویس جستجوی زنده</label>
+            <input
+              className="input"
+              type="password"
+              value={llm.searchApiToken}
+              onChange={(e) => setLlm({ ...llm, searchApiToken: e.target.value })}
+              placeholder={llm.hasSearchToken ? 'برای جایگزینی کلید جدید وارد کنید' : ''}
               dir="ltr"
             />
           </div>

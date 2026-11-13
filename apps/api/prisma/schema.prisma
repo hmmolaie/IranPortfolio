@@ -298,6 +298,10 @@ model LlmSetting {
   systemModel          String  @default("")
   systemOneBaseUrl     String  @default("https://system-one.dev/v1")
   systemOneTokenEncrypted String?
+  /// سرویس جستجوی زنده (وب و X) برای اخبار؛ اگر نشانی یا کلید خالی باشد همان اتصال مدل زبانی استفاده می‌شود
+  searchBaseUrl        String  @default("")
+  searchModel          String  @default("")
+  searchTokenEncrypted String?
   apiTokenEncrypted    String?
   usePlatformFallback  Boolean @default(true)
   user                 User    @relation(fields: [userId], references: [id], onDelete: Cascade)
