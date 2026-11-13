@@ -7,6 +7,7 @@ import {
   describeCodalError,
   fetchCodalLetterText,
   fetchCodalLetters,
+  fetchTsetmcCodalLetters,
   type CodalLetter,
 } from './codal';
 
@@ -47,7 +48,7 @@ export class CodalService {
   async getNotices(instrumentId: string): Promise<CodalNoticesDto | null> {
     const inst = await this.prisma.instrument.findUnique({
       where: { id: instrumentId },
-      select: { symbol: true, assetType: true },
+      select: { symbol: true, assetType: true, insCode: true },
     });
     if (!inst) return null;
     const symbol = inst.symbol.trim();
@@ -75,7 +76,7 @@ export class CodalService {
         }`;
       } else {
         try {
-          await this.crawlOnce(symbol, today);
+          await this.crawlOnce(symbol, today, inst.insCode);
           this.failedAt.delete(symbol);
           state = await this.prisma.codalNoticeFetch.findUnique({ where: { symbol } });
         } catch (e) {
@@ -114,16 +115,39 @@ export class CodalService {
   }
 
   /** دو درخواست همزمان برای یک نماد فقط یک کرال می‌سازند */
-  private crawlOnce(symbol: string, dateKey: string): Promise<void> {
+  private crawlOnce(symbol: string, dateKey: string, insCode: string | null): Promise<void> {
     const running = this.inFlight.get(symbol);
     if (running) return running;
-    const job = this.crawl(symbol, dateKey).finally(() => this.inFlight.delete(symbol));
+    const job = this.crawl(symbol, dateKey, insCode).finally(() => this.inFlight.delete(symbol));
     this.inFlight.set(symbol, job);
     return job;
   }
 
-  private async crawl(symbol: string, dateKey: string): Promise<void> {
-    const letters = await fetchCodalLetters(symbol);
+  /**
+   * اول خود کدال؛ اگر وصل نشد (کدال آی‌پی بیرون ایران را نمی‌پذیرد) همان فهرست از tsetmc.
+   * در حالت دوم متن اطلاعیه خوانده نمی‌شود چون صفحهٔ متن هم روی codal.ir است.
+   */
+  private async loadLetters(
+    symbol: string,
+    insCode: string | null,
+  ): Promise<{ letters: CodalLetter[]; canReadText: boolean }> {
+    try {
+      return { letters: await fetchCodalLetters(symbol), canReadText: true };
+    } catch (e) {
+      if (!insCode) throw e;
+      const codalReason = describeCodalError(e);
+      try {
+        const letters = await fetchTsetmcCodalLetters(insCode);
+        this.logger.warn(`کدال ${symbol}: ${codalReason}؛ فهرست از tsetmc خوانده شد`);
+        return { letters, canReadText: false };
+      } catch (e2) {
+        throw new Error(`${codalReason} — tsetmc هم: ${describeCodalError(e2)}`);
+      }
+    }
+  }
+
+  private async crawl(symbol: string, dateKey: string, insCode: string | null): Promise<void> {
+    const { letters, canReadText } = await this.loadLetters(symbol, insCode);
     const fetchedAt = new Date();
 
     // متن اطلاعیه‌ای که قبلاً خوانده شده عوض نمی‌شود؛ دوباره کرال نمی‌شود
@@ -140,7 +164,7 @@ export class CodalService {
         bodies.set(l.tracingNo, saved);
         return false;
       }
-      return l.hasHtml;
+      return canReadText && l.hasHtml;
     });
     for (let i = 0; i < pending.length; i += TEXT_CONCURRENCY) {
       await Promise.all(

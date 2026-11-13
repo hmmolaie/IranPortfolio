@@ -115,6 +115,71 @@ export async function fetchCodalLetters(symbol: string): Promise<CodalLetter[]> 
   return out;
 }
 
+/** «۲۰۲۴-۰۱-۰۱T۱۲:۳۴:۵۶» به وقت تهران و بدون منطقهٔ زمانی ← «۱۴۰۲/۱۰/۱۱ ۱۲:۳۴» */
+function persianDateTime(raw: string): string {
+  const m = raw.match(/^(\d{4})-(\d{2})-(\d{2})[T ](\d{2}):(\d{2})/);
+  if (!m) return raw.slice(0, 40);
+  const asUtc = new Date(Date.UTC(+m[1], +m[2] - 1, +m[3], +m[4], +m[5]));
+  if (Number.isNaN(asUtc.getTime())) return raw.slice(0, 40);
+  const date = new Intl.DateTimeFormat('fa-IR-u-ca-persian', {
+    timeZone: 'UTC',
+    year: 'numeric',
+    month: '2-digit',
+    day: '2-digit',
+  }).format(asUtc);
+  const time = new Intl.DateTimeFormat('fa-IR', {
+    timeZone: 'UTC',
+    hour: '2-digit',
+    minute: '2-digit',
+    hour12: false,
+  }).format(asUtc);
+  return `${date} ${time}`;
+}
+
+/**
+ * همان فهرست اطلاعیه‌ها از نسخهٔ آمادهٔ tsetmc. codal.ir اتصال از آی‌پی بیرون ایران را نمی‌پذیرد،
+ * ولی cdn.tsetmc.com در دسترس است؛ این مسیر فقط فهرست و پیوند می‌دهد، نه متن اطلاعیه.
+ */
+export async function fetchTsetmcCodalLetters(insCode: string): Promise<CodalLetter[]> {
+  const res = await fetch(
+    `https://cdn.tsetmc.com/api/Codal/GetPreparedDataByInsCode/${CODAL_MAX_NOTICES}/${encodeURIComponent(insCode)}`,
+    {
+      headers: { 'User-Agent': UA, Accept: 'application/json', Referer: 'https://www.tsetmc.com/' },
+      signal: AbortSignal.timeout(25_000),
+    },
+  );
+  if (!res.ok) throw new Error(`tsetmc پاسخ ${res.status} داد`);
+  // شناسه‌های بلند عددی در JSON دقتشان را از دست ندهند
+  const text = (await res.text()).replace(/([:\[,]\s*)(-?\d{16,})(?=\s*[,}\]])/g, '$1"$2"');
+  let json: Record<string, unknown> | null;
+  try {
+    json = asRecord(JSON.parse(text));
+  } catch {
+    throw new Error('پاسخ tsetmc برای کدال JSON نبود');
+  }
+  const rows = Array.isArray(json?.preparedData) ? json.preparedData : null;
+  if (!rows) throw new Error('ساختار پاسخ کدال tsetmc ناشناخته است');
+
+  const out: CodalLetter[] = [];
+  for (const item of rows) {
+    const row = asRecord(item);
+    if (!row) continue;
+    const tracingNo = Number(row.tracingNo);
+    const titleFa = String(row.title ?? '').replace(/\s+/g, ' ').trim();
+    if (!Number.isInteger(tracingNo) || tracingNo <= 0 || !titleFa) continue;
+    out.push({
+      tracingNo,
+      titleFa: titleFa.slice(0, 500),
+      letterCode: null,
+      publishedAtFa: persianDateTime(String(row.publishDateTime_Gregorian ?? row.sentDateTime_Gregorian ?? '')),
+      url: `${CODAL_SITE}/ReportList.aspx?search&TracingNo=${tracingNo}`,
+      hasHtml: Number(row.hasHtmlReport) === 1 || row.hasHtmlReport === true,
+    });
+    if (out.length >= CODAL_MAX_NOTICES) break;
+  }
+  return out;
+}
+
 const ENTITIES: Record<string, string> = {
   nbsp: ' ',
   amp: '&',
