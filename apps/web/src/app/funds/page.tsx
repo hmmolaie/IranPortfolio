@@ -28,6 +28,9 @@ type Fund = {
   riskAppetiteScore?: number | null;
   professionalismScore?: number | null;
   useInSuggestions: boolean;
+  analysisStatus?: 'pending' | 'running' | 'done' | 'failed' | null;
+  analysisError?: string | null;
+  sourceUrl?: string | null;
   extractedSheetsJson?: {
     sheetCount?: number;
     sheetNames?: string[];
@@ -69,13 +72,12 @@ const MONTHS_FA = [
 
 const PAGE_SIZE = 10;
 
-const UPLOAD_STEPS = [
-  'خواندن فایل گزارش...',
-  'استخراج متن و جداول...',
-  'تحلیل استراتژی مدیر با AI...',
-  'امتیازدهی فنی و ریسک...',
-  'ذخیره نتیجه در پایگاه داده...',
-];
+/** فاصلهٔ بررسی وضعیت آنالیزهای در صف */
+const POLL_MS = 8000;
+
+function isAnalyzing(f: Fund) {
+  return f.analysisStatus === 'pending' || f.analysisStatus === 'running';
+}
 
 const ANALYZE_STEPS = [
   'جمع‌آوری گزارش‌های ماهانه...',
@@ -127,8 +129,12 @@ export default function FundsPage() {
   const [reportYear, setReportYear] = useState(() => String(getCurrentShamsiParts().year));
   const [reportMonthNum, setReportMonthNum] = useState(() => String(getCurrentShamsiParts().month));
   const [file, setFile] = useState<File | null>(null);
+  const [sourceMode, setSourceMode] = useState<'file' | 'url'>('file');
+  const [sourceUrl, setSourceUrl] = useState('');
+  const [fileInputKey, setFileInputKey] = useState(0);
   const [msg, setMsg] = useState('');
   const [loading, setLoading] = useState(false);
+  const [retryingId, setRetryingId] = useState<string | null>(null);
   const [deletingId, setDeletingId] = useState<string | null>(null);
 
   const [timelineFundId, setTimelineFundId] = useState('');
@@ -239,14 +245,47 @@ export default function FundsPage() {
     setExpandedId(null);
   }, [filterFundId, filterYear, filterMonth, sortKey]);
 
+  const pendingCount = funds.filter(isAnalyzing).length;
+
+  // تا وقتی آنالیزی در صف است، وضعیت گزارش‌ها هر چند ثانیه دوباره خوانده می‌شود
+  useEffect(() => {
+    if (!pendingCount) return;
+    const timer = setInterval(async () => {
+      try {
+        const data = await api<Fund[]>('/funds');
+        const finished = funds.filter(
+          (old) => isAnalyzing(old) && data.some((n) => n.id === old.id && !isAnalyzing(n)),
+        );
+        setFunds(data);
+        if (finished.length) {
+          const failed = data.filter(
+            (n) => n.analysisStatus === 'failed' && finished.some((o) => o.id === n.id),
+          ).length;
+          setMsg(
+            failed
+              ? `آنالیز ${finished.length.toLocaleString('fa-IR')} گزارش تمام شد؛ ${failed.toLocaleString('fa-IR')} مورد ناموفق بود.`
+              : `آنالیز ${finished.length.toLocaleString('fa-IR')} گزارش تمام شد.`,
+          );
+          if (timelineFundId) await loadTimeline(timelineFundId);
+        }
+      } catch {
+        /* نوبت بعد دوباره */
+      }
+    }, POLL_MS);
+    return () => clearInterval(timer);
+  }, [pendingCount, funds, timelineFundId]);
+
   async function onUpload(e: FormEvent) {
     e.preventDefault();
-    if (!file || !fundDefinitionId) return;
+    if (!fundDefinitionId) return;
+    const url = sourceUrl.trim();
+    if (sourceMode === 'file' ? !file : !url) return;
     setLoading(true);
     setMsg('');
     try {
       const fd = new FormData();
-      fd.append('file', file);
+      if (sourceMode === 'file' && file) fd.append('file', file);
+      if (sourceMode === 'url') fd.append('sourceUrl', url);
       fd.append('fundDefinitionId', fundDefinitionId);
       fd.append('reportYear', reportYear);
       fd.append('reportMonthNum', reportMonthNum);
@@ -255,19 +294,44 @@ export default function FundsPage() {
         headers: { Authorization: `Bearer ${getToken()}` },
         body: fd,
       });
-      if (!res.ok) throw new Error(await res.text());
-      const uploaded = (await res.json()) as Fund;
-      const sheetInfo = uploaded.extractedSheetsJson?.sheetCount
-        ? ` (${uploaded.extractedSheetsJson.sheetCount.toLocaleString('fa-IR')} شیت خوانده شد)`
-        : '';
-      setMsg(`گزارش تحلیل شد و ذخیره گردید${sheetInfo}.`);
+      if (!res.ok) {
+        const text = await res.text();
+        let message = text;
+        try {
+          const parsed = JSON.parse(text) as { message?: string | string[] };
+          if (parsed.message) message = Array.isArray(parsed.message) ? parsed.message.join('، ') : parsed.message;
+        } catch {
+          /* متن خام */
+        }
+        throw new Error(message);
+      }
+      setMsg(
+        sourceMode === 'url'
+          ? 'گزارش در صف قرار گرفت؛ فایل از نشانی دانلود و در پس‌زمینه آنالیز می‌شود. می‌توانید گزارش بعدی را اضافه کنید.'
+          : 'گزارش در صف قرار گرفت و در پس‌زمینه آنالیز می‌شود. می‌توانید گزارش بعدی را اضافه کنید.',
+      );
       setFile(null);
-      await load();
-      if (timelineFundId === fundDefinitionId) await loadTimeline(fundDefinitionId);
+      setSourceUrl('');
+      setFileInputKey((k) => k + 1);
+      await loadReports();
     } catch (err) {
       setMsg((err as Error).message);
     } finally {
       setLoading(false);
+    }
+  }
+
+  async function onRetry(id: string) {
+    setRetryingId(id);
+    setMsg('');
+    try {
+      await api(`/funds/${id}/retry`, { method: 'POST' });
+      setMsg('گزارش دوباره در صف آنالیز قرار گرفت.');
+      await loadReports();
+    } catch (err) {
+      setMsg((err as Error).message);
+    } finally {
+      setRetryingId(null);
     }
   }
 
@@ -374,19 +438,68 @@ export default function FundsPage() {
             ))}
           </select>
         </div>
-        <div className="sm:col-span-2">
-          <label className="label">فایل گزارش (PDF یا Excel)</label>
-          <input
-            type="file"
-            accept=".pdf,.xlsx,.xls,application/pdf,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet,application/vnd.ms-excel"
-            onChange={(e) => setFile(e.target.files?.[0] ?? null)}
-            required
-            disabled={loading}
-          />
+        <div className="sm:col-span-2 space-y-2">
+          <div className="flex flex-wrap gap-2" role="radiogroup" aria-label="منبع گزارش">
+            {(
+              [
+                ['file', 'بارگذاری فایل'],
+                ['url', 'نشانی فایل (URL)'],
+              ] as const
+            ).map(([mode, label]) => (
+              <button
+                key={mode}
+                type="button"
+                role="radio"
+                aria-checked={sourceMode === mode}
+                className={clsx(
+                  'rounded-full px-3 py-1 text-sm',
+                  sourceMode === mode ? 'bg-navy-900 text-white' : 'bg-navy-50 text-navy-800',
+                )}
+                onClick={() => setSourceMode(mode)}
+              >
+                {label}
+              </button>
+            ))}
+          </div>
+          {sourceMode === 'file' ? (
+            <div>
+              <label className="label">فایل گزارش (PDF یا Excel)</label>
+              <input
+                key={fileInputKey}
+                type="file"
+                accept=".pdf,.xlsx,.xls,application/pdf,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet,application/vnd.ms-excel"
+                onChange={(e) => setFile(e.target.files?.[0] ?? null)}
+                required
+              />
+            </div>
+          ) : (
+            <div>
+              <label className="label">نشانی فایل گزارش</label>
+              <input
+                className="input"
+                type="url"
+                dir="ltr"
+                placeholder="https://..."
+                value={sourceUrl}
+                onChange={(e) => setSourceUrl(e.target.value)}
+                required
+              />
+              <p className="mt-1 text-xs text-navy-800/55">
+                نشانی مستقیم PDF یا Excel، یا صفحه‌ای که پیوند فایل گزارش در آن است. فایل از سایت دانلود و آنالیز
+                می‌شود.
+              </p>
+            </div>
+          )}
         </div>
         <button className="btn-primary w-fit" disabled={loading || definitions.length === 0}>
-          {loading ? 'در حال تحلیل...' : 'بارگذاری و تحلیل'}
+          {loading ? 'در حال ثبت...' : 'افزودن به صف آنالیز'}
         </button>
+        {pendingCount > 0 && (
+          <p className="flex items-center gap-2 self-center text-sm text-navy-800/70">
+            <span className="inline-block h-2 w-2 animate-pulse rounded-full bg-gold-500" />
+            {pendingCount.toLocaleString('fa-IR')} گزارش در حال آنالیز است…
+          </p>
+        )}
         {msg && <p className="text-sm sm:col-span-2">{msg}</p>}
       </form>
 
@@ -587,6 +700,17 @@ export default function FundsPage() {
                     )}
                     <p className="mt-0.5 text-xs text-navy-800/50">
                       {monthLabel(f)}
+                      {isAnalyzing(f) && (
+                        <span className="ms-2 inline-flex items-center gap-1 rounded bg-navy-50 px-1.5 py-0.5 text-[10px] text-navy-800">
+                          <span className="inline-block h-1.5 w-1.5 animate-pulse rounded-full bg-gold-500" />
+                          {f.analysisStatus === 'running' ? 'در حال آنالیز…' : 'در صف آنالیز'}
+                        </span>
+                      )}
+                      {f.analysisStatus === 'failed' && (
+                        <span className="ms-2 rounded bg-red-50 px-1.5 py-0.5 text-[10px] text-red-700">
+                          آنالیز ناموفق
+                        </span>
+                      )}
                       {f.useInSuggestions && (
                         <span className="ms-2 rounded bg-gold-400/20 px-1.5 py-0.5 text-[10px] text-gold-500">
                           در پیشنهاد
@@ -613,6 +737,16 @@ export default function FundsPage() {
                           </span>
                         )}
                       </div>
+                      {f.analysisStatus === 'failed' && (
+                        <button
+                          type="button"
+                          className="btn-secondary !px-3 !py-1.5 text-xs"
+                          disabled={retryingId === f.id}
+                          onClick={() => onRetry(f.id)}
+                        >
+                          {retryingId === f.id ? 'در حال ثبت...' : 'آنالیز دوباره'}
+                        </button>
+                      )}
                       <button
                         type="button"
                         className="btn-secondary !px-3 !py-1.5 text-xs text-red-700 hover:bg-red-50"
@@ -628,8 +762,28 @@ export default function FundsPage() {
                       <ScoreChip label="ریسک‌پذیری" value={f.riskAppetiteScore} />
                       <ScoreChip label="حرفه‌ای‌بودن مالی" value={f.professionalismScore} />
                     </div>
-                    {f.guessedStrategyFa && (
-                      <p className="leading-7 text-navy-800/80">{f.guessedStrategyFa}</p>
+                    {f.analysisStatus === 'failed' && f.analysisError ? (
+                      <p className="whitespace-pre-line rounded-lg bg-red-50 px-3 py-2 text-sm leading-7 text-red-800">
+                        {f.analysisError}
+                      </p>
+                    ) : (
+                      f.guessedStrategyFa && (
+                        <p className="whitespace-pre-line leading-7 text-navy-800/80">{f.guessedStrategyFa}</p>
+                      )
+                    )}
+                    {f.sourceUrl && (
+                      <p className="text-xs text-navy-800/50">
+                        منبع:{' '}
+                        <a
+                          href={f.sourceUrl}
+                          target="_blank"
+                          rel="noopener noreferrer"
+                          dir="ltr"
+                          className="break-all underline"
+                        >
+                          {f.sourceUrl}
+                        </a>
+                      </p>
                     )}
                     {f.lessons?.length > 0 && (
                       <div>
@@ -687,13 +841,6 @@ export default function FundsPage() {
         )}
       </section>
 
-      {loading && (
-        <WaitingOverlay
-          title="در حال تحلیل گزارش"
-          description="فایل گزارش در حال استخراج و تحلیل با هوش مصنوعی است. لطفاً صفحه را نبندید."
-          steps={UPLOAD_STEPS}
-        />
-      )}
       {analyzing && (
         <WaitingOverlay
           title="در حال تحلیل ماه‌به‌ماه"

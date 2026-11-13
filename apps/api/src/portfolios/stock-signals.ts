@@ -103,6 +103,7 @@ async function attachFundMoves(prisma: PrismaService, stocks: StockFact[]) {
       fundDefinition: { isActive: true },
       reportYear: { not: null },
       reportMonthNum: { not: null },
+      analysisStatus: 'done',
     },
     select: { id: true, fundDefinitionId: true, reportYear: true, reportMonthNum: true },
   });

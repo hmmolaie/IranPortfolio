@@ -1,14 +1,36 @@
 import {
   BadRequestException,
   Injectable,
+  Logger,
   NotFoundException,
+  OnApplicationBootstrap,
 } from '@nestjs/common';
 import { PrismaService } from '../prisma/prisma.service';
 import { LlmService } from '../llm/llm.service';
 import * as fs from 'fs/promises';
 import * as path from 'path';
 import { extractFundReportText, safeUploadFileName } from './extract-report-text';
+import { downloadFundReport } from './report-download';
+import { assertPublicHttpUrl } from '../common/safe-url';
 import { bucketAsset, fundShift, ClassKey } from '../intelligence/engine';
+
+/** آنالیز گزارش صندوق متن بلند دارد و بیشتر از پیش‌فرض ۲ دقیقه طول می‌کشد */
+const FUND_ANALYSIS_TIMEOUT_MS = 5 * 60_000;
+
+/** شیت‌های ذخیره‌شده در extractedSheetsJson */
+type StoredSheets = {
+  sheetCount: number;
+  sheetNames: string[];
+  sheets: Array<{
+    name: string;
+    category: string;
+    priority?: number;
+    rowCount: number;
+    sectionTitles: string[];
+    headers?: string[];
+    rows: unknown[];
+  }>;
+};
 
 type FundHoldingInput = {
   symbol?: string;
@@ -90,11 +112,29 @@ function clampScore(n: unknown): number | null {
 }
 
 @Injectable()
-export class FundsService {
+export class FundsService implements OnApplicationBootstrap {
+  private readonly logger = new Logger(FundsService.name);
+  private readonly queue: string[] = [];
+  private draining = false;
+
   constructor(
     private readonly prisma: PrismaService,
     private readonly llm: LlmService,
   ) {}
+
+  /** آنالیزهایی که با ری‌استارت سرویس نیمه‌کاره ماندند دوباره در صف می‌روند */
+  async onApplicationBootstrap() {
+    try {
+      const stale = await this.prisma.fundReport.findMany({
+        where: { analysisStatus: { in: ['pending', 'running'] } },
+        orderBy: { createdAt: 'asc' },
+        select: { id: true },
+      });
+      for (const r of stale) this.enqueue(r.id);
+    } catch (e) {
+      this.logger.warn(`بازیابی صف آنالیز صندوق: ${(e as Error).message}`);
+    }
+  }
 
   listDefinitions(userId: string, includeInactive = false) {
     return this.prisma.fundDefinition.findMany({
@@ -172,6 +212,10 @@ export class FundsService {
         riskAppetiteScore: true,
         professionalismScore: true,
         useInSuggestions: true,
+        analysisStatus: true,
+        analysisError: true,
+        sourceUrl: true,
+        createdAt: true,
         lessons: { select: { id: true, titleFa: true } },
         _count: { select: { holdings: true } },
       },
@@ -220,15 +264,18 @@ export class FundsService {
     return { ok: true, id };
   }
 
+  /** گزارش را ثبت می‌کند و آنالیز را به صف پس‌زمینه می‌سپارد؛ پاسخ فوری برمی‌گردد. */
   async uploadAndAnalyze(
     userId: string,
-    file: Express.Multer.File,
+    file: Express.Multer.File | undefined,
     fundDefinitionId: string,
     reportYear: number,
     reportMonthNum: number,
+    sourceUrl?: string,
   ) {
-    if (!file?.buffer?.length) {
-      throw new BadRequestException('فایل گزارش ارسال نشده است');
+    const url = sourceUrl?.trim();
+    if (!file?.buffer?.length && !url) {
+      throw new BadRequestException('فایل گزارش یا نشانی آن را بفرستید');
     }
     if (reportMonthNum < 1 || reportMonthNum > 12) {
       throw new BadRequestException('ماه شمسی باید بین ۱ تا ۱۲ باشد');
@@ -240,14 +287,58 @@ export class FundsService {
     if (!def) throw new NotFoundException('صندوق را از تنظیمات تعریف کنید');
 
     const reportMonth = `${reportYear}-${String(reportMonthNum).padStart(2, '0')}`;
-    const fundName = def.nameFa;
+    const base = {
+      userId,
+      fundDefinitionId,
+      fundName: def.nameFa,
+      reportMonth,
+      reportYear,
+      reportMonthNum,
+      analysisStatus: 'pending',
+      guessedStrategyFa: 'در حال آنالیز…',
+    };
 
-    const { kind, text: extractedText, excel } = await extractFundReportText(file);
+    let report;
+    if (file?.buffer?.length) {
+      const extracted = await this.extractAndStore(file);
+      report = await this.prisma.fundReport.create({ data: { ...base, ...extracted } });
+    } else {
+      try {
+        await assertPublicHttpUrl(url!);
+      } catch (e) {
+        throw new BadRequestException((e as Error).message);
+      }
+      // دانلود هم در پس‌زمینه انجام می‌شود؛ filePath بعد از دانلود پر می‌شود
+      report = await this.prisma.fundReport.create({
+        data: { ...base, filePath: '', sourceUrl: url },
+      });
+    }
+
+    this.enqueue(report.id);
+    return report;
+  }
+
+  /** آنالیز ناموفق را دوباره به صف می‌فرستد */
+  async retryAnalysis(userId: string, id: string) {
+    const report = await this.prisma.fundReport.findFirst({ where: { id, userId } });
+    if (!report) throw new NotFoundException('گزارش پیدا نشد');
+    if (report.analysisStatus === 'pending' || report.analysisStatus === 'running') {
+      return report;
+    }
+    const updated = await this.prisma.fundReport.update({
+      where: { id },
+      data: { analysisStatus: 'pending', analysisError: null, guessedStrategyFa: 'در حال آنالیز…' },
+    });
+    this.enqueue(id);
+    return updated;
+  }
+
+  private async extractAndStore(file: Pick<Express.Multer.File, 'buffer' | 'originalname' | 'mimetype'>) {
+    const { kind, text: extractedText, excel } = await extractFundReportText(file as Express.Multer.File);
     if (kind === 'unknown' && !extractedText) {
       throw new BadRequestException('فرمت فایل پشتیبانی نمی‌شود. PDF یا Excel (xlsx/xls) بفرستید.');
     }
-
-    const sheetsPayload = excel
+    const sheetsPayload: StoredSheets | null = excel
       ? {
           sheetCount: excel.sheetCount,
           sheetNames: excel.sheetNames,
@@ -268,56 +359,118 @@ export class FundsService {
     const filePath = path.join(dir, safeUploadFileName(file.originalname));
     await fs.writeFile(filePath, file.buffer);
 
-    const analysis = await this.runFundAnalysis(
-      userId,
-      fundName,
-      reportMonth,
-      kind,
+    return {
+      filePath,
       extractedText,
-      excel,
-    );
+      extractedSheetsJson: sheetsPayload ? (sheetsPayload as object) : undefined,
+      analysisJson: { fileKind: kind },
+    };
+  }
 
-    const report = await this.prisma.fundReport.create({
-      data: {
-        userId,
-        fundDefinitionId,
-        fundName,
-        reportMonth,
-        reportYear,
-        reportMonthNum,
-        filePath,
-        extractedText,
-        extractedSheetsJson: sheetsPayload ?? undefined,
-        guessedStrategyFa: analysis.guessedStrategyFa,
-        rating: analysis.rating,
-        managerTechnicalScore: analysis.managerTechnicalScore,
-        riskAppetiteScore: analysis.riskAppetiteScore,
-        professionalismScore: analysis.professionalismScore,
-        useInSuggestions: Boolean(analysis.useInSuggestions && (analysis.rating ?? 0) >= 7),
-        analysisJson: analysis as object,
-      },
-    });
+  private enqueue(reportId: string) {
+    if (!this.queue.includes(reportId)) this.queue.push(reportId);
+    void this.drainQueue();
+  }
 
-    for (const lesson of analysis.lessons ?? []) {
-      await this.prisma.lesson.create({
+  /** گزارش‌ها یکی‌یکی آنالیز می‌شوند تا مقایسهٔ ماه‌به‌ماه به ترتیب ثبت شود */
+  private async drainQueue() {
+    if (this.draining) return;
+    this.draining = true;
+    try {
+      for (;;) {
+        const id = this.queue.shift();
+        if (!id) break;
+        await this.processReport(id).catch((e) =>
+          this.logger.error(`آنالیز گزارش صندوق ${id}: ${(e as Error).message}`),
+        );
+      }
+    } finally {
+      this.draining = false;
+    }
+  }
+
+  private async processReport(id: string) {
+    let report = await this.prisma.fundReport.findUnique({ where: { id } });
+    if (!report || report.analysisStatus === 'done') return;
+    await this.prisma.fundReport.update({ where: { id }, data: { analysisStatus: 'running' } });
+
+    try {
+      if (report.sourceUrl && !report.filePath) {
+        const downloaded = await downloadFundReport(report.sourceUrl);
+        const extracted = await this.extractAndStore(downloaded);
+        report = await this.prisma.fundReport.update({ where: { id }, data: extracted });
+      }
+
+      const sheets = (report.extractedSheetsJson ?? null) as StoredSheets | null;
+      const kind =
+        (report.analysisJson as { fileKind?: string } | null)?.fileKind ?? (sheets ? 'excel' : 'pdf');
+      const analysis = await this.runFundAnalysis(
+        report.userId,
+        report.fundName,
+        report.reportMonth,
+        kind,
+        report.extractedText ?? '',
+        sheets,
+      );
+
+      // اگر کاربر وسط آنالیز گزارش را حذف کرده باشد، چیزی نوشته نمی‌شود
+      const still = await this.prisma.fundReport.findUnique({ where: { id }, select: { id: true } });
+      if (!still) return;
+
+      await this.prisma.fundReport.update({
+        where: { id },
         data: {
-          userId,
-          fundReportId: report.id,
-          titleFa: lesson.titleFa,
-          bodyFa: lesson.bodyFa,
-          source: 'fund_report',
+          guessedStrategyFa: analysis.guessedStrategyFa,
+          rating: analysis.rating,
+          managerTechnicalScore: analysis.managerTechnicalScore,
+          riskAppetiteScore: analysis.riskAppetiteScore,
+          professionalismScore: analysis.professionalismScore,
+          useInSuggestions: Boolean(analysis.useInSuggestions && (analysis.rating ?? 0) >= 7),
+          analysisJson: { ...(analysis as object), fileKind: kind },
+          analysisStatus: 'done',
+          analysisError: null,
         },
       });
+
+      await this.prisma.lesson.deleteMany({ where: { fundReportId: id, userId: report.userId } });
+      for (const lesson of analysis.lessons ?? []) {
+        await this.prisma.lesson.create({
+          data: {
+            userId: report.userId,
+            fundReportId: id,
+            titleFa: lesson.titleFa,
+            bodyFa: lesson.bodyFa,
+            source: 'fund_report',
+          },
+        });
+      }
+
+      await this.persistHoldings(
+        report.userId,
+        id,
+        report.fundDefinitionId,
+        report.reportYear,
+        report.reportMonthNum,
+        analysis.holdings,
+      );
+
+      if (report.fundDefinitionId) {
+        await this.analyzeTimeline(report.userId, report.fundDefinitionId).catch(() => undefined);
+      }
+    } catch (e) {
+      const message = (e as Error).message?.slice(0, 1000) || 'خطای نامشخص';
+      this.logger.warn(`آنالیز گزارش صندوق ${id} ناموفق: ${message}`);
+      await this.prisma.fundReport
+        .update({
+          where: { id },
+          data: {
+            analysisStatus: 'failed',
+            analysisError: message,
+            guessedStrategyFa: `آنالیز ناموفق بود: ${message}`,
+          },
+        })
+        .catch(() => undefined);
     }
-
-    await this.persistHoldings(userId, report.id, fundDefinitionId, reportYear, reportMonthNum, analysis.holdings);
-
-    await this.analyzeTimeline(userId, fundDefinitionId).catch(() => undefined);
-
-    return this.prisma.fundReport.findUnique({
-      where: { id: report.id },
-      include: { lessons: true, fundDefinition: true, holdings: true },
-    });
   }
 
   private async persistHoldings(
@@ -479,7 +632,7 @@ export class FundsService {
 
   async analyzeTimeline(userId: string, fundDefinitionId: string) {
     const reports = await this.prisma.fundReport.findMany({
-      where: { userId, fundDefinitionId },
+      where: { userId, fundDefinitionId, analysisStatus: 'done' },
       orderBy: [{ reportYear: 'asc' }, { reportMonthNum: 'asc' }],
       include: {
         holdings: {
@@ -573,7 +726,7 @@ export class FundsService {
     reportMonth: string,
     kind: string,
     extractedText: string,
-    excel?: import('./extract-report-text').ExcelExtractionResult,
+    excel?: StoredSheets | null,
   ): Promise<FundAnalysis> {
     const sheetOverview = excel?.sheets.map((s) => ({
       name: s.name,
@@ -597,6 +750,7 @@ ${sheetOverview ? `خلاصه شیت‌ها:\n${JSON.stringify(sheetOverview, nu
 متن استخراج‌شده (همهٔ شیت‌ها):
 ${extractedText || 'متن استخراج نشد'}`,
         userId,
+        { timeoutMs: FUND_ANALYSIS_TIMEOUT_MS },
       );
       if (!analysis.guessedStrategyFa) throw new Error('فیلد guessedStrategyFa نبود');
       analysis.lessons = Array.isArray(analysis.lessons) ? analysis.lessons : [];
@@ -633,17 +787,8 @@ ${extractedText || 'متن استخراج نشد'}`,
       }
       return analysis;
     } catch (e) {
-      const detail = (e as Error).message?.slice(0, 240) || 'خطای نامشخص';
-      return {
-        guessedStrategyFa: `تحلیل LLM در دسترس نبود؛ بررسی دستی لازم است. (${detail})`,
-        rating: 5,
-        useInSuggestions: false,
-        lessons: [],
-        holdings: [],
-        managerTechnicalScore: undefined,
-        riskAppetiteScore: undefined,
-        professionalismScore: undefined,
-      };
+      // گزارش با وضعیت failed می‌ماند و کاربر می‌تواند دوباره آنالیز کند
+      throw new Error(`تحلیل هوش مصنوعی: ${(e as Error).message?.slice(0, 600) || 'خطای نامشخص'}`);
     }
   }
 }

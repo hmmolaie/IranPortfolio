@@ -76,6 +76,12 @@ class UploadMetaDto {
   @Min(1)
   @Max(12)
   reportMonthNum!: number;
+
+  /** نشانی فایل PDF/Excel گزارش یا صفحه‌ای که پیوند آن را دارد؛ جایگزین فایل */
+  @IsOptional()
+  @IsString()
+  @MaxLength(2000)
+  sourceUrl?: string;
 }
 
 @Controller('funds')
@@ -185,7 +191,7 @@ export class FundsController {
   @UseInterceptors(FileInterceptor('file'))
   upload(
     @Req() req: { user: { userId: string } },
-    @UploadedFile() file: Express.Multer.File,
+    @UploadedFile() file: Express.Multer.File | undefined,
     @Body() body: UploadMetaDto,
   ) {
     return this.funds.uploadAndAnalyze(
@@ -194,7 +200,14 @@ export class FundsController {
       body.fundDefinitionId,
       body.reportYear,
       body.reportMonthNum,
+      body.sourceUrl,
     );
+  }
+
+  /** آنالیز ناموفق دوباره در صف پس‌زمینه */
+  @Post(':id/retry')
+  retry(@Req() req: { user: { userId: string } }, @Param('id') id: string) {
+    return this.funds.retryAnalysis(req.user.userId, id);
   }
 
   @Delete(':id')

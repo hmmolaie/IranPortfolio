@@ -471,6 +471,11 @@ model FundReport {
   professionalismScore   Float?
   useInSuggestions       Boolean  @default(false)
   analysisJson       Json?
+  /// pending | running | done | failed — آنالیز در صف پس‌زمینه انجام می‌شود
+  analysisStatus     String   @default("done")
+  analysisError      String?
+  /// اگر گزارش از نشانی وب گرفته شده باشد
+  sourceUrl          String?
   createdAt          DateTime @default(now())
 
   user           User            @relation(fields: [userId], references: [id], onDelete: Cascade)

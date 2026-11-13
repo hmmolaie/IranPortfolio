@@ -864,6 +864,7 @@ export class MarketService implements OnModuleInit {
         fundDefinition: { isActive: true },
         reportYear: { not: null },
         reportMonthNum: { not: null },
+        analysisStatus: 'done',
       },
       select: {
         id: true,

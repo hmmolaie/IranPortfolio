@@ -114,6 +114,8 @@ export type LlmChatOptions = {
   once?: boolean;
   /** خطا فقط در «خطاهای مشاهده‌شده» بماند و ردیف سوابق ساخته نشود. */
   errorLogOnly?: boolean;
+  /** سقف زمان هر درخواست مدل (میلی‌ثانیه)؛ پیش‌فرض ۱۲۰ ثانیه. با پایان زمان، دوباره بدون json_object امتحان نمی‌شود. */
+  timeoutMs?: number;
 };
 
 function normalizeLiveSearch(raw?: LlmChatOptions['liveSearch']): LlmLiveSearch | null {
@@ -545,12 +547,13 @@ export class LlmService {
   private async callChatCompletions(
     creds: LlmCreds,
     body: Record<string, unknown>,
+    timeoutMs = 120_000,
   ): Promise<{ content: string; usage: TokenUse }> {
     const res = await fetch(`${creds.baseUrl}/chat/completions`, {
       method: 'POST',
       headers: this.requestHeaders(creds),
       body: JSON.stringify(body),
-      signal: AbortSignal.timeout(120_000),
+      signal: AbortSignal.timeout(timeoutMs),
     });
 
     const text = await res.text();
@@ -587,6 +590,7 @@ export class LlmService {
   private async callWithModelFallback(
     creds: LlmCreds,
     makeBody: (model: string) => Record<string, unknown>,
+    timeoutMs?: number,
   ): Promise<{ content: string; model: string; usage: TokenUse }> {
     const models = [creds.model, ...creds.fallbackModels].filter(
       (m, i, arr) => m && arr.indexOf(m) === i,
@@ -597,7 +601,7 @@ export class LlmService {
     for (const model of models) {
       for (let attempt = 1; attempt <= maxAttemptsPerModel; attempt++) {
         try {
-          const result = await this.callChatCompletions(creds, makeBody(model));
+          const result = await this.callChatCompletions(creds, makeBody(model), timeoutMs);
           return { content: result.content, model, usage: result.usage };
         } catch (e) {
           lastErr = e;
@@ -826,6 +830,7 @@ export class LlmService {
     creds: LlmCreds,
     systemPrompt: string,
     userPrompt: string,
+    timeoutMs?: number,
   ): Promise<{ content: string; model: string; usage: TokenUse }> {
     const messages = [
       { role: 'system', content: systemPrompt },
@@ -840,16 +845,20 @@ export class LlmService {
         ...(creds.baseUrl.includes('openrouter.ai') && creds.fallbackModels.length
           ? { models: [model, ...creds.fallbackModels.filter((m) => m !== model)] }
           : {}),
-      }));
+      }), timeoutMs);
     } catch (e) {
       if (e instanceof LlmHttpError && e.isGatewayTimeout) throw e;
+      // سقف زمان دلخواه تمام شد؛ تلاش دوباره همان زمان را دوباره هدر می‌دهد
+      if (timeoutMs && isRequestTimeout(e)) {
+        throw new Error(`پاسخ مدل در ${Math.round(timeoutMs / 60_000)} دقیقه نرسید (time out)`);
+      }
       if (e instanceof LlmHttpError && e.isRateLimited) throw this.humanizeError(e);
       this.logger.warn(`chatJson با json_object ناموفق، تلاش بدون آن: ${(e as Error).message}`);
       return this.callWithModelFallback(creds, (model) => ({
         model,
         temperature: 0.3,
         messages,
-      }));
+      }), timeoutMs);
     }
   }
 
@@ -914,13 +923,13 @@ export class LlmService {
         this.logger.warn(
           `جستجوی زندهٔ ${SOCIAL_NETWORK_LABEL_FA} ناموفق؛ ادامه بدون ابزار جستجو: ${(e as Error).message.slice(0, 180)}`,
         );
-        const r = await this.callChatJsonCompletions(creds, system, userPrompt);
+        const r = await this.callChatJsonCompletions(creds, system, userPrompt, options?.timeoutMs);
         content = r.content;
         usedModel = r.model;
         usage = r.usage;
       }
     } else {
-      const r = await this.callChatJsonCompletions(creds, system, userPrompt);
+      const r = await this.callChatJsonCompletions(creds, system, userPrompt, options?.timeoutMs);
       content = r.content;
       usedModel = r.model;
       usage = r.usage;
@@ -1415,6 +1424,11 @@ export class LlmService {
       };
     }
   }
+}
+
+function isRequestTimeout(error: unknown): boolean {
+  if (!(error instanceof Error)) return false;
+  return error.name === 'TimeoutError' || error.name === 'AbortError' || /aborted due to timeout/i.test(error.message);
 }
 
 function isSpeechTimeout(error: unknown): boolean {
