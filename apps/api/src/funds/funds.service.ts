@@ -16,6 +16,30 @@ import { bucketAsset, fundShift, ClassKey } from '../intelligence/engine';
 
 /** آنالیز گزارش صندوق متن بلند دارد و بیشتر از پیش‌فرض ۲ دقیقه طول می‌کشد */
 const FUND_ANALYSIS_TIMEOUT_MS = 5 * 60_000;
+/** اگر با متن کامل time out شد، تلاش دوم با همین مقدار نویسه */
+const RETRY_TEXT_CHARS = 25_000;
+
+/**
+ * متن را به اندازهٔ هدف می‌رساند بدون اینکه بخش‌های آخر (مثل شیت‌های بعدی اکسل) کامل حذف شوند:
+ * هر بخش جداشده با خط خالی به همان نسبت کوتاه می‌شود.
+ */
+function shrinkText(text: string, target: number): string {
+  if (text.length <= target) return text;
+  const blocks = text.split(/\n{2,}/);
+  const ratio = target / text.length;
+  const out = blocks
+    .map((b) => {
+      const keep = Math.max(200, Math.floor(b.length * ratio));
+      return b.length <= keep ? b : `${b.slice(0, keep)}\n…`;
+    })
+    .join('\n\n');
+  return out.length > target * 1.3 ? `${out.slice(0, target)}\n…` : out;
+}
+
+function isModelTimeout(e: unknown): boolean {
+  const msg = e instanceof Error ? e.message : String(e);
+  return /time ?out|aborted due to timeout|TimeoutError/i.test(msg);
+}
 
 /** شیت‌های ذخیره‌شده در extractedSheetsJson */
 type StoredSheets = {
@@ -404,14 +428,23 @@ export class FundsService implements OnApplicationBootstrap {
       const sheets = (report.extractedSheetsJson ?? null) as StoredSheets | null;
       const kind =
         (report.analysisJson as { fileKind?: string } | null)?.fileKind ?? (sheets ? 'excel' : 'pdf');
-      const analysis = await this.runFundAnalysis(
-        report.userId,
-        report.fundName,
-        report.reportMonth,
-        kind,
-        report.extractedText ?? '',
-        sheets,
-      );
+      const fullText = report.extractedText ?? '';
+      let analysis: FundAnalysis;
+      try {
+        analysis = await this.runFundAnalysis(report.userId, report.fundName, report.reportMonth, kind, fullText, sheets);
+      } catch (e) {
+        // مدل با متن کامل در ۵ دقیقه جواب نداد؛ یک‌بار با متن کوتاه‌تر (همهٔ بخش‌ها، هرکدام کوتاه‌تر) دوباره
+        if (!isModelTimeout(e) || fullText.length <= RETRY_TEXT_CHARS) throw e;
+        this.logger.warn(`آنالیز گزارش صندوق ${id}: time out؛ تلاش دوباره با متن کوتاه‌تر`);
+        analysis = await this.runFundAnalysis(
+          report.userId,
+          report.fundName,
+          report.reportMonth,
+          kind,
+          shrinkText(fullText, RETRY_TEXT_CHARS),
+          sheets,
+        );
+      }
 
       // اگر کاربر وسط آنالیز گزارش را حذف کرده باشد، چیزی نوشته نمی‌شود
       const still = await this.prisma.fundReport.findUnique({ where: { id }, select: { id: true } });

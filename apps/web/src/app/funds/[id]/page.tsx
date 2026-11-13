@@ -99,9 +99,15 @@ const SERIES: { key: SeriesKey; label: string; color: string }[] = [
   { key: 'professionalismScore', label: 'حرفه‌ای‌بودن', color: '#5c6bc0' },
 ];
 
-function periodLabel(r: { reportYear?: number | null; reportMonthNum?: number | null; reportMonth?: string | null }) {
+/** برچسب دوره؛ نمودارها کوتاه (۶ نویسه، مثل ۰۴/ارد) و جدول تا ۱۰ نویسه می‌گیرد */
+function periodLabel(
+  r: { reportYear?: number | null; reportMonthNum?: number | null; reportMonth?: string | null },
+  maxChars = 6,
+) {
   if (r.reportYear && r.reportMonthNum) {
-    return `${String(r.reportYear).slice(-2)}/${MONTHS_FA[r.reportMonthNum - 1]?.slice(0, 3) ?? r.reportMonthNum}`;
+    const year = String(r.reportYear).slice(-2);
+    const monthChars = Math.max(1, maxChars - year.length - 1);
+    return `${year}/${MONTHS_FA[r.reportMonthNum - 1]?.slice(0, monthChars) ?? r.reportMonthNum}`;
   }
   return r.reportMonth ?? '—';
 }
@@ -573,7 +579,7 @@ export default function FundTrendPage() {
                   <tbody>
                     {symbolTrend.points.map((p) => (
                       <tr key={p.reportId} className="border-b border-navy-900/5">
-                        <td className="px-3 py-2">{periodLabel(p)}</td>
+                        <td className="px-3 py-2 whitespace-nowrap">{periodLabel(p, 10)}</td>
                         <td className="px-3 py-2">{p.weightPct != null ? formatNum(p.weightPct) : '—'}</td>
                         <td className="px-3 py-2">
                           {p.amountRial != null ? formatRial(p.amountRial) : '—'}
