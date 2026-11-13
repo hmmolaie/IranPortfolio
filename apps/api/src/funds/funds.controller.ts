@@ -150,6 +150,12 @@ export class FundsController {
     return this.funds.fundBehavior(req.user.userId, id);
   }
 
+  /** وزن هر نماد در سبد صندوق در همهٔ گزارش‌ها، برای نمودار تغییر سهم‌ها در طول زمان */
+  @Get('definitions/:id/weights-timeline')
+  weightsTimeline(@Req() req: { user: { userId: string } }, @Param('id') id: string) {
+    return this.funds.weightsTimeline(req.user.userId, id);
+  }
+
   /** دارایی‌های آخرین گزارش (یا گزارش مشخص با reportId) */
   @Get('definitions/:id/holdings')
   listHoldings(

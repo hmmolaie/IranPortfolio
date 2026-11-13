@@ -610,6 +610,56 @@ export class FundsService implements OnApplicationBootstrap {
     return { symbol: key, trend, points };
   }
 
+  /**
+   * وزن هر نماد در سبد صندوق در همهٔ گزارش‌های آنالیزشده، به ترتیب زمان (برای نقشهٔ حرارتی صفحهٔ صندوق).
+   * نمادی که در گزارشی نیست در همان دوره صفر است؛ گزارشی که هیچ دارایی استخراج‌شده ندارد «بدون داده» است.
+   */
+  async weightsTimeline(userId: string, fundDefinitionId: string) {
+    await this.requireDefinition(userId, fundDefinitionId);
+    const reports = await this.prisma.fundReport.findMany({
+      where: { userId, fundDefinitionId, analysisStatus: 'done' },
+      orderBy: [{ reportYear: 'asc' }, { reportMonthNum: 'asc' }, { createdAt: 'asc' }],
+      select: {
+        id: true,
+        reportMonth: true,
+        reportYear: true,
+        reportMonthNum: true,
+        holdings: {
+          where: { action: 'HELD', weightPct: { not: null } },
+          select: { symbol: true, nameFa: true, assetKind: true, weightPct: true },
+        },
+      },
+    });
+
+    const periods = reports.map((r) => ({
+      reportId: r.id,
+      reportMonth: r.reportMonth,
+      reportYear: r.reportYear,
+      reportMonthNum: r.reportMonthNum,
+      hasData: r.holdings.length > 0,
+    }));
+
+    const bySymbol = new Map<string, { symbol: string; nameFa: string; assetKind: string; weights: (number | null)[] }>();
+    reports.forEach((r, idx) => {
+      for (const h of r.holdings) {
+        const key = h.symbol.toLowerCase();
+        let row = bySymbol.get(key);
+        if (!row) {
+          row = {
+            symbol: h.symbol,
+            nameFa: h.nameFa,
+            assetKind: h.assetKind,
+            weights: reports.map((p) => (p.holdings.length ? 0 : null)),
+          };
+          bySymbol.set(key, row);
+        }
+        row.weights[idx] = Math.round(((row.weights[idx] ?? 0) + (h.weightPct ?? 0)) * 100) / 100;
+      }
+    });
+
+    return { periods, symbols: [...bySymbol.values()] };
+  }
+
   /** تغییر وزن کلاس‌ها بین گزارش‌ها؛ مشاهده است نه پیش‌بینی مدیر */
   async fundBehavior(userId: string, fundDefinitionId: string) {
     await this.requireDefinition(userId, fundDefinitionId);

@@ -4,6 +4,7 @@ import { useEffect, useMemo, useState } from 'react';
 import Link from 'next/link';
 import { useParams, useRouter } from 'next/navigation';
 import { api, formatNum, formatRial, getToken } from '@/lib/api';
+import { HoldingsHeatmap } from './holdings-heatmap';
 
 type FundDefinition = {
   id: string;
@@ -110,123 +111,6 @@ function periodLabel(
     return `${year}/${MONTHS_FA[r.reportMonthNum - 1]?.slice(0, monthChars) ?? r.reportMonthNum}`;
   }
   return r.reportMonth ?? '—';
-}
-
-function ScoreTrendChart({ reports }: { reports: FundReport[] }) {
-  const points = useMemo(() => {
-    return [...reports].sort((a, b) => {
-      const ay = a.reportYear ?? 0;
-      const by = b.reportYear ?? 0;
-      if (ay !== by) return ay - by;
-      return (a.reportMonthNum ?? 0) - (b.reportMonthNum ?? 0);
-    });
-  }, [reports]);
-
-  if (points.length < 2) {
-    return (
-      <p className="py-10 text-center text-sm text-navy-800/55">
-        برای رسم نمودار حداقل دو گزارش ماهانه لازم است.
-      </p>
-    );
-  }
-
-  const w = 720;
-  const h = 280;
-  const padL = 40;
-  const padR = 20;
-  const padT = 24;
-  const padB = 40;
-  const minY = 0;
-  const maxY = 10;
-  const n = points.length;
-
-  function xAt(i: number) {
-    return padL + (i / Math.max(1, n - 1)) * (w - padL - padR);
-  }
-  function yAt(v: number) {
-    return padT + (1 - (v - minY) / (maxY - minY)) * (h - padT - padB);
-  }
-
-  const paths = SERIES.map((s) => {
-    const coords = points
-      .map((p, i) => {
-        const v = p[s.key];
-        if (v == null) return null;
-        return `${xAt(i)},${yAt(v)}`;
-      })
-      .filter(Boolean);
-    return { ...s, d: coords.length >= 2 ? `M ${coords.join(' L ')}` : '' };
-  });
-
-  const yTicks = [0, 2.5, 5, 7.5, 10];
-
-  return (
-    <div className="overflow-x-auto">
-      <svg viewBox={`0 0 ${w} ${h}`} className="w-full min-w-[28rem]" role="img" aria-label="نمودار روند امتیازات">
-        {yTicks.map((t) => (
-          <g key={t}>
-            <line
-              x1={padL}
-              y1={yAt(t)}
-              x2={w - padR}
-              y2={yAt(t)}
-              stroke="rgba(11,31,58,0.08)"
-            />
-            <text x={padL - 8} y={yAt(t) + 4} textAnchor="end" className="fill-navy-800/45" fontSize={11}>
-              {t}
-            </text>
-          </g>
-        ))}
-
-        {paths.map(
-          (p) =>
-            p.d && (
-              <path
-                key={p.key}
-                d={p.d}
-                fill="none"
-                stroke={p.color}
-                strokeWidth={2.2}
-                strokeLinejoin="round"
-                strokeLinecap="round"
-              />
-            ),
-        )}
-
-        {SERIES.map((s) =>
-          points.map((p, i) => {
-            const v = p[s.key];
-            if (v == null) return null;
-            return (
-              <circle key={`${s.key}-${p.id}`} cx={xAt(i)} cy={yAt(v)} r={3.2} fill={s.color} />
-            );
-          }),
-        )}
-
-        {points.map((p, i) => (
-          <text
-            key={p.id}
-            x={xAt(i)}
-            y={h - 12}
-            textAnchor="middle"
-            className="fill-navy-800/50"
-            fontSize={10}
-          >
-            {periodLabel(p)}
-          </text>
-        ))}
-      </svg>
-
-      <div className="mt-3 flex flex-wrap gap-4 text-xs">
-        {SERIES.map((s) => (
-          <span key={s.key} className="inline-flex items-center gap-2">
-            <span className="h-2.5 w-2.5 rounded-full" style={{ backgroundColor: s.color }} />
-            {s.label}
-          </span>
-        ))}
-      </div>
-    </div>
-  );
 }
 
 function HoldingWeightChart({ trend }: { trend: SymbolTrend }) {
@@ -442,9 +326,14 @@ export default function FundTrendPage() {
         </div>
       )}
 
-      <section className="card">
-        <h2 className="mb-4 text-lg font-semibold">نمودار روند امتیازات</h2>
-        <ScoreTrendChart reports={reports} />
+      <section className="card space-y-3">
+        <div>
+          <h2 className="text-lg font-semibold">تغییر سهم‌ها در سبد صندوق</h2>
+          <p className="mt-1 text-sm text-navy-800/60">
+            وزن هر نماد از کل دارایی صندوق در گزارش‌های ماهانه؛ هرچه خانه پررنگ‌تر، سهم آن نماد بیشتر.
+          </p>
+        </div>
+        <HoldingsHeatmap fundId={id} />
       </section>
 
       <section className="card space-y-4">
