@@ -5,6 +5,7 @@ import { HealthController } from './health/health.controller';
 import { PrismaModule } from './prisma/prisma.module';
 import { ObservedErrorModule } from './common/observed-error.module';
 import { AuthModule } from './auth/auth.module';
+import { SessionsModule } from './sessions/sessions.module';
 import { UsersModule } from './users/users.module';
 import { MarketModule } from './market/market.module';
 import { PortfoliosModule } from './portfolios/portfolios.module';
@@ -33,6 +34,7 @@ import { PersonalDigestModule } from './personal-digest/personal-digest.module';
     PrismaModule,
     ObservedErrorModule,
     AuthModule,
+    SessionsModule,
     UsersModule,
     MarketModule,
     PortfoliosModule,

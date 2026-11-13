@@ -7,10 +7,12 @@ import { AuthController } from './auth.controller';
 import { JwtStrategy } from './jwt.strategy';
 import { WebAuthnService } from './webauthn.service';
 import { UsersModule } from '../users/users.module';
+import { SessionsModule } from '../sessions/sessions.module';
 
 @Module({
   imports: [
     UsersModule,
+    SessionsModule,
     PassportModule,
     JwtModule.registerAsync({
       useFactory: () => ({

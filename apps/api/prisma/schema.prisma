@@ -93,6 +93,7 @@ model User {
   economicNewsBatches EconomicNewsBatch[]
   marketChats MarketChatMessage[]
   webauthnCredentials WebAuthnCredential[]
+  sessions    UserSession[]
   walletTransactions WalletTransaction[]
   walletPayments WalletPayment[]
   walletNotices WalletNotice[]
@@ -1051,6 +1052,29 @@ model MobileLoginConfig {
   id        String   @id @default("default")
   enabled   Boolean  @default(false)
   updatedAt DateTime @updatedAt
+}
+
+/// هر ورود موفق یک نشست؛ شناسهٔ آن (sid) داخل JWT است و با هر درخواست lastSeenAt تازه می‌شود
+model UserSession {
+  id         String    @id @default(cuid())
+  userId     String
+  ip         String?
+  userAgent  String?
+  /// password | webauthn
+  method     String    @default("password")
+  loginAt    DateTime  @default(now())
+  lastSeenAt DateTime  @default(now())
+  endedAt    DateTime?
+  /// logout | kicked
+  endReason  String?
+  /// ادمینی که کاربر را اخراج کرده
+  endedById  String?
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId, loginAt])
+  @@index([lastSeenAt])
+  @@index([loginAt])
 }
 
 /** ثبت آی‌پی، موقعیت و شمارهٔ موبایل برای ورود با موبایل */

@@ -14,6 +14,7 @@ import {
   type AuthenticatorTransportFuture,
   type RegistrationResponseJSON,
 } from '@simplewebauthn/server';
+import type { SessionContext } from '../sessions/sessions.service';
 import { PrismaService } from '../prisma/prisma.service';
 import { AuthService } from './auth.service';
 import { publicSiteOrigins } from '../common/public-sites';
@@ -168,7 +169,11 @@ export class WebAuthnService {
     return options;
   }
 
-  async verifyAuthentication(response: AuthenticationResponseJSON, requestOrigin?: string) {
+  async verifyAuthentication(
+    response: AuthenticationResponseJSON,
+    requestOrigin?: string,
+    ctx: SessionContext = {},
+  ) {
     const { rpID, origins } = this.relyingParty(requestOrigin);
     const credentialId = response?.id;
     if (!credentialId) throw new UnauthorizedException('پاسخ زیست‌سنجی ناقص است');
@@ -214,7 +219,7 @@ export class WebAuthnService {
       },
     });
 
-    return this.auth.sessionFor(stored.user);
+    return this.auth.sessionFor(stored.user, { ...ctx, method: 'webauthn' });
   }
 
   listCredentials(userId: string) {

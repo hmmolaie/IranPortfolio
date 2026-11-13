@@ -2,7 +2,7 @@
 
 import Link from 'next/link';
 import { usePathname, useRouter } from 'next/navigation';
-import { getToken, clearSession, api, getUserRole, setUserRole, UserRole, touchSession, ensureAuthCookie, refreshSessionIfNeeded, sessionTimedOut, formatNum, formatRial } from '@/lib/api';
+import { getToken, clearSession, endServerSession, api, getUserRole, setUserRole, UserRole, touchSession, ensureAuthCookie, refreshSessionIfNeeded, sessionTimedOut, formatNum, formatRial } from '@/lib/api';
 import { useCallback, useEffect, useRef, useState } from 'react';
 import clsx from 'clsx';
 import { ToastProvider, useToast } from '@/components/Toast';
@@ -97,6 +97,7 @@ export function AppShell({ children }: { children: React.ReactNode }) {
     if (isAuthPage) return;
 
     function logoutIdle() {
+      endServerSession();
       clearSession();
       setAuthed(false);
       setRole(null);
@@ -161,6 +162,7 @@ export function AppShell({ children }: { children: React.ReactNode }) {
   });
 
   function logout() {
+    endServerSession();
     clearSession();
     setAuthed(false);
     setRole(null);

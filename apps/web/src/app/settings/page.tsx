@@ -7,6 +7,7 @@ import { adminApiErrorText, api, getToken } from '@/lib/api';
 import { TelegramBotLink } from '@/components/TelegramBotLink';
 import { useToast } from '@/components/Toast';
 import { WebAuthnSettings } from '@/components/WebAuthnSettings';
+import { OnlineUsersPanel } from '@/components/OnlineUsersPanel';
 import { WalletAdminPanel, WalletPanel } from './wallet-panel';
 import { formatShamsiDate, formatShamsiDateTime } from '@/lib/shamsi-date';
 
@@ -44,6 +45,7 @@ type SettingsTab =
   | 'refreshTimes'
   | 'telegramAssistant'
   | 'mobileLogin'
+  | 'onlineUsers'
   | 'fees'
   | 'wallet'
   | 'walletAdmin';
@@ -64,6 +66,7 @@ const TABS: { id: SettingsTab; label: string; adminOnly?: boolean }[] = [
   { id: 'telegramAssistant', label: 'دستیار تلگرام', adminOnly: true },
   { id: 'walletAdmin', label: 'تنظیمات کیف پول', adminOnly: true },
   { id: 'mobileLogin', label: 'ورود از طریق موبایل', adminOnly: true },
+  { id: 'onlineUsers', label: 'کاربران آنلاین', adminOnly: true },
   { id: 'fees', label: 'کارمزدها', adminOnly: true },
 ];
 
@@ -2218,6 +2221,8 @@ export default function SettingsPage() {
           )}
         </form>
       )}
+
+      {tab === 'onlineUsers' && isAdmin && <OnlineUsersPanel />}
 
       {tab === 'mobileLogin' && isAdmin && (
         <section className="card space-y-4">

@@ -6,6 +6,7 @@ import clsx from 'clsx';
 import { api, formatRial, getToken } from '@/lib/api';
 import { useToast } from '@/components/Toast';
 import { formatShamsiDate } from '@/lib/shamsi-date';
+import { LoginHistoryTable } from '@/components/LoginHistoryTable';
 
 type AppUser = {
   id: string;
@@ -704,6 +705,8 @@ export default function AdminUsersPage() {
           {loading ? '...' : 'افزودن کاربر'}
         </button>
       </form>
+
+      <LoginHistoryTable users={users} />
     </div>
   );
 }

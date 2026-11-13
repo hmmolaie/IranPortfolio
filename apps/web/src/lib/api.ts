@@ -103,7 +103,10 @@ export async function refreshSessionIfNeeded() {
     .then((res) => {
       if (res?.accessToken) setToken(res.accessToken);
     })
-    .catch(() => undefined)
+    .catch((err: unknown) => {
+      // نشست را ادمین بسته یا حساب غیرفعال شده؛ کاربر همان لحظه بیرون می‌رود
+      if (err instanceof ApiError && err.status === 401) expireAndRedirect();
+    })
     .finally(() => {
       refreshInFlight = null;
     });
@@ -153,6 +156,17 @@ export function getUserRole(): UserRole | null {
   if (typeof window === 'undefined') return null;
   const r = localStorage.getItem(ROLE_KEY);
   return r === 'ADMIN' || r === 'USER' || r === 'RESELLER' ? r : null;
+}
+
+/** نشست سمت سرور را می‌بندد تا زمان خروج در سوابق ورود ثبت شود؛ خطا نادیده گرفته می‌شود */
+export function endServerSession() {
+  const token = readStoredToken();
+  if (!token) return;
+  void fetch(apiUrl('/auth/logout'), {
+    method: 'POST',
+    headers: { Authorization: `Bearer ${token}` },
+    keepalive: true,
+  }).catch(() => undefined);
 }
 
 export function clearSession() {
