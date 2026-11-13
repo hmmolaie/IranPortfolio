@@ -38,6 +38,12 @@ export class LessonsService {
     return this.prisma.lesson.findMany({
       where: { userId },
       orderBy: { createdAt: 'desc' },
+      // درس گزارش صندوق: نام صندوق و ماه همان گزارش در صفحه نوشته می‌شود
+      include: {
+        fundReport: {
+          select: { fundName: true, reportMonth: true, reportYear: true, reportMonthNum: true, fundDefinitionId: true },
+        },
+      },
     });
   }
 

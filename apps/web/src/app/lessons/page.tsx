@@ -2,6 +2,7 @@
 
 import { FormEvent, useEffect, useState } from 'react';
 import { useRouter } from 'next/navigation';
+import Link from 'next/link';
 import { api, apiUrl, getToken } from '@/lib/api';
 import { WaitingOverlay } from '@/components/WaitingOverlay';
 import { formatShamsiDate } from '@/lib/shamsi-date';
@@ -12,7 +13,38 @@ type Lesson = {
   bodyFa: string;
   source?: string | null;
   createdAt: string;
+  fundReport?: {
+    fundName: string;
+    reportMonth: string;
+    reportYear?: number | null;
+    reportMonthNum?: number | null;
+    fundDefinitionId?: string | null;
+  } | null;
 };
+
+const MONTHS_FA = [
+  'فروردین',
+  'اردیبهشت',
+  'خرداد',
+  'تیر',
+  'مرداد',
+  'شهریور',
+  'مهر',
+  'آبان',
+  'آذر',
+  'دی',
+  'بهمن',
+  'اسفند',
+];
+
+/** «گزارش صندوق «X» — مهر ۱۴۰۴» */
+function fundReportLabel(r: NonNullable<Lesson['fundReport']>): string {
+  const month =
+    r.reportYear && r.reportMonthNum
+      ? `${MONTHS_FA[r.reportMonthNum - 1] ?? r.reportMonthNum} ${r.reportYear.toLocaleString('fa-IR', { useGrouping: false })}`
+      : r.reportMonth;
+  return `گزارش صندوق «${r.fundName}» — ${month}`;
+}
 
 const UPLOAD_STEPS = [
   'خواندن فایل PDF...',
@@ -160,7 +192,18 @@ export default function LessonsPage() {
             <p className="mt-2 whitespace-pre-line leading-7 text-navy-800/80">{l.bodyFa}</p>
             <div className="mt-3 flex flex-wrap items-center justify-between gap-2">
               <p className="text-xs text-navy-800/40">
-                {sourceLabel(l.source)} · {formatShamsiDate(l.createdAt)}
+                {l.fundReport ? (
+                  l.fundReport.fundDefinitionId ? (
+                    <Link href={`/funds/${l.fundReport.fundDefinitionId}`} className="hover:underline">
+                      {fundReportLabel(l.fundReport)}
+                    </Link>
+                  ) : (
+                    fundReportLabel(l.fundReport)
+                  )
+                ) : (
+                  sourceLabel(l.source)
+                )}{' · ثبت '}
+                {formatShamsiDate(l.createdAt)}
               </p>
               <button
                 type="button"
