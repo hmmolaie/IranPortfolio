@@ -1710,6 +1710,28 @@ export default function SettingsPage() {
             />
           </div>
           <div>
+            <label className="label">API Token</label>
+            <input
+              className="input"
+              type="password"
+              value={llm.apiToken}
+              onChange={(e) => setLlm({ ...llm, apiToken: e.target.value })}
+              placeholder={llm.hasToken ? 'برای جایگزینی توکن جدید وارد کنید' : 'sk-...'}
+              dir="ltr"
+            />
+          </div>
+          <div>
+            <label className="label">
+              <span dir="ltr">Base url (System-one)</span>
+            </label>
+            <input
+              className="input"
+              value={llm.systemOneBaseUrl}
+              onChange={(e) => setLlm({ ...llm, systemOneBaseUrl: e.target.value })}
+              dir="ltr"
+            />
+          </div>
+          <div>
             <label className="label">مدل system-one</label>
             <input
               className="input"
@@ -1722,15 +1744,6 @@ export default function SettingsPage() {
               فقط برای تشکیل سبد. این مدل متن نمی‌سازد؛ آنالیز سبد، اخبار و بقیه از مدل بالا می‌آیند. اگر خالی
               باشد تشکیل سبد انجام نمی‌شود.
             </p>
-          </div>
-          <div>
-            <label className="label">نشانی System One</label>
-            <input
-              className="input"
-              value={llm.systemOneBaseUrl}
-              onChange={(e) => setLlm({ ...llm, systemOneBaseUrl: e.target.value })}
-              dir="ltr"
-            />
           </div>
           <div>
             <label className="label">کلید System One</label>
@@ -1776,17 +1789,6 @@ export default function SettingsPage() {
               value={llm.searchApiToken}
               onChange={(e) => setLlm({ ...llm, searchApiToken: e.target.value })}
               placeholder={llm.hasSearchToken ? 'برای جایگزینی کلید جدید وارد کنید' : ''}
-              dir="ltr"
-            />
-          </div>
-          <div>
-            <label className="label">API Token</label>
-            <input
-              className="input"
-              type="password"
-              value={llm.apiToken}
-              onChange={(e) => setLlm({ ...llm, apiToken: e.target.value })}
-              placeholder={llm.hasToken ? 'برای جایگزینی توکن جدید وارد کنید' : 'sk-...'}
               dir="ltr"
             />
           </div>

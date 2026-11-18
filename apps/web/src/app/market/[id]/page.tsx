@@ -7,6 +7,7 @@ import { ASSET_TYPE_LABELS_FA, AssetType } from '@sabadyar/shared';
 import { api, formatNum, getToken } from '@/lib/api';
 import { OptionsTableRow, OptionsValueTable } from '@/components/OptionsValueTable';
 import { CodalNotices } from '@/components/CodalNotices';
+import { OptionPayoffCalculator } from '@/components/OptionPayoffCalculator';
 import clsx from 'clsx';
 import { formatShamsiDate } from '@/lib/shamsi-date';
 
@@ -27,6 +28,17 @@ type Instrument = {
   insCode?: string | null;
   meta?: { unit?: string } | null;
   last: Bar | null;
+  /** فقط برای اختیار معامله: مشخصات قرارداد برای ماشین‌حساب */
+  option?: {
+    side: 'CALL' | 'PUT';
+    sideFa: string | null;
+    strike: number;
+    daysLeft: number | null;
+    contractSize: number | null;
+    underlyingSymbol: string | null;
+    underlyingId: string | null;
+    underlyingPrice: number | null;
+  } | null;
 };
 
 type UnderlyingOptions = {
@@ -539,6 +551,40 @@ export default function MarketInstrumentPage() {
           <StatRow label="پایانی قبل" value={formatValue(stats.prev)} />
         </div>
       </div>
+
+      {inst.assetType === 'OPTION' && inst.option && (
+        <section className="card space-y-3">
+          <div className="flex flex-wrap gap-x-4 gap-y-1 text-sm text-navy-800/70">
+            <span>{inst.option.sideFa ?? (inst.option.side === 'CALL' ? 'اختیار خرید' : 'اختیار فروش')}</span>
+            <span>اعمال {formatNum(inst.option.strike)}</span>
+            {inst.option.daysLeft != null && (
+              <span>{Math.max(0, Math.round(inst.option.daysLeft)).toLocaleString('fa-IR')} روز تا سررسید</span>
+            )}
+            {inst.option.contractSize != null && <span>اندازهٔ قرارداد {formatNum(inst.option.contractSize)}</span>}
+            {inst.option.underlyingSymbol &&
+              (inst.option.underlyingId ? (
+                <Link href={`/market/${inst.option.underlyingId}`} className="text-gold-700 hover:underline">
+                  دارایی پایه: {inst.option.underlyingSymbol}
+                </Link>
+              ) : (
+                <span>دارایی پایه: {inst.option.underlyingSymbol}</span>
+              ))}
+          </div>
+          <OptionPayoffCalculator
+            key={inst.id}
+            embedded
+            initial={{
+              symbol: inst.symbol,
+              underlying: inst.option.underlyingSymbol,
+              side: inst.option.side,
+              strike: inst.option.strike,
+              premium: stats.current != null && stats.current > 0 ? stats.current : null,
+              spot: inst.option.underlyingPrice,
+              size: inst.option.contractSize,
+            }}
+          />
+        </section>
+      )}
 
       {liveOptions?.inSession && liveOptions.hasOptions && (
         <section className="space-y-4">

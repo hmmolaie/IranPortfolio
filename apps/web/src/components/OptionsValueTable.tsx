@@ -1,7 +1,6 @@
 'use client';
 
 import { useEffect, useMemo, useState } from 'react';
-import Link from 'next/link';
 import { useRouter } from 'next/navigation';
 import { formatNum } from '@/lib/api';
 
@@ -252,19 +251,6 @@ function cellContent(row: OptionsTableRow, key: SortKey): React.ReactNode {
     default:
       return null;
   }
-}
-
-function calculatorHref(row: OptionsTableRow) {
-  const q = new URLSearchParams({
-    symbol: row.symbol,
-    side: row.side,
-    strike: String(row.strike),
-  });
-  if (row.premium != null && row.premium > 0) q.set('premium', String(row.premium));
-  if (row.underlyingPrice != null) q.set('spot', String(row.underlyingPrice));
-  if (row.contractSize != null) q.set('size', String(row.contractSize));
-  if (row.underlyingSymbol) q.set('underlying', row.underlyingSymbol);
-  return `/options/calculator?${q.toString()}`;
 }
 
 function sortValue(row: OptionsTableRow, key: SortKey): string | number | null {
@@ -558,9 +544,6 @@ export function OptionsValueTable({
                   </button>
                 </th>
               ))}
-              <th className="px-2 py-3 text-start font-medium" title="نمودار سود و زیان در سررسید">
-                محاسبه
-              </th>
             </tr>
           </thead>
           <tbody>
@@ -584,15 +567,6 @@ export function OptionsValueTable({
                     {cellContent(row, column.key)}
                   </td>
                 ))}
-                <td className="px-2 py-2.5">
-                  <Link
-                    href={calculatorHref(row)}
-                    className="text-xs text-gold-700 hover:underline"
-                    onClick={(e) => e.stopPropagation()}
-                  >
-                    نمودار
-                  </Link>
-                </td>
               </tr>
             ))}
           </tbody>

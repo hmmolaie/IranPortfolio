@@ -1142,6 +1142,47 @@ export class MarketService implements OnModuleInit {
       insCode: i.insCode,
       meta: i.meta,
       last: i.priceBars[0] ?? null,
+      option: i.assetType === AssetType.OPTION ? await this.optionContractInfo(i) : null,
+    };
+  }
+
+  /**
+   * مشخصات قرارداد اختیار برای ماشین‌حساب صفحهٔ نماد: نوع، اعمال، اندازه، روز مانده و دارایی پایه.
+   * قیمت پایه از آخرین میلهٔ خود سهم پایه است و اگر نباشد همان قیمت ذخیره‌شده در meta.
+   */
+  private async optionContractInfo(i: { symbol: string; nameFa: string; meta: Prisma.JsonValue }) {
+    const meta = i.meta && typeof i.meta === 'object' && !Array.isArray(i.meta) ? (i.meta as Record<string, unknown>) : {};
+    const parsed = parseOptionMeta(meta, i.symbol, i.nameFa);
+    if (!parsed.side || parsed.strike == null) return null;
+    let underlyingId: string | null = null;
+    let underlyingPrice = parsed.underlyingPrice ?? null;
+    if (parsed.underlyingSymbol) {
+      const base = await this.prisma.instrument.findFirst({
+        where: {
+          symbol: parsed.underlyingSymbol,
+          assetType: { in: [AssetType.STOCK, AssetType.GOLD_ETF, AssetType.FUND] },
+        },
+        select: {
+          id: true,
+          priceBars: { orderBy: { tradeDate: 'desc' }, take: 1, select: { lastPrice: true, closePrice: true } },
+        },
+      });
+      if (base) {
+        underlyingId = base.id;
+        const bar = base.priceBars[0];
+        const price = bar?.lastPrice ?? bar?.closePrice;
+        if (price != null && price > 0) underlyingPrice = price;
+      }
+    }
+    return {
+      side: parsed.side,
+      sideFa: parsed.sideFa,
+      strike: parsed.strike,
+      daysLeft: parsed.daysLeft ?? null,
+      contractSize: parsed.contractSize ?? null,
+      underlyingSymbol: parsed.underlyingSymbol ?? null,
+      underlyingId,
+      underlyingPrice,
     };
   }
 
