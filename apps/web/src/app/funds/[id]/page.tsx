@@ -24,6 +24,8 @@ type FundReport = {
   riskAppetiteScore?: number | null;
   professionalismScore?: number | null;
   guessedStrategyFa?: string | null;
+  createdAt?: string | null;
+  user?: { name?: string | null; email?: string | null } | null;
 };
 
 type FundHolding = {
@@ -37,22 +39,20 @@ type FundHolding = {
   quantity?: number | null;
 };
 
-type TrackedSymbol = { symbol: string; nameFa: string };
-
-type SymbolTrend = {
-  symbol: string;
-  trend: 'up' | 'down' | 'flat' | 'unknown';
-  points: Array<{
-    reportId: string;
-    symbol: string;
-    nameFa: string;
-    weightPct?: number | null;
-    amountRial?: number | null;
-    reportYear?: number | null;
-    reportMonthNum?: number | null;
-    reportMonth?: string | null;
-  }>;
-};
+/** زمان ثبت گزارش به وقت تهران */
+function formatSubmittedAt(iso?: string | null) {
+  if (!iso) return '—';
+  const d = new Date(iso);
+  if (Number.isNaN(d.getTime())) return '—';
+  return d.toLocaleString('fa-IR', {
+    timeZone: 'Asia/Tehran',
+    year: 'numeric',
+    month: 'long',
+    day: 'numeric',
+    hour: '2-digit',
+    minute: '2-digit',
+  });
+}
 
 const MONTHS_FA = [
   'فروردین',
@@ -85,13 +85,6 @@ const ACTION_FA: Record<string, string> = {
   SOLD: 'فروش',
 };
 
-const TREND_FA: Record<string, string> = {
-  up: 'افزایشی',
-  down: 'کاهشی',
-  flat: 'تقریباً ثابت',
-  unknown: 'نامشخص',
-};
-
 type SeriesKey = 'rating' | 'managerTechnicalScore' | 'riskAppetiteScore' | 'professionalismScore';
 
 const SERIES: { key: SeriesKey; label: string; color: string }[] = [
@@ -101,82 +94,6 @@ const SERIES: { key: SeriesKey; label: string; color: string }[] = [
   { key: 'professionalismScore', label: 'حرفه‌ای‌بودن', color: '#5c6bc0' },
 ];
 
-/** برچسب دوره؛ نمودارها کوتاه (۶ نویسه، مثل ۰۴/ارد) و جدول تا ۱۰ نویسه می‌گیرد */
-function periodLabel(
-  r: { reportYear?: number | null; reportMonthNum?: number | null; reportMonth?: string | null },
-  maxChars = 6,
-) {
-  if (r.reportYear && r.reportMonthNum) {
-    const year = String(r.reportYear).slice(-2);
-    const monthChars = Math.max(1, maxChars - year.length - 1);
-    return `${year}/${MONTHS_FA[r.reportMonthNum - 1]?.slice(0, monthChars) ?? r.reportMonthNum}`;
-  }
-  return r.reportMonth ?? '—';
-}
-
-function HoldingWeightChart({ trend }: { trend: SymbolTrend }) {
-  const points = trend.points.filter((p) => p.weightPct != null);
-  if (points.length < 2) {
-    return (
-      <p className="py-6 text-center text-sm text-navy-800/55">
-        برای روند وزن، حداقل دو ماه با وزن موجودی لازم است.
-      </p>
-    );
-  }
-
-  const w = 640;
-  const h = 220;
-  const padL = 44;
-  const padR = 16;
-  const padT = 20;
-  const padB = 36;
-  const vals = points.map((p) => p.weightPct as number);
-  const minY = Math.max(0, Math.min(...vals) - 0.5);
-  const maxY = Math.max(...vals) + 0.5;
-  const n = points.length;
-
-  function xAt(i: number) {
-    return padL + (i / Math.max(1, n - 1)) * (w - padL - padR);
-  }
-  function yAt(v: number) {
-    return padT + (1 - (v - minY) / Math.max(0.01, maxY - minY)) * (h - padT - padB);
-  }
-
-  const d = points.map((p, i) => `${xAt(i)},${yAt(p.weightPct as number)}`).join(' L ');
-
-  return (
-    <div className="overflow-x-auto">
-      <svg viewBox={`0 0 ${w} ${h}`} className="w-full min-w-[24rem]" role="img" aria-label="روند وزن نماد">
-        <path
-          d={`M ${d}`}
-          fill="none"
-          stroke="#a8893e"
-          strokeWidth={2.4}
-          strokeLinejoin="round"
-          strokeLinecap="round"
-        />
-        {points.map((p, i) => (
-          <g key={p.reportId}>
-            <circle cx={xAt(i)} cy={yAt(p.weightPct as number)} r={3.5} fill="#0b1f3a" />
-            <text x={xAt(i)} y={h - 10} textAnchor="middle" className="fill-navy-800/50" fontSize={10}>
-              {periodLabel(p)}
-            </text>
-            <text
-              x={xAt(i)}
-              y={yAt(p.weightPct as number) - 8}
-              textAnchor="middle"
-              className="fill-navy-800/70"
-              fontSize={10}
-            >
-              {formatNum(p.weightPct)}٪
-            </text>
-          </g>
-        ))}
-      </svg>
-    </div>
-  );
-}
-
 export default function FundTrendPage() {
   const { id } = useParams<{ id: string }>();
   const router = useRouter();
@@ -185,9 +102,6 @@ export default function FundTrendPage() {
   const [error, setError] = useState('');
   const [selectedReportId, setSelectedReportId] = useState('');
   const [holdings, setHoldings] = useState<FundHolding[]>([]);
-  const [symbols, setSymbols] = useState<TrackedSymbol[]>([]);
-  const [selectedSymbol, setSelectedSymbol] = useState('');
-  const [symbolTrend, setSymbolTrend] = useState<SymbolTrend | null>(null);
   const [actionFilter, setActionFilter] = useState<'ALL' | 'HELD' | 'BOUGHT' | 'SOLD'>('ALL');
 
   useEffect(() => {
@@ -211,13 +125,6 @@ export default function FundTrendPage() {
       .catch((e) => {
         setError((e as Error).message);
       });
-
-    api<TrackedSymbol[]>(`/funds/definitions/${id}/symbols`)
-      .then((list) => {
-        setSymbols(list);
-        if (list[0]) setSelectedSymbol(list[0].symbol);
-      })
-      .catch(() => setSymbols([]));
   }, [id, router]);
 
   useEffect(() => {
@@ -229,18 +136,6 @@ export default function FundTrendPage() {
       .then(setHoldings)
       .catch(() => setHoldings([]));
   }, [id, selectedReportId]);
-
-  useEffect(() => {
-    if (!selectedSymbol) {
-      setSymbolTrend(null);
-      return;
-    }
-    api<SymbolTrend>(
-      `/funds/definitions/${id}/symbol-trend?symbol=${encodeURIComponent(selectedSymbol)}`,
-    )
-      .then(setSymbolTrend)
-      .catch(() => setSymbolTrend(null));
-  }, [id, selectedSymbol]);
 
   const latest = useMemo(() => {
     if (!reports.length) return null;
@@ -370,15 +265,7 @@ export default function FundTrendPage() {
             <tbody>
               {filteredHoldings.map((h) => (
                 <tr key={h.id} className="border-b border-navy-900/5 odd:bg-white even:bg-navy-50/40">
-                  <td className="px-3 py-2 font-medium">
-                    <button
-                      type="button"
-                      className="text-gold-700 hover:underline"
-                      onClick={() => setSelectedSymbol(h.symbol)}
-                    >
-                      {h.symbol}
-                    </button>
-                  </td>
+                  <td className="px-3 py-2 font-medium">{h.symbol}</td>
                   <td className="px-3 py-2">{h.nameFa}</td>
                   <td className="px-3 py-2">{KIND_FA[h.assetKind] ?? h.assetKind}</td>
                   <td className="px-3 py-2">{ACTION_FA[h.action] ?? h.action}</td>
@@ -397,67 +284,6 @@ export default function FundTrendPage() {
         </div>
       </section>
 
-      <section className="card space-y-4">
-        <div className="flex flex-wrap items-end justify-between gap-3">
-          <div>
-            <h2 className="text-lg font-semibold">روند نماد در سبد صندوق</h2>
-            <p className="mt-1 text-sm text-navy-800/60">
-              وزن موجودی (HELD) در ماه‌های متوالی — افزایش یعنی سهم در سبد صندوق بیشتر شده است.
-            </p>
-          </div>
-          <label className="text-sm">
-            <span className="mb-1 block text-navy-800/55">نماد</span>
-            <select
-              className="min-w-[10rem] rounded-lg border border-navy-900/15 bg-white px-3 py-2 text-sm"
-              value={selectedSymbol}
-              onChange={(e) => setSelectedSymbol(e.target.value)}
-            >
-              {symbols.length === 0 && <option value="">نماد ثبت‌نشده</option>}
-              {symbols.map((s) => (
-                <option key={s.symbol} value={s.symbol}>
-                  {s.symbol}
-                  {s.nameFa && s.nameFa !== s.symbol ? ` — ${s.nameFa}` : ''}
-                </option>
-              ))}
-            </select>
-          </label>
-        </div>
-
-        {symbolTrend && (
-          <>
-            <p className="text-sm">
-              روند کلی:{' '}
-              <span className="font-semibold">{TREND_FA[symbolTrend.trend] ?? symbolTrend.trend}</span>
-            </p>
-            <HoldingWeightChart trend={symbolTrend} />
-            {symbolTrend.points.length > 0 && (
-              <div className="overflow-x-auto">
-                <table className="min-w-full text-sm">
-                  <thead className="bg-navy-900/90 text-white">
-                    <tr>
-                      <th className="px-3 py-2 text-start">دوره</th>
-                      <th className="px-3 py-2 text-start">وزن ٪</th>
-                      <th className="px-3 py-2 text-start">مبلغ</th>
-                    </tr>
-                  </thead>
-                  <tbody>
-                    {symbolTrend.points.map((p) => (
-                      <tr key={p.reportId} className="border-b border-navy-900/5">
-                        <td className="px-3 py-2 whitespace-nowrap">{periodLabel(p, 10)}</td>
-                        <td className="px-3 py-2">{p.weightPct != null ? formatNum(p.weightPct) : '—'}</td>
-                        <td className="px-3 py-2">
-                          {p.amountRial != null ? formatRial(p.amountRial) : '—'}
-                        </td>
-                      </tr>
-                    ))}
-                  </tbody>
-                </table>
-              </div>
-            )}
-          </>
-        )}
-      </section>
-
       <section className="card overflow-x-auto p-0">
         <table className="min-w-full text-sm">
           <thead className="bg-navy-900 text-white">
@@ -467,6 +293,8 @@ export default function FundTrendPage() {
               <th className="px-4 py-3 text-start font-medium">فنی</th>
               <th className="px-4 py-3 text-start font-medium">ریسک</th>
               <th className="px-4 py-3 text-start font-medium">حرفه‌ای</th>
+              <th className="px-4 py-3 text-start font-medium">زمان ثبت گزارش</th>
+              <th className="px-4 py-3 text-start font-medium">کاربر</th>
             </tr>
           </thead>
           <tbody>
@@ -488,6 +316,8 @@ export default function FundTrendPage() {
                   <td className="px-4 py-3">{formatNum(r.managerTechnicalScore)}</td>
                   <td className="px-4 py-3">{formatNum(r.riskAppetiteScore)}</td>
                   <td className="px-4 py-3">{formatNum(r.professionalismScore)}</td>
+                  <td className="px-4 py-3 whitespace-nowrap">{formatSubmittedAt(r.createdAt)}</td>
+                  <td className="px-4 py-3">{r.user?.name?.trim() || r.user?.email || '—'}</td>
                 </tr>
               ))}
           </tbody>

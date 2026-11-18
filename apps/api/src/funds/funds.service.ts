@@ -170,6 +170,23 @@ export class FundsService implements OnApplicationBootstrap {
     } catch (e) {
       this.logger.warn(`بازیابی صف آنالیز صندوق: ${(e as Error).message}`);
     }
+    // ماه‌هایی که پیش از این نسخه یا با خطای مدل بی‌تحلیل مانده‌اند، یک‌بار بعد از بالا آمدن پر می‌شوند
+    setTimeout(() => void this.fillMissingTimelines(), 60_000);
+  }
+
+  private async fillMissingTimelines() {
+    try {
+      const funds = await this.prisma.fundReport.findMany({
+        where: { analysisStatus: 'done', fundDefinitionId: { not: null } },
+        distinct: ['fundDefinitionId'],
+        select: { userId: true, fundDefinitionId: true },
+      });
+      for (const f of funds) {
+        await this.autoTimelineForFund(f.userId, f.fundDefinitionId!);
+      }
+    } catch (e) {
+      this.logger.warn(`تکمیل تحلیل‌های ماه‌به‌ماه جاافتاده: ${(e as Error).message}`);
+    }
   }
 
   listDefinitions(userId: string, includeInactive = false) {
@@ -267,22 +284,34 @@ export class FundsService implements OnApplicationBootstrap {
     const reports = await this.prisma.fundReport.findMany({
       where: { userId, fundDefinitionId },
       orderBy: [{ reportYear: 'asc' }, { reportMonthNum: 'asc' }],
+      // کاربر ثبت‌کنندهٔ گزارش برای جدول دوره‌ها در صفحهٔ صندوق
+      include: { user: { select: { name: true, email: true } } },
     });
     const rows = await this.prisma.fundTimelineInsight.findMany({
       where: { userId, fundDefinitionId },
-      orderBy: [{ toReportYear: 'desc' }, { toReportMonthNum: 'desc' }, { createdAt: 'desc' }],
-      take: 24,
+      orderBy: { createdAt: 'desc' },
     });
-    const monthOf = new Map(reports.map((r) => [r.id, r.reportMonth]));
-    const insights = rows.map((ins) => ({
-      ...ins,
-      fromMonth: (ins.fromReportId && monthOf.get(ins.fromReportId)) || null,
-      toMonth:
-        (ins.toReportId && monthOf.get(ins.toReportId)) ||
-        (ins.toReportYear && ins.toReportMonthNum
-          ? `${ins.toReportYear}-${String(ins.toReportMonthNum).padStart(2, '0')}`
-          : null),
-    }));
+    const byId = new Map(reports.map((r) => [r.id, r]));
+    const monthLabel = (y: number, m: number) => `${y}-${String(m).padStart(2, '0')}`;
+    // گزارش‌ها ممکن است نامرتب ثبت شوند و تحلیل‌های قدیمی ماه را در ستون خودشان ندارند؛
+    // ماه مقصد از ستون یا از گزارش مقصد حساب و آخرین ماه اول می‌آید (ماه نامعلوم ته فهرست).
+    const insights = rows
+      .map((ins) => {
+        const to = ins.toReportId ? byId.get(ins.toReportId) : undefined;
+        const from = ins.fromReportId ? byId.get(ins.fromReportId) : undefined;
+        const y = ins.toReportYear ?? to?.reportYear ?? null;
+        const m = ins.toReportMonthNum ?? to?.reportMonthNum ?? null;
+        const order = y != null && m != null ? y * 12 + m : -1;
+        return {
+          ...ins,
+          order,
+          fromMonth: from?.reportMonth ?? null,
+          toMonth: to?.reportMonth ?? (y != null && m != null ? monthLabel(y, m) : null),
+        };
+      })
+      .sort((a, b) => b.order - a.order || b.createdAt.getTime() - a.createdAt.getTime())
+      .slice(0, 24)
+      .map(({ order: _order, ...ins }) => ins);
     return { fund: def, reports, insights };
   }
 
@@ -744,9 +773,20 @@ export class FundsService implements OnApplicationBootstrap {
     });
   }
 
-  private findMonthInsight(fundDefinitionId: string, year: number, month: number) {
+  /** تحلیل این ماه؛ تحلیل قدیمی بدون ستون ماه هم از روی گزارش مقصدش شمرده می‌شود */
+  private async findMonthInsight(fundDefinitionId: string, year: number, month: number) {
+    const monthReports = await this.prisma.fundReport.findMany({
+      where: { fundDefinitionId, reportYear: year, reportMonthNum: month },
+      select: { id: true },
+    });
     return this.prisma.fundTimelineInsight.findFirst({
-      where: { fundDefinitionId, toReportYear: year, toReportMonthNum: month },
+      where: {
+        fundDefinitionId,
+        OR: [
+          { toReportYear: year, toReportMonthNum: month },
+          ...(monthReports.length ? [{ toReportId: { in: monthReports.map((r) => r.id) } }] : []),
+        ],
+      },
     });
   }
 
@@ -768,11 +808,20 @@ export class FundsService implements OnApplicationBootstrap {
       select: { id: true, reportYear: true, reportMonthNum: true },
     });
     const done = await this.prisma.fundTimelineInsight.findMany({
-      where: { fundDefinitionId, toReportYear: { not: null } },
-      select: { toReportYear: true, toReportMonthNum: true },
+      where: { fundDefinitionId },
+      select: { toReportYear: true, toReportMonthNum: true, toReportId: true },
     });
     const monthKey = (y: number, m: number) => `${y}-${m}`;
-    const analyzed = new Set(done.map((d) => monthKey(d.toReportYear!, d.toReportMonthNum!)));
+    const reportMonth = new Map(reports.map((r) => [r.id, monthKey(r.reportYear!, r.reportMonthNum!)]));
+    const analyzed = new Set<string>();
+    for (const d of done) {
+      // تحلیل قدیمی ستون ماه ندارد؛ ماهش از گزارش مقصد می‌آید
+      if (d.toReportYear != null && d.toReportMonthNum != null) {
+        analyzed.add(monthKey(d.toReportYear, d.toReportMonthNum));
+      } else if (d.toReportId && reportMonth.has(d.toReportId)) {
+        analyzed.add(reportMonth.get(d.toReportId)!);
+      }
+    }
     // برای هر ماه تازه‌ترین گزارش (به خاطر createdAt desc اولی همان است)
     const byMonth = new Map<string, string>();
     for (const r of reports) {
