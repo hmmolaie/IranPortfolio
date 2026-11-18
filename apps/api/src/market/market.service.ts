@@ -947,9 +947,15 @@ export class MarketService implements OnModuleInit {
   async getValuableOptions() {
     const rows = await this.latestOptionBoardPrices();
     const inflationPct = await this.latestInflationPct();
+    // هر اینجست اختیار (کرون یا دکمهٔ ادمین) Instrument را upsert می‌کند و updatedAt تازه می‌شود
+    const lastOption = await this.prisma.instrument.aggregate({
+      where: { assetType: AssetType.OPTION, isActive: true },
+      _max: { updatedAt: true },
+    });
     return {
       disclaimerFa: 'این فهرست از قیمت ذخیره‌شدهٔ اختیار و دارایی پایه حساب شده و توصیهٔ قطعی معامله نیست.',
       inflationPct,
+      updatedAt: lastOption._max.updatedAt?.toISOString() ?? null,
       items: listValuableOptions(rows, inflationPct),
     };
   }

@@ -19,6 +19,16 @@ const FUND_ANALYSIS_TIMEOUT_MS = 10 * 60_000;
 /** اگر با متن کامل time out شد، تلاش دوم با همین مقدار نویسه */
 const RETRY_TEXT_CHARS = 25_000;
 
+/** دارایی‌هایی که برای تحلیل ماه‌به‌ماه به مدل داده می‌شود */
+const HOLDING_SELECT = {
+  symbol: true,
+  nameFa: true,
+  assetKind: true,
+  action: true,
+  weightPct: true,
+  amountRial: true,
+} as const;
+
 /**
  * متن را به اندازهٔ هدف می‌رساند بدون اینکه بخش‌های آخر (مثل شیت‌های بعدی اکسل) کامل حذف شوند:
  * هر بخش جداشده با خط خالی به همان نسبت کوتاه می‌شود.
@@ -140,6 +150,8 @@ export class FundsService implements OnApplicationBootstrap {
   private readonly logger = new Logger(FundsService.name);
   private readonly queue: string[] = [];
   private draining = false;
+  /** تحلیل ماه‌به‌ماهی که الان در حال ساخت است (صندوق:سال-ماه) تا هم‌زمان دوبار ساخته نشود */
+  private readonly timelineInFlight = new Set<string>();
 
   constructor(
     private readonly prisma: PrismaService,
@@ -256,12 +268,23 @@ export class FundsService implements OnApplicationBootstrap {
       where: { userId, fundDefinitionId },
       orderBy: [{ reportYear: 'asc' }, { reportMonthNum: 'asc' }],
     });
-    const insights = await this.prisma.fundTimelineInsight.findMany({
+    const rows = await this.prisma.fundTimelineInsight.findMany({
       where: { userId, fundDefinitionId },
-      orderBy: { createdAt: 'desc' },
-      take: 20,
+      orderBy: [{ toReportYear: 'desc' }, { toReportMonthNum: 'desc' }, { createdAt: 'desc' }],
+      take: 24,
     });
-    return { fund: def, reports, insights };
+    const monthOf = new Map(reports.map((r) => [r.id, r.reportMonth]));
+    const insights = rows.map((ins) => ({
+      ...ins,
+      fromMonth: (ins.fromReportId && monthOf.get(ins.fromReportId)) || null,
+      toMonth:
+        (ins.toReportId && monthOf.get(ins.toReportId)) ||
+        (ins.toReportYear && ins.toReportMonthNum
+          ? `${ins.toReportYear}-${String(ins.toReportMonthNum).padStart(2, '0')}`
+          : null),
+    }));
+    const pair = await this.latestMonthPair(userId, fundDefinitionId);
+    return { fund: def, reports, insights, analyze: pair.state };
   }
 
   async remove(userId: string, id: string) {
@@ -279,10 +302,6 @@ export class FundsService implements OnApplicationBootstrap {
       } catch {
         /* ignore */
       }
-    }
-
-    if (report.fundDefinitionId) {
-      await this.analyzeTimeline(userId, report.fundDefinitionId).catch(() => undefined);
     }
 
     return { ok: true, id };
@@ -488,7 +507,7 @@ export class FundsService implements OnApplicationBootstrap {
       );
 
       if (report.fundDefinitionId) {
-        await this.analyzeTimeline(report.userId, report.fundDefinitionId).catch(() => undefined);
+        await this.autoTimelineForReport(report.userId, report.fundDefinitionId, id);
       }
     } catch (e) {
       const message = (e as Error).message?.slice(0, 1000) || 'خطای نامشخص';
@@ -713,42 +732,145 @@ export class FundsService implements OnApplicationBootstrap {
     return def;
   }
 
-  async analyzeTimeline(userId: string, fundDefinitionId: string) {
-    const reports = await this.prisma.fundReport.findMany({
-      where: { userId, fundDefinitionId, analysisStatus: 'done' },
-      orderBy: [{ reportYear: 'asc' }, { reportMonthNum: 'asc' }],
-      include: {
-        holdings: {
-          select: {
-            symbol: true,
-            nameFa: true,
-            assetKind: true,
-            action: true,
-            weightPct: true,
-            amountRial: true,
-          },
-          take: 50,
-        },
-      },
+  /** ماه قبل در تقویم شمسی */
+  private previousMonth(year: number, month: number) {
+    return month > 1 ? { year, month: month - 1 } : { year: year - 1, month: 12 };
+  }
+
+  private nextMonth(year: number, month: number) {
+    return month < 12 ? { year, month: month + 1 } : { year: year + 1, month: 1 };
+  }
+
+  /** آخرین گزارش آنالیزشدهٔ یک ماه مشخص از صندوق */
+  private findDoneReport(userId: string, fundDefinitionId: string, year: number, month: number) {
+    return this.prisma.fundReport.findFirst({
+      where: { userId, fundDefinitionId, analysisStatus: 'done', reportYear: year, reportMonthNum: month },
+      orderBy: { createdAt: 'desc' },
     });
-    if (reports.length < 2) {
-      return { ok: false, reason: 'حداقل دو گزارش ماهانه لازم است' };
+  }
+
+  private findMonthInsight(fundDefinitionId: string, year: number, month: number) {
+    return this.prisma.fundTimelineInsight.findFirst({
+      where: { fundDefinitionId, toReportYear: year, toReportMonthNum: month },
+    });
+  }
+
+  /**
+   * آخرین ماه آنالیزشدهٔ صندوق و ماه قبلش؛ دکمهٔ «تحلیل ماه‌به‌ماه با AI» فقط وقتی فعال است
+   * که هر دو ماه گزارش داشته باشند و برای آن ماه هنوز تحلیلی ثبت نشده باشد.
+   */
+  private async latestMonthPair(userId: string, fundDefinitionId: string) {
+    const curr = await this.prisma.fundReport.findFirst({
+      where: {
+        userId,
+        fundDefinitionId,
+        analysisStatus: 'done',
+        reportYear: { not: null },
+        reportMonthNum: { not: null },
+      },
+      orderBy: [{ reportYear: 'desc' }, { reportMonthNum: 'desc' }, { createdAt: 'desc' }],
+    });
+    if (!curr || curr.reportYear == null || curr.reportMonthNum == null) {
+      return {
+        curr: null,
+        state: { canAnalyze: false, reasonFa: 'هنوز گزارش آنالیزشده‌ای نیست.' as string | null },
+      };
     }
+    const existing = await this.findMonthInsight(fundDefinitionId, curr.reportYear, curr.reportMonthNum);
+    if (existing) {
+      return {
+        curr,
+        state: {
+          canAnalyze: false,
+          reasonFa: `تحلیل ماه‌به‌ماه ${curr.reportMonth} قبلاً انجام شده است.` as string | null,
+        },
+      };
+    }
+    const p = this.previousMonth(curr.reportYear, curr.reportMonthNum);
+    const prev = await this.findDoneReport(userId, fundDefinitionId, p.year, p.month);
+    if (!prev) {
+      return {
+        curr,
+        state: {
+          canAnalyze: false,
+          reasonFa: `برای ماه قبل از ${curr.reportMonth} گزارش آنالیزشده‌ای نیست.` as string | null,
+        },
+      };
+    }
+    return { curr, state: { canAnalyze: true, reasonFa: null as string | null } };
+  }
 
-    const prev = reports[reports.length - 2];
-    const curr = reports[reports.length - 1];
+  /** دکمهٔ «تحلیل ماه‌به‌ماه با AI»: آخرین ماه با ماه قبلش، فقط یک‌بار برای هر صندوق و ماه */
+  async analyzeTimeline(userId: string, fundDefinitionId: string) {
+    await this.requireDefinition(userId, fundDefinitionId);
+    const { curr, state } = await this.latestMonthPair(userId, fundDefinitionId);
+    if (!curr || !state.canAnalyze) {
+      throw new BadRequestException(state.reasonFa ?? 'تحلیل ماه‌به‌ماه ممکن نیست');
+    }
+    const insight = await this.compareWithPreviousMonth(userId, fundDefinitionId, curr.id);
+    if (!insight) throw new BadRequestException('تحلیل ماه‌به‌ماه این ماه قبلاً انجام شده یا در حال انجام است.');
+    return { ok: true, insight };
+  }
 
-    type TimelineOut = {
-      summaryFa: string;
-      strategyChangeFa: string;
-      holdingsDiffFa: string;
-      llmReasoningFa: string;
-    };
+  /**
+   * بعد از آنالیز یک گزارش: اگر ماه قبلش گزارش دارد همین ماه با ماه قبل مقایسه می‌شود،
+   * و اگر ماه بعدش هم گزارش دارد و تحلیل نشده، ماه بعد با همین ماه. خطا فقط لاگ می‌شود.
+   */
+  private async autoTimelineForReport(userId: string, fundDefinitionId: string, reportId: string) {
+    const report = await this.prisma.fundReport.findUnique({ where: { id: reportId } });
+    if (!report || report.reportYear == null || report.reportMonthNum == null) return;
 
-    let out: TimelineOut;
+    const targets: string[] = [report.id];
+    const n = this.nextMonth(report.reportYear, report.reportMonthNum);
+    const next = await this.findDoneReport(userId, fundDefinitionId, n.year, n.month);
+    if (next) targets.push(next.id);
+
+    for (const id of targets) {
+      try {
+        await this.compareWithPreviousMonth(userId, fundDefinitionId, id);
+      } catch (e) {
+        this.logger.warn(`تحلیل ماه‌به‌ماه خودکار صندوق ${fundDefinitionId}: ${(e as Error).message}`);
+      }
+    }
+  }
+
+  /**
+   * گزارش یک ماه را با گزارش ماه قبلش مقایسه و تحلیل را ذخیره می‌کند.
+   * اگر ماه قبل گزارش نداشته باشد یا برای این صندوق و ماه قبلاً تحلیل ثبت شده باشد، مدل صدا زده نمی‌شود و null برمی‌گردد.
+   * خطای مدل ذخیره نمی‌شود تا ماه بی‌دلیل قفل نشود.
+   */
+  private async compareWithPreviousMonth(userId: string, fundDefinitionId: string, toReportId: string) {
+    const curr = await this.prisma.fundReport.findFirst({
+      where: { id: toReportId, userId, fundDefinitionId, analysisStatus: 'done' },
+      include: { holdings: { select: HOLDING_SELECT, take: 50 } },
+    });
+    if (!curr || curr.reportYear == null || curr.reportMonthNum == null) return null;
+    const year = curr.reportYear;
+    const month = curr.reportMonthNum;
+
+    const key = `${fundDefinitionId}:${year}-${month}`;
+    if (this.timelineInFlight.has(key)) return null;
+    this.timelineInFlight.add(key);
     try {
+      if (await this.findMonthInsight(fundDefinitionId, year, month)) return null;
+
+      const p = this.previousMonth(year, month);
+      const prevRow = await this.findDoneReport(userId, fundDefinitionId, p.year, p.month);
+      if (!prevRow) return null;
+      const prev = await this.prisma.fundReport.findUniqueOrThrow({
+        where: { id: prevRow.id },
+        include: { holdings: { select: HOLDING_SELECT, take: 50 } },
+      });
+
+      type TimelineOut = {
+        summaryFa: string;
+        strategyChangeFa: string;
+        holdingsDiffFa: string;
+        llmReasoningFa: string;
+      };
+
       const system = await this.llm.getSystemPrompt(userId, 'fund_timeline_analysis');
-      out = await this.llm.chatJson<TimelineOut>(
+      const out = await this.llm.chatJson<TimelineOut>(
         'fund_timeline_analysis',
         system,
         JSON.stringify({
@@ -770,29 +892,30 @@ export class FundsService implements OnApplicationBootstrap {
         }),
         userId,
       );
-    } catch (e) {
-      out = {
-        summaryFa: 'تحلیل مقایسه‌ای بدون LLM',
-        strategyChangeFa: `${prev.guessedStrategyFa ?? ''} → ${curr.guessedStrategyFa ?? ''}`,
-        holdingsDiffFa: 'مقایسه دستی لازم است',
-        llmReasoningFa: (e as Error).message.slice(0, 200),
-      };
+
+      try {
+        return await this.prisma.fundTimelineInsight.create({
+          data: {
+            userId,
+            fundDefinitionId,
+            fromReportId: prev.id,
+            toReportId: curr.id,
+            toReportYear: year,
+            toReportMonthNum: month,
+            summaryFa: out.summaryFa || 'بدون خلاصه',
+            strategyChangeFa: out.strategyChangeFa,
+            holdingsDiffFa: out.holdingsDiffFa,
+            llmReasoningFa: out.llmReasoningFa,
+          },
+        });
+      } catch (e) {
+        // ایندکس یکتای صندوق+ماه: تحلیل همین ماه از جای دیگری ثبت شده
+        if ((e as { code?: string }).code === 'P2002') return null;
+        throw e;
+      }
+    } finally {
+      this.timelineInFlight.delete(key);
     }
-
-    const insight = await this.prisma.fundTimelineInsight.create({
-      data: {
-        userId,
-        fundDefinitionId,
-        fromReportId: prev.id,
-        toReportId: curr.id,
-        summaryFa: out.summaryFa,
-        strategyChangeFa: out.strategyChangeFa,
-        holdingsDiffFa: out.holdingsDiffFa,
-        llmReasoningFa: out.llmReasoningFa,
-      },
-    });
-
-    return { ok: true, insight };
   }
 
   private sheetNamesFromJson(json: unknown): string[] {

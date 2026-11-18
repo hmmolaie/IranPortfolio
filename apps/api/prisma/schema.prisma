@@ -523,6 +523,9 @@ model FundTimelineInsight {
   fundDefinitionId String
   fromReportId     String?
   toReportId       String?
+  /// ماه گزارش مقصد؛ برای هر صندوق و هر ماه فقط یک تحلیل ماه‌به‌ماه با AI
+  toReportYear     Int?
+  toReportMonthNum Int?
   summaryFa        String
   strategyChangeFa String?
   holdingsDiffFa   String?
@@ -532,6 +535,7 @@ model FundTimelineInsight {
   user           User           @relation(fields: [userId], references: [id], onDelete: Cascade)
   fundDefinition FundDefinition @relation(fields: [fundDefinitionId], references: [id], onDelete: Cascade)
 
+  @@unique([fundDefinitionId, toReportYear, toReportMonthNum])
   @@index([fundDefinitionId])
   @@index([userId])
 }

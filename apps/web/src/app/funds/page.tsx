@@ -48,6 +48,12 @@ type TimelineInsight = {
   createdAt: string;
 };
 
+/** دکمهٔ تحلیل ماه‌به‌ماه: برای هر صندوق و ماه فقط یک‌بار */
+type TimelineAnalyzeState = {
+  canAnalyze: boolean;
+  reasonFa: string | null;
+};
+
 type SortKey =
   | 'newest'
   | 'rating'
@@ -142,6 +148,7 @@ export default function FundsPage() {
   const [timelineInsights, setTimelineInsights] = useState<TimelineInsight[]>([]);
   const [timelineLoading, setTimelineLoading] = useState(false);
   const [analyzing, setAnalyzing] = useState(false);
+  const [analyzeState, setAnalyzeState] = useState<TimelineAnalyzeState | null>(null);
 
   const [filterFundId, setFilterFundId] = useState('');
   const [filterYear, setFilterYear] = useState('');
@@ -187,9 +194,11 @@ export default function FundsPage() {
         fund: FundDefinition;
         reports: Fund[];
         insights: TimelineInsight[];
+        analyze?: TimelineAnalyzeState;
       }>(`/funds/timeline/${fundId}`);
       setTimelineReports(data.reports);
       setTimelineInsights(data.insights);
+      setAnalyzeState(data.analyze ?? null);
     } catch (e) {
       setMsg((e as Error).message);
     } finally {
@@ -530,13 +539,18 @@ export default function FundsPage() {
             <button
               type="button"
               className="btn-primary"
-              disabled={!timelineFundId || analyzing || timelineReports.length < 2}
+              disabled={!timelineFundId || analyzing || !analyzeState?.canAnalyze}
+              title={analyzeState?.reasonFa ?? undefined}
               onClick={onAnalyzeTimeline}
             >
               {analyzing ? 'در حال تحلیل...' : 'تحلیل ماه‌به‌ماه با AI'}
             </button>
           </div>
         </div>
+
+        {!timelineLoading && analyzeState && !analyzeState.canAnalyze && analyzeState.reasonFa && (
+          <p className="text-xs text-navy-800/50">{analyzeState.reasonFa}</p>
+        )}
 
         {timelineLoading ? (
           <p className="text-sm text-navy-800/60">در حال بارگذاری...</p>
@@ -560,7 +574,7 @@ export default function FundsPage() {
               <p className="text-sm text-navy-800/50">
                 {timelineReports.length < 2
                   ? 'حداقل دو گزارش ماهانه برای تحلیل مقایسه‌ای لازم است.'
-                  : 'تحلیل ماه‌به‌ماه هنوز انجام نشده. دکمه بالا را بزنید.'}
+                  : 'تحلیل ماه‌به‌ماه هنوز انجام نشده. با آنالیز گزارش ماه بعد، خودکار ساخته می‌شود.'}
               </p>
             ) : (
               <div className="space-y-4">

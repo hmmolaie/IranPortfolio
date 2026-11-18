@@ -8,8 +8,23 @@ import { OptionsTableRow, OptionsValueTable } from '@/components/OptionsValueTab
 type Payload = {
   disclaimerFa: string;
   inflationPct: number | null;
+  /** زمان آخرین اینجست اختیار معامله (ISO) */
+  updatedAt?: string | null;
   items: OptionsTableRow[];
 };
+
+function formatUpdatedAt(iso: string): string {
+  const d = new Date(iso);
+  if (Number.isNaN(d.getTime())) return '';
+  return d.toLocaleString('fa-IR', {
+    timeZone: 'Asia/Tehran',
+    year: 'numeric',
+    month: 'long',
+    day: 'numeric',
+    hour: '2-digit',
+    minute: '2-digit',
+  });
+}
 
 export default function OptionsMarketPage() {
   const router = useRouter();
@@ -124,16 +139,23 @@ export default function OptionsMarketPage() {
     <div className="space-y-6">
       <div className="flex flex-wrap items-start justify-between gap-4">
         <h1 className="text-3xl font-bold">بازار اختیار معامله</h1>
-        {isAdmin && (
-          <button
-            type="button"
-            className="btn-primary"
-            onClick={() => void refreshNow()}
-            disabled={refreshing || watching}
-          >
-            {watching ? 'در پس‌زمینه در جریان است' : refreshing ? 'در حال ارسال...' : 'به‌روزرسانی لحظه‌ای'}
-          </button>
-        )}
+        <div className="flex flex-col items-end gap-1">
+          {isAdmin && (
+            <button
+              type="button"
+              className="btn-primary"
+              onClick={() => void refreshNow()}
+              disabled={refreshing || watching}
+            >
+              {watching ? 'در پس‌زمینه در جریان است' : refreshing ? 'در حال ارسال...' : 'به‌روزرسانی لحظه‌ای'}
+            </button>
+          )}
+          {data?.updatedAt && (
+            <p className="text-xs text-navy-800/60">
+              آخرین به‌روزرسانی: {formatUpdatedAt(data.updatedAt)}
+            </p>
+          )}
+        </div>
       </div>
 
       {allowed === false && (
