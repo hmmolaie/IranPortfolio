@@ -1,6 +1,7 @@
 import { Module } from '@nestjs/common';
 import { TelegramController } from './telegram.controller';
 import { TelegramService } from './telegram.service';
+import { HoldingAlertsService } from './holding-alerts.service';
 import { PortfoliosModule } from '../portfolios/portfolios.module';
 import { NewsModule } from '../news/news.module';
 import { UsersModule } from '../users/users.module';
@@ -12,7 +13,7 @@ import { MarketModule } from '../market/market.module';
 @Module({
   imports: [PortfoliosModule, NewsModule, UsersModule, LlmModule, WalletModule, IntelligenceModule, MarketModule],
   controllers: [TelegramController],
-  providers: [TelegramService],
+  providers: [TelegramService, HoldingAlertsService],
   exports: [TelegramService],
 })
 export class TelegramModule {}

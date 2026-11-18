@@ -3,7 +3,7 @@
 import { FormEvent, Fragment, useEffect, useRef, useState } from 'react';
 import { useParams, useRouter } from 'next/navigation';
 import { ASSET_TYPE_LABELS_FA, AssetType, PortfolioStrategy, STRATEGY_LABELS_FA } from '@sabadyar/shared';
-import { api, formatNum, formatRial, getToken } from '@/lib/api';
+import { api, apiUrl, formatNum, formatRial, getToken } from '@/lib/api';
 import { PortfolioPieChart } from '@/components/PortfolioPieChart';
 import { ConfirmDeletePortfolioModal } from '@/components/ConfirmDeletePortfolioModal';
 import { useToast } from '@/components/Toast';
@@ -11,6 +11,10 @@ import { formatShamsiDate, formatShamsiDateTime } from '@/lib/shamsi-date';
 import { IntelligencePanel } from '@/components/IntelligencePanel';
 import { WaitingOverlay } from '@/components/WaitingOverlay';
 import { ImportGuide } from '@/components/ImportGuide';
+import { DataFreshness } from '@/components/DataFreshness';
+import { ProfileHint } from '@/components/ProfileHint';
+import { PortfolioCodalEvents, PortfolioTrackRecord } from '@/components/PortfolioTrackRecord';
+import { ApplyPreviewModal } from '@/components/ApplyPreviewModal';
 
 type Item = {
   id: string;
@@ -196,6 +200,8 @@ export default function PortfolioDetailPage() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [p, appliedSuggestions]);
   const [confirmDelete, setConfirmDelete] = useState(false);
+  const [previewApply, setPreviewApply] = useState(false);
+  const [exporting, setExporting] = useState(false);
   const [deleting, setDeleting] = useState(false);
   const [aiOn, setAiOn] = useState({ portfolio: true, llm: true });
 
@@ -421,6 +427,28 @@ export default function PortfolioDetailPage() {
     }
   }
 
+  async function exportExcel() {
+    setExporting(true);
+    try {
+      const token = getToken();
+      const res = await fetch(apiUrl(`/portfolios/${id}/export`), {
+        headers: token ? { Authorization: `Bearer ${token}` } : {},
+      });
+      if (!res.ok) throw new Error('ساخت فایل Excel ناموفق بود.');
+      const blob = await res.blob();
+      const url = URL.createObjectURL(blob);
+      const link = document.createElement('a');
+      link.href = url;
+      link.download = `sabadyar-${p?.name ?? id}.xlsx`;
+      link.click();
+      URL.revokeObjectURL(url);
+    } catch (err) {
+      toast.error((err as Error).message);
+    } finally {
+      setExporting(false);
+    }
+  }
+
   async function analyzePortfolio() {
     setBusy('analyze');
     setAnalysis(null);
@@ -463,6 +491,7 @@ export default function PortfolioDetailPage() {
         analysis.suggestions.flatMap((item, index) => (suggestionIsActionable(item) ? [index] : [])),
       );
       await load();
+      setPreviewApply(false);
       toast.success('پیشنهادها روی سبد اعمال شد.');
     } catch (err) {
       toast.error((err as Error).message);
@@ -652,6 +681,14 @@ export default function PortfolioDetailPage() {
           )}
           <button
             type="button"
+            className="btn-secondary"
+            disabled={exporting || !latest}
+            onClick={() => void exportExcel()}
+          >
+            {exporting ? '...' : 'خروجی Excel'}
+          </button>
+          <button
+            type="button"
             className="inline-flex items-center justify-center rounded-lg border border-red-700/30 bg-white px-5 py-2.5 text-sm font-medium text-red-700 transition hover:bg-red-50"
             disabled={!!busy || deleting}
             onClick={() => setConfirmDelete(true)}
@@ -660,17 +697,22 @@ export default function PortfolioDetailPage() {
           </button>
         </div>
       </div>
+      <DataFreshness keys={['stockPrices', 'goldUsd', 'iranNews', 'worldMarkets', 'fundReportMonth']} />
+      {aiOn.portfolio && <ProfileHint />}
+
       {busy === 'suggest' && (
         <WaitingOverlay
           title="در حال دریافت پیشنهاد"
           description="پیشنهاد سبد بر اساس پروفایل، قیمت طلا و دلار، درس‌آموخته‌ها و اخبار در حال ساخته شدن است. لطفاً این صفحه را نبندید."
           steps={[
             'خواندن پروفایل و استراتژی...',
-            'بررسی قیمت طلا و دلار...',
-            'مرور درس‌آموخته‌ها و اخبار...',
-            'تعیین سهم هر کلاس دارایی...',
-            'انتخاب سهم‌های بدون صف...',
-            'چیدن ترکیب نهایی...',
+            'جمع کردن طلا، دلار، تورم و نرخ بهره...',
+            'مرور درس‌آموخته‌ها و اخبار ایران و دنیا...',
+            'System One: تعیین سهم هر کلاس دارایی...',
+            'غربال روزانه و سهم‌های خرید صندوق‌های برتر...',
+            'System One: سنجیدن سهم‌ها، دسته‌به‌دسته...',
+            'System One: انتخاب صندوق طلا و صندوق...',
+            'چیدن ترکیب نهایی با قیمت روز...',
           ]}
         />
       )}
@@ -698,7 +740,7 @@ export default function PortfolioDetailPage() {
         />
       )}
 
-      <IntelligencePanel portfolioId={id} />
+      <IntelligencePanel portfolioId={id} analysisScore={analysis?.score ?? null} />
 
       {analysis && (
         <section className="card space-y-4">
@@ -770,7 +812,7 @@ export default function PortfolioDetailPage() {
               type="button"
               className="btn-primary"
               disabled={!!busy || !latest || !analysis.suggestions.some(suggestionIsActionable)}
-              onClick={() => applyAllSuggestions()}
+              onClick={() => setPreviewApply(true)}
             >
               {busy === 'rebalance' ? '...' : 'بازچینش بر اساس این پیشنهادها'}
             </button>
@@ -1294,6 +1336,20 @@ export default function PortfolioDetailPage() {
           {p.events.length === 0 && <li className="text-navy-800/50">رویدادی ثبت نشده</li>}
         </ul>
       </section>
+
+      <PortfolioTrackRecord portfolioId={id} />
+      <PortfolioCodalEvents portfolioId={id} />
+
+      {previewApply && analysis && latest && (
+        <ApplyPreviewModal
+          suggestions={analysis.suggestions.filter(suggestionIsActionable)}
+          holdings={latest.items}
+          capitalRial={p.capitalRial}
+          busy={busy === 'rebalance'}
+          onCancel={() => setPreviewApply(false)}
+          onConfirm={() => void applyAllSuggestions()}
+        />
+      )}
 
       {confirmDelete && (
         <ConfirmDeletePortfolioModal

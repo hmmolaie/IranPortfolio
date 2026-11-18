@@ -1,6 +1,7 @@
 import { Module } from '@nestjs/common';
 import { PortfoliosService } from './portfolios.service';
 import { StockScreenService } from './stock-screen.service';
+import { PortfolioInsightsService } from './portfolio-insights.service';
 import { PortfoliosController } from './portfolios.controller';
 import { LlmModule } from '../llm/llm.module';
 import { NewsModule } from '../news/news.module';
@@ -22,7 +23,7 @@ import { IntelligenceModule } from '../intelligence/intelligence.module';
     MarketModule,
     IntelligenceModule,
   ],
-  providers: [PortfoliosService, StockScreenService],
+  providers: [PortfoliosService, StockScreenService, PortfolioInsightsService],
   controllers: [PortfoliosController],
   exports: [PortfoliosService],
 })

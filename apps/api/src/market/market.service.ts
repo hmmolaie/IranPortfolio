@@ -42,7 +42,7 @@ import {
   type LiveBook,
   type LiveEquivalent,
 } from './live-equivalents';
-import { symbolKey } from '../portfolios/stock-signals';
+import { fundMoveTally, symbolKey } from '../portfolios/stock-signals';
 import {
   brsEndpoint,
   readBrsApiAccess,
@@ -850,6 +850,75 @@ export class MarketService implements OnModuleInit {
    * صندوق‌هایی که این نماد را در آخرین گزارش ماهانهٔ ثبت‌شده‌شان دارند، با سهم نماد از دارایی صندوق.
    * فقط از گزارش‌های بارگذاری‌شده در دیتابیس؛ صندوقی که گزارشش ثبت نشده اینجا نمی‌آید.
    */
+  /** تاریخ آخرین دادهٔ هر منبع برای برچسب تازگی در صفحه‌ها؛ فقط خواندن دیتابیس */
+  async dataFreshness() {
+    const [stock, spot, news, world, macro, fund, option] = await Promise.all([
+      this.prisma.priceBar.findFirst({
+        where: { instrument: { assetType: AssetType.STOCK } },
+        orderBy: { tradeDate: 'desc' },
+        select: { tradeDate: true },
+      }),
+      this.prisma.spotPriceDaily.findFirst({ orderBy: { asOfDate: 'desc' }, select: { asOfDate: true } }),
+      this.prisma.economicNewsBatch.findFirst({ orderBy: { createdAt: 'desc' }, select: { createdAt: true } }),
+      this.prisma.worldMarketRefresh.findFirst({ orderBy: { createdAt: 'desc' }, select: { createdAt: true } }),
+      this.prisma.macroSnapshot.findFirst({ orderBy: { asOfDate: 'desc' }, select: { asOfDate: true } }),
+      this.prisma.fundReport.findFirst({
+        where: { analysisStatus: 'done', reportYear: { not: null } },
+        orderBy: [{ reportYear: 'desc' }, { reportMonthNum: 'desc' }],
+        select: { reportMonth: true },
+      }),
+      this.prisma.instrument.aggregate({
+        where: { assetType: AssetType.OPTION, isActive: true },
+        _max: { updatedAt: true },
+      }),
+    ]);
+    const iso = (d: Date | null | undefined) => (d ? d.toISOString() : null);
+    return {
+      stockPrices: iso(stock?.tradeDate),
+      goldUsd: iso(spot?.asOfDate),
+      iranNews: iso(news?.createdAt),
+      worldMarkets: iso(world?.createdAt),
+      macro: iso(macro?.asOfDate),
+      fundReportMonth: fund?.reportMonth ?? null,
+      options: iso(option._max.updatedAt),
+    };
+  }
+
+  /**
+   * تابلوی پول هوشمند: سهم‌هایی که صندوق‌های پیگیری‌شده در آخرین گزارش ماهانه بیشتر خریده، فروخته یا نگه داشته‌اند.
+   * فقط از دیتابیس و بدون مدل؛ همان شمارشی که به System One می‌رسد.
+   */
+  async smartMoney() {
+    const tally = await fundMoveTally(this.prisma);
+    const instruments = await this.prisma.instrument.findMany({
+      where: { assetType: AssetType.STOCK, isActive: true },
+      select: { id: true, symbol: true, nameFa: true },
+    });
+    const byKey = new Map(instruments.map((row) => [symbolKey(row.symbol), row]));
+    const rows = [...tally.entries()].map(([key, t]) => {
+      const inst = byKey.get(key);
+      return {
+        key,
+        instrumentId: inst?.id ?? null,
+        symbol: inst?.symbol ?? key,
+        nameFa: inst?.nameFa ?? null,
+        holders: t.holders,
+        buyers: t.buyers,
+        sellers: t.sellers,
+        avgWeightPct: t.holders > 0 ? Math.round((t.weightSum / t.holders) * 100) / 100 : null,
+        net: t.buyers - t.sellers,
+      };
+    });
+    const top = (list: typeof rows) => list.slice(0, 20);
+    return {
+      noteFa:
+        'شمارش از آخرین گزارش ماهانهٔ آنالیزشدهٔ هر صندوق در برابر گزارش ماه قبل‌ترش است. خرید صندوق‌ها نشانهٔ تقاضای آگاه است، نه توصیهٔ خرید.',
+      buys: top(rows.filter((r) => r.buyers > 0).sort((a, b) => b.buyers - a.buyers || b.net - a.net)),
+      sells: top(rows.filter((r) => r.sellers > 0).sort((a, b) => b.sellers - a.sellers || a.net - b.net)),
+      held: top(rows.filter((r) => r.holders > 0).sort((a, b) => b.holders - a.holders || (b.avgWeightPct ?? 0) - (a.avgWeightPct ?? 0))),
+    };
+  }
+
   async getFundHolders(id: string) {
     const inst = await this.prisma.instrument.findUnique({
       where: { id },

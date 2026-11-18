@@ -258,6 +258,11 @@ export class PortfoliosService {
     return shortlist;
   }
 
+  /** نرخ کارمزد خرید و فروش؛ برای پیش‌نمایش اعمال پیشنهادها در صفحهٔ سبد */
+  tradeFeeRates() {
+    return this.tradeFees.read();
+  }
+
   list(userId: string) {
     return this.prisma.portfolio.findMany({
       where: { userId },

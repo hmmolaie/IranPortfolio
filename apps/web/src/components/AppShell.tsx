@@ -13,6 +13,7 @@ const allLinks: Array<{ href: string; label: string; adminOnly?: boolean; resell
   { href: '/market', label: 'بازار سهام تهران' },
   { href: '/options', label: 'بازار اختیار معامله', optionsMarket: true },
   { href: '/portfolios', label: 'سبدها' },
+  { href: '/smart-money', label: 'پول هوشمند' },
   { href: '/funds', label: 'صندوق‌ها', adminOnly: true },
   { href: '/lessons', label: 'درس‌آموخته‌ها', adminOnly: true },
   { href: '/macro', label: 'اقتصاد ایران', adminOnly: true },

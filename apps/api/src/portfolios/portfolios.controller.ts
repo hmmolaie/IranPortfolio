@@ -8,8 +8,10 @@ import {
   Post,
   Query,
   Req,
+  Res,
   UseGuards,
 } from '@nestjs/common';
+import type { Response } from 'express';
 import { UserRole } from '@prisma/client';
 import { AssetType, PortfolioStrategy } from '@prisma/client';
 import {
@@ -26,6 +28,7 @@ import {
 } from 'class-validator';
 import { Type } from 'class-transformer';
 import { PortfoliosService } from './portfolios.service';
+import { PortfolioInsightsService } from './portfolio-insights.service';
 import { JwtAuthGuard } from '../auth/jwt-auth.guard';
 
 /** دارایی‌ای که کاربر همین حالا دارد؛ یکی از تعداد یا مبلغ کافی است. */
@@ -252,7 +255,10 @@ class ApplySuggestionDto {
 @Controller('portfolios')
 @UseGuards(JwtAuthGuard)
 export class PortfoliosController {
-  constructor(private readonly portfolios: PortfoliosService) {}
+  constructor(
+    private readonly portfolios: PortfoliosService,
+    private readonly insights: PortfolioInsightsService,
+  ) {}
 
   @Get()
   list(
@@ -267,6 +273,34 @@ export class PortfoliosController {
   @Post()
   create(@Req() req: { user: { userId: string } }, @Body() dto: CreatePortfolioDto) {
     return this.portfolios.create(req.user.userId, dto);
+  }
+
+  /** نرخ کارمزد برای پیش‌نمایش اعمال پیشنهادها؛ خواندن برای همهٔ کاربران، تغییر فقط ادمین */
+  @Get('trade-fees/rates')
+  tradeFeeRates() {
+    return this.portfolios.tradeFeeRates();
+  }
+
+  @Get(':id/track-record')
+  trackRecord(@Req() req: { user: { userId: string; role?: UserRole } }, @Param('id') id: string) {
+    return this.insights.trackRecord(req.user.userId, id, req.user.role === UserRole.ADMIN);
+  }
+
+  @Get(':id/codal-events')
+  codalEvents(@Req() req: { user: { userId: string; role?: UserRole } }, @Param('id') id: string) {
+    return this.insights.codalEvents(req.user.userId, id, req.user.role === UserRole.ADMIN);
+  }
+
+  @Get(':id/export')
+  async exportXlsx(
+    @Req() req: { user: { userId: string; role?: UserRole } },
+    @Param('id') id: string,
+    @Res() res: Response,
+  ) {
+    const file = await this.insights.exportXlsx(req.user.userId, id, req.user.role === UserRole.ADMIN);
+    res.setHeader('Content-Type', 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet');
+    res.setHeader('Content-Disposition', `attachment; filename="${file.fileName}"`);
+    res.send(file.buffer);
   }
 
   @Get(':id')

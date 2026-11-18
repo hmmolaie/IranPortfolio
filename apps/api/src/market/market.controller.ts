@@ -93,6 +93,16 @@ export class MarketController {
     return this.market.optionsRefreshStatus();
   }
 
+  @Get('freshness')
+  freshness() {
+    return this.market.dataFreshness();
+  }
+
+  @Get('smart-money')
+  smartMoney() {
+    return this.market.smartMoney();
+  }
+
   @Get('option-board')
   optionBoard() {
     return this.market.getOptionBoard();

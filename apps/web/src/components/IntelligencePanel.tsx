@@ -147,8 +147,40 @@ function assumptionFa(title: string, shock: Shock): string | null {
   return `${title} ${formatNum(amount)} درصد ${shock.dir === 'up' ? 'بالا برود' : 'پایین بیاید'}`;
 }
 
-export function IntelligencePanel({ portfolioId }: { portfolioId: string }) {
+/** نمودار کوچک روند نمرهٔ سلامت در روزهای ثبت‌شده (قدیمی راست، تازه چپ مثل جدول‌های راست‌به‌چپ) */
+function HealthSparkline({ points }: { points: number[] }) {
+  if (points.length < 2) return null;
+  const w = 96;
+  const h = 28;
+  const min = Math.min(...points, 0);
+  const max = Math.max(...points, 100);
+  const x = (i: number) => w - 2 - (i / (points.length - 1)) * (w - 4);
+  const y = (v: number) => 2 + (1 - (v - min) / Math.max(1, max - min)) * (h - 4);
+  const d = points.map((v, i) => `${i === 0 ? 'M' : 'L'}${x(i).toFixed(1)},${y(v).toFixed(1)}`).join(' ');
+  return (
+    <svg width={w} height={h} viewBox={`0 0 ${w} ${h}`} aria-label="روند نمرهٔ سلامت" className="block">
+      <path d={d} fill="none" stroke="rgba(11,31,58,0.7)" strokeWidth={1.4} strokeLinejoin="round" />
+      <circle cx={x(points.length - 1)} cy={y(points[points.length - 1])} r={2} fill="rgb(11,31,58)" />
+    </svg>
+  );
+}
+
+function scoreTone(score: number) {
+  if (score >= 75) return 'text-emerald-700';
+  if (score >= 55) return 'text-navy-900';
+  return 'text-red-700';
+}
+
+export function IntelligencePanel({
+  portfolioId,
+  analysisScore,
+}: {
+  portfolioId: string;
+  /** نمرهٔ آنالیز AI همین سبد اگر در این صفحه گرفته شده باشد */
+  analysisScore?: number | null;
+}) {
   const [data, setData] = useState<Report | null>(null);
+  const [history, setHistory] = useState<number[]>([]);
   const [open, setOpen] = useState<string | null>(null);
   const [shocks, setShocks] = useState<Shocks>({
     usdPct: { dir: 'up', pct: '' },
@@ -163,6 +195,18 @@ export function IntelligencePanel({ portfolioId }: { portfolioId: string }) {
     api<Report>(`/intelligence/portfolios/${portfolioId}`)
       .then((report) => setData(report))
       .catch((e) => setError((e as Error).message));
+    api<Array<{ dateKey: string; payload: { healthScore?: number | null } | null }>>(
+      `/intelligence/portfolios/${portfolioId}/history`,
+    )
+      .then((rows) =>
+        setHistory(
+          [...rows]
+            .reverse()
+            .map((r) => r.payload?.healthScore)
+            .filter((v): v is number => typeof v === 'number'),
+        ),
+      )
+      .catch(() => setHistory([]));
   }, [portfolioId]);
 
   async function runScenario(next: Shocks) {
@@ -225,10 +269,39 @@ export function IntelligencePanel({ portfolioId }: { portfolioId: string }) {
             <p className="mt-1 text-sm text-navy-800/70">{data.regime.summaryFa}</p>
           </div>
           <div>
-            <div className="text-xs text-navy-800/55">سلامت سبد</div>
-            <div className="mt-1 text-xl font-semibold">
-              {data.health.score == null ? 'داده کافی نیست' : `${data.health.score.toLocaleString('fa-IR')} از ۱۰۰`}
+            <div className="text-xs text-navy-800/55">نمرهٔ سبد</div>
+            <div className="mt-1 flex items-center gap-3">
+              <span
+                className={`text-2xl font-bold ${data.health.score == null ? '' : scoreTone(data.health.score)}`}
+              >
+                {data.health.score == null ? 'داده کافی نیست' : `${data.health.score.toLocaleString('fa-IR')} از ۱۰۰`}
+              </span>
+              <HealthSparkline points={history} />
             </div>
+            {data.health.parts.length > 0 && (
+              <div className="mt-2 space-y-1">
+                {data.health.parts.map((part) => (
+                  <div key={part.code} className="flex items-center gap-2 text-xs" title={part.detailFa}>
+                    <span className="w-32 shrink-0 truncate text-navy-800/65">{part.labelFa}</span>
+                    <span className="h-1.5 flex-1 overflow-hidden rounded-full bg-navy-900/10">
+                      <span
+                        className="block h-full rounded-full bg-navy-900/70"
+                        style={{ width: `${Math.max(0, Math.min(100, part.score))}%` }}
+                      />
+                    </span>
+                    <span className="w-6 text-end tabular-nums">{part.score.toLocaleString('fa-IR')}</span>
+                  </div>
+                ))}
+              </div>
+            )}
+            {analysisScore != null && (
+              <p className="mt-2 text-xs text-navy-800/60">
+                نظر آنالیز AI: {analysisScore.toLocaleString('fa-IR')} از ۱۰۰
+                {data.health.score != null && Math.abs(analysisScore - data.health.score) >= 20
+                  ? ' — فاصلهٔ زیاد با نمرهٔ سبد؛ نقاط ضعف آنالیز را ببینید.'
+                  : ''}
+              </p>
+            )}
           </div>
           <div>
             <div className="text-xs text-navy-800/55">ریسک سبد</div>

@@ -346,6 +346,20 @@ export class TelegramService implements OnModuleInit {
     return { ok: true };
   }
 
+  /** متن ساده به یک چت با ربات عمومی؛ پیام بلند تکه‌تکه فرستاده می‌شود */
+  async sendText(chatId: string, text: string) {
+    const token = await this.readToken();
+    if (!token) throw new ServiceUnavailableException('توکن ربات تلگرام تنظیم نشده است.');
+    const limit = 3900;
+    for (let i = 0; i < text.length; i += limit) {
+      await this.tg(token, 'sendMessage', {
+        chat_id: chatId,
+        text: text.slice(i, i + limit),
+        disable_web_page_preview: true,
+      });
+    }
+  }
+
   async listLinkedUsers() {
     const rows = await this.prisma.userProfile.findMany({
       where: { telegramChatId: { not: null } },

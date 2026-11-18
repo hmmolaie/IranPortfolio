@@ -10,6 +10,6 @@ import { UsersModule } from '../users/users.module';
   imports: [LlmModule, AiUsageModule, UsersModule],
   providers: [MarketService, CodalService],
   controllers: [MarketController],
-  exports: [MarketService],
+  exports: [MarketService, CodalService],
 })
 export class MarketModule {}

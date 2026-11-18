@@ -1,6 +1,7 @@
 'use client';
 
 import { useEffect, useMemo, useState } from 'react';
+import Link from 'next/link';
 import { useRouter } from 'next/navigation';
 import { formatNum } from '@/lib/api';
 
@@ -43,21 +44,33 @@ type SortKey =
   | 'profit'
   | 'realProfit';
 
-const COLUMNS: Array<{ key: SortKey; label: string }> = [
-  { key: 'symbol', label: 'نماد' },
+const COLUMNS: Array<{ key: SortKey; label: string; help?: string; fixed?: boolean }> = [
+  { key: 'symbol', label: 'نماد', fixed: true },
   { key: 'side', label: 'نوع' },
   { key: 'underlying', label: 'دارایی پایه' },
-  { key: 'underlyingPrice', label: 'قیمت پایه' },
-  { key: 'strike', label: 'اعمال' },
-  { key: 'premium', label: 'قیمت اختیار' },
-  { key: 'totalCost', label: 'مبلغ تمام شده' },
-  { key: 'costGap', label: 'مبلغ تفاوت با دارایی پایه' },
-  { key: 'costGapPct', label: 'درصد تفاوت با دارایی پایه' },
+  { key: 'underlyingPrice', label: 'قیمت پایه', help: 'آخرین قیمت ذخیره‌شدهٔ دارایی پایه' },
+  { key: 'strike', label: 'اعمال', help: 'قیمت اعمال قرارداد' },
+  { key: 'premium', label: 'قیمت اختیار', help: 'آخرین قیمت معاملهٔ خود اختیار (پرمیوم)' },
+  {
+    key: 'totalCost',
+    label: 'مبلغ تمام شده',
+    help: 'نقطهٔ سربه‌سر. اختیار خرید: اعمال + قیمت اختیار. اختیار فروش: اعمال − قیمت اختیار.',
+  },
+  {
+    key: 'costGap',
+    label: 'مبلغ تفاوت با دارایی پایه',
+    help: 'مبلغ تمام شده − قیمت پایه. سبز یعنی همین حالا در سود: برای اختیار خرید منفی و برای اختیار فروش مثبت.',
+  },
+  { key: 'costGapPct', label: 'درصد تفاوت با دارایی پایه', help: 'مبلغ تفاوت ÷ قیمت پایه × ۱۰۰' },
   { key: 'buyQueue', label: 'حجم صف خرید' },
   { key: 'sellQueue', label: 'حجم صف فروش' },
-  { key: 'daysLeft', label: 'روز مانده' },
-  { key: 'profit', label: 'سود' },
-  { key: 'realProfit', label: 'سود واقعی' },
+  { key: 'daysLeft', label: 'روز مانده', help: 'روز تقویمی تا سررسید' },
+  {
+    key: 'profit',
+    label: 'سود',
+    help: 'سود هر واحد اگر همین حالا اعمال شود: ارزش ذاتی − قیمت اختیار. درصد نسبت به قیمت اختیار است.',
+  },
+  { key: 'realProfit', label: 'سود واقعی', help: 'همان سود پس از کسر تورم تا سررسید' },
 ];
 
 function parseFilterNumber(raw: string): number | null {
@@ -161,6 +174,99 @@ function formatQueue(value: number | null | undefined): string {
   return formatNum(value);
 }
 
+const COLUMN_STORE_KEY = 'sabadyar_option_hidden_columns';
+
+/** محتوای هر خانهٔ جدول؛ ترتیب ستون‌ها از COLUMNS می‌آید تا پنهان کردن ستون ساده بماند */
+function cellContent(row: OptionsTableRow, key: SortKey): React.ReactNode {
+  switch (key) {
+    case 'symbol':
+      return row.symbol;
+    case 'side':
+      return row.sideFa;
+    case 'underlying':
+      return row.underlyingSymbol;
+    case 'underlyingPrice':
+      return row.underlyingPrice == null ? '—' : formatNum(row.underlyingPrice);
+    case 'strike':
+      return formatNum(row.strike);
+    case 'premium':
+      return row.premium == null || !(row.premium > 0) ? '—' : formatNum(row.premium);
+    case 'totalCost': {
+      const total = totalCost(row);
+      return total == null ? '—' : formatNum(total);
+    }
+    case 'costGap': {
+      const gap = costGap(row);
+      if (gap == null) return '—';
+      return (
+        <span dir="ltr" className={gapClass(row, gap)}>
+          {formatNum(gap)}
+        </span>
+      );
+    }
+    case 'costGapPct': {
+      const pctGap = costGapPct(row);
+      if (pctGap == null) return '—';
+      return (
+        <span dir="ltr" className={gapClass(row, pctGap)}>
+          {pctGap.toLocaleString('fa-IR', { maximumFractionDigits: 1 })}٪
+        </span>
+      );
+    }
+    case 'buyQueue':
+      return formatQueue(row.buyQueueVolume);
+    case 'sellQueue':
+      return formatQueue(row.sellQueueVolume);
+    case 'daysLeft':
+      return row.daysLeft == null ? '—' : Math.round(row.daysLeft).toLocaleString('fa-IR');
+    case 'profit':
+      if (row.profitRial == null || row.profitPct == null) return <span className="text-navy-800/45">—</span>;
+      return (
+        <>
+          <div
+            className={row.profitRial >= 0 ? 'font-medium text-emerald-700' : 'font-medium text-red-700'}
+            title={`${row.profitPct.toLocaleString('fa-IR')}٪ نسبت به قیمت اختیار${
+              row.contractSize != null ? ` · اندازهٔ قرارداد ${formatNum(row.contractSize)}` : ''
+            }`}
+          >
+            {Math.round(row.profitRial).toLocaleString('fa-IR')}
+          </div>
+          <div className="text-[11px] leading-4 text-navy-800/55">
+            {row.profitPct.toLocaleString('fa-IR', { maximumFractionDigits: 0 })}٪
+          </div>
+        </>
+      );
+    case 'realProfit':
+      if (row.realProfitRial == null || row.realProfitPct == null) return <span className="text-navy-800/45">—</span>;
+      return (
+        <>
+          <div className={row.realProfitRial >= 0 ? 'font-medium text-emerald-700' : 'font-medium text-red-700'}>
+            {Math.round(row.realProfitRial).toLocaleString('fa-IR')}
+          </div>
+          <div className="text-xs text-navy-800/55">
+            {Math.round(row.realProfitPct).toLocaleString('fa-IR')}٪ پس از تورم{' '}
+            {row.daysLeft == null ? '—' : Math.round(row.daysLeft).toLocaleString('fa-IR')} روز
+          </div>
+        </>
+      );
+    default:
+      return null;
+  }
+}
+
+function calculatorHref(row: OptionsTableRow) {
+  const q = new URLSearchParams({
+    symbol: row.symbol,
+    side: row.side,
+    strike: String(row.strike),
+  });
+  if (row.premium != null && row.premium > 0) q.set('premium', String(row.premium));
+  if (row.underlyingPrice != null) q.set('spot', String(row.underlyingPrice));
+  if (row.contractSize != null) q.set('size', String(row.contractSize));
+  if (row.underlyingSymbol) q.set('underlying', row.underlyingSymbol);
+  return `/options/calculator?${q.toString()}`;
+}
+
 function sortValue(row: OptionsTableRow, key: SortKey): string | number | null {
   if (key === 'symbol') return row.symbol;
   if (key === 'side') return row.sideFa;
@@ -195,6 +301,33 @@ export function OptionsValueTable({
   const [sort, setSort] = useState<SortKey>('profit');
   const [sortDir, setSortDir] = useState<'asc' | 'desc'>('desc');
   const [visible, setVisible] = useState(pageSize);
+  const [hidden, setHidden] = useState<Set<SortKey>>(new Set());
+  const [pickerOpen, setPickerOpen] = useState(false);
+
+  useEffect(() => {
+    try {
+      const saved = JSON.parse(localStorage.getItem(COLUMN_STORE_KEY) ?? '[]') as SortKey[];
+      if (Array.isArray(saved)) setHidden(new Set(saved));
+    } catch {
+      /* بدون حافظهٔ مرورگر همهٔ ستون‌ها دیده می‌شوند */
+    }
+  }, []);
+
+  function toggleColumn(key: SortKey) {
+    setHidden((prev) => {
+      const next = new Set(prev);
+      if (next.has(key)) next.delete(key);
+      else next.add(key);
+      try {
+        localStorage.setItem(COLUMN_STORE_KEY, JSON.stringify([...next]));
+      } catch {
+        /* فقط تا بارگذاری بعد می‌ماند */
+      }
+      return next;
+    });
+  }
+
+  const columns = COLUMNS.filter((c) => !hidden.has(c.key));
 
   const rows = useMemo(() => {
     const text = applied.q.trim();
@@ -392,21 +525,42 @@ export function OptionsValueTable({
         </form>
       )}
 
+      <div className="flex flex-wrap items-center justify-end gap-2">
+        <button type="button" className="text-xs text-navy-800/70 underline" onClick={() => setPickerOpen((v) => !v)}>
+          {pickerOpen ? 'بستن انتخاب ستون‌ها' : `ستون‌ها${hidden.size ? ` (${hidden.size.toLocaleString('fa-IR')} پنهان)` : ''}`}
+        </button>
+      </div>
+      {pickerOpen && (
+        <div className="card flex flex-wrap gap-2 !py-3">
+          {COLUMNS.filter((c) => !c.fixed).map((c) => (
+            <label key={c.key} className="flex items-center gap-1.5 rounded-full bg-navy-50 px-3 py-1 text-xs">
+              <input type="checkbox" checked={!hidden.has(c.key)} onChange={() => toggleColumn(c.key)} />
+              {c.label}
+            </label>
+          ))}
+        </div>
+      )}
+
       <section className="card overflow-x-auto p-0">
         <table className="min-w-full text-sm">
           <thead className="bg-navy-900 text-white">
             <tr>
-              {COLUMNS.map((column) => (
+              {columns.map((column) => (
                 <th
                   key={column.key}
                   className={`px-3 py-3 text-start font-medium${column.key === 'profit' ? ' w-20' : ''}`}
+                  title={column.help}
                 >
                   <button type="button" className="font-medium text-white" onClick={() => toggleSort(column.key)}>
                     {column.label}
+                    {column.help ? <span className="ms-1 text-[10px] text-white/50">ⓘ</span> : null}
                     {sort === column.key ? (sortDir === 'asc' ? ' ↑' : ' ↓') : ''}
                   </button>
                 </th>
               ))}
+              <th className="px-2 py-3 text-start font-medium" title="نمودار سود و زیان در سررسید">
+                محاسبه
+              </th>
             </tr>
           </thead>
           <tbody>
@@ -416,75 +570,28 @@ export function OptionsValueTable({
                 className="cursor-pointer border-b border-navy-900/5 odd:bg-white even:bg-navy-50/40 hover:bg-gold-400/10"
                 onClick={() => router.push(`/market/${row.id}`)}
               >
-                <td className="px-3 py-2.5 font-medium">{row.symbol}</td>
-                <td className="px-3 py-2.5">{row.sideFa}</td>
-                <td className="px-3 py-2.5">{row.underlyingSymbol}</td>
-                <td className="px-3 py-2.5">{row.underlyingPrice == null ? '—' : formatNum(row.underlyingPrice)}</td>
-                <td className="px-3 py-2.5">{formatNum(row.strike)}</td>
-                <td className="px-3 py-2.5">{row.premium == null || !(row.premium > 0) ? '—' : formatNum(row.premium)}</td>
-                <td className="px-3 py-2.5">{(() => {
-                  const total = totalCost(row);
-                  return total == null ? '—' : formatNum(total);
-                })()}</td>
-                <td className="px-3 py-2.5">{(() => {
-                  const gap = costGap(row);
-                  if (gap == null) return '—';
-                  return (
-                    <span dir="ltr" className={gapClass(row, gap)}>
-                      {formatNum(gap)}
-                    </span>
-                  );
-                })()}</td>
-                <td className="px-3 py-2.5">{(() => {
-                  const pctGap = costGapPct(row);
-                  if (pctGap == null) return '—';
-                  return (
-                    <span
-                      dir="ltr"
-                      className={gapClass(row, pctGap)}
-                    >
-                      {pctGap.toLocaleString('fa-IR', { maximumFractionDigits: 1 })}٪
-                    </span>
-                  );
-                })()}</td>
-                <td className="px-3 py-2.5">{formatQueue(row.buyQueueVolume)}</td>
-                <td className="px-3 py-2.5">{formatQueue(row.sellQueueVolume)}</td>
-                <td className="px-3 py-2.5">
-                  {row.daysLeft == null ? '—' : Math.round(row.daysLeft).toLocaleString('fa-IR')}
-                </td>
-                <td className="w-20 px-2 py-2.5">
-                  {row.profitRial == null || row.profitPct == null ? (
-                    <span className="text-navy-800/45">—</span>
-                  ) : (
-                    <>
-                      <div
-                        className={row.profitRial >= 0 ? 'font-medium text-emerald-700' : 'font-medium text-red-700'}
-                        title={`${row.profitPct.toLocaleString('fa-IR')}٪ نسبت به قیمت اختیار${
-                          row.contractSize != null ? ` · اندازهٔ قرارداد ${formatNum(row.contractSize)}` : ''
-                        }`}
-                      >
-                        {Math.round(row.profitRial).toLocaleString('fa-IR')}
-                      </div>
-                      <div className="text-[11px] leading-4 text-navy-800/55">
-                        {row.profitPct.toLocaleString('fa-IR', { maximumFractionDigits: 0 })}٪
-                      </div>
-                    </>
-                  )}
-                </td>
-                <td className="px-3 py-2.5">
-                  {row.realProfitRial == null || row.realProfitPct == null ? (
-                    <span className="text-navy-800/45">—</span>
-                  ) : (
-                    <>
-                      <div className={row.realProfitRial >= 0 ? 'font-medium text-emerald-700' : 'font-medium text-red-700'}>
-                        {Math.round(row.realProfitRial).toLocaleString('fa-IR')}
-                      </div>
-                      <div className="text-xs text-navy-800/55">
-                        {Math.round(row.realProfitPct).toLocaleString('fa-IR')}٪ پس از تورم{' '}
-                        {row.daysLeft == null ? '—' : Math.round(row.daysLeft).toLocaleString('fa-IR')} روز
-                      </div>
-                    </>
-                  )}
+                {columns.map((column) => (
+                  <td
+                    key={column.key}
+                    className={
+                      column.key === 'profit'
+                        ? 'w-20 px-2 py-2.5'
+                        : column.key === 'symbol'
+                          ? 'px-3 py-2.5 font-medium'
+                          : 'px-3 py-2.5'
+                    }
+                  >
+                    {cellContent(row, column.key)}
+                  </td>
+                ))}
+                <td className="px-2 py-2.5">
+                  <Link
+                    href={calculatorHref(row)}
+                    className="text-xs text-gold-700 hover:underline"
+                    onClick={(e) => e.stopPropagation()}
+                  >
+                    نمودار
+                  </Link>
                 </td>
               </tr>
             ))}

@@ -710,6 +710,21 @@ model TelegramAssistantConfig {
   updatedAt         DateTime @updatedAt
 }
 
+/// هشدار تلگرامی دارایی‌های سبد؛ برای هر کاربر در هر روز معاملاتی یک‌بار
+model HoldingAlertLog {
+  id             String   @id @default(cuid())
+  userId         String
+  /// تاریخ میلهٔ معاملاتی (YYYY-MM-DD)
+  tradeDateKey   String
+  lineCount      Int      @default(0)
+  /// بزرگ‌ترین شمارهٔ پیگیری کدال دیده‌شده برای سهم‌های این کاربر تا این نوبت
+  codalTracingNo Int?
+  createdAt      DateTime @default(now())
+
+  @@unique([userId, tradeDateKey])
+  @@index([userId, createdAt])
+}
+
 model TelegramDigestLog {
   id              String   @id @default(cuid())
   dateKey         String   @unique
