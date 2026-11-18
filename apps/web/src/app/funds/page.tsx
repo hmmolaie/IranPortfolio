@@ -6,7 +6,6 @@ import Link from 'next/link';
 import clsx from 'clsx';
 import { api, apiUrl, formatNum, getToken } from '@/lib/api';
 import { getCurrentShamsiParts } from '@/lib/shamsi-date';
-import { WaitingOverlay } from '@/components/WaitingOverlay';
 
 type FundDefinition = {
   id: string;
@@ -36,22 +35,6 @@ type Fund = {
     sheetNames?: string[];
   } | null;
   lessons: Array<{ id: string; titleFa: string }>;
-};
-
-type TimelineInsight = {
-  id: string;
-  fromMonth?: string | null;
-  toMonth?: string | null;
-  summaryFa: string;
-  strategyChangeFa?: string | null;
-  llmReasoningFa?: string | null;
-  createdAt: string;
-};
-
-/** دکمهٔ تحلیل ماه‌به‌ماه: برای هر صندوق و ماه فقط یک‌بار */
-type TimelineAnalyzeState = {
-  canAnalyze: boolean;
-  reasonFa: string | null;
 };
 
 type SortKey =
@@ -84,13 +67,6 @@ const POLL_MS = 8000;
 function isAnalyzing(f: Fund) {
   return f.analysisStatus === 'pending' || f.analysisStatus === 'running';
 }
-
-const ANALYZE_STEPS = [
-  'جمع‌آوری گزارش‌های ماهانه...',
-  'مقایسه ترکیب سبدها...',
-  'تحلیل تغییر استراتژی با AI...',
-  'ثبت بینش ماه‌به‌ماه...',
-];
 
 function ScoreChip({ label, value }: { label: string; value?: number | null }) {
   if (value == null) return null;
@@ -143,12 +119,6 @@ export default function FundsPage() {
   const [retryingId, setRetryingId] = useState<string | null>(null);
   const [deletingId, setDeletingId] = useState<string | null>(null);
 
-  const [timelineFundId, setTimelineFundId] = useState('');
-  const [timelineReports, setTimelineReports] = useState<Fund[]>([]);
-  const [timelineInsights, setTimelineInsights] = useState<TimelineInsight[]>([]);
-  const [timelineLoading, setTimelineLoading] = useState(false);
-  const [analyzing, setAnalyzing] = useState(false);
-  const [analyzeState, setAnalyzeState] = useState<TimelineAnalyzeState | null>(null);
 
   const [filterFundId, setFilterFundId] = useState('');
   const [filterYear, setFilterYear] = useState('');
@@ -161,7 +131,6 @@ export default function FundsPage() {
     const defs = await api<FundDefinition[]>('/funds/definitions');
     setDefinitions(defs);
     if (!fundDefinitionId && defs[0]) setFundDefinitionId(defs[0].id);
-    if (!timelineFundId && defs[0]) setTimelineFundId(defs[0].id);
     return defs;
   }
 
@@ -186,29 +155,6 @@ export default function FundsPage() {
     load().catch(() => undefined);
   }, [router]);
 
-  async function loadTimeline(fundId: string) {
-    if (!fundId) return;
-    setTimelineLoading(true);
-    try {
-      const data = await api<{
-        fund: FundDefinition;
-        reports: Fund[];
-        insights: TimelineInsight[];
-        analyze?: TimelineAnalyzeState;
-      }>(`/funds/timeline/${fundId}`);
-      setTimelineReports(data.reports);
-      setTimelineInsights(data.insights);
-      setAnalyzeState(data.analyze ?? null);
-    } catch (e) {
-      setMsg((e as Error).message);
-    } finally {
-      setTimelineLoading(false);
-    }
-  }
-
-  useEffect(() => {
-    if (timelineFundId) loadTimeline(timelineFundId).catch(() => undefined);
-  }, [timelineFundId]);
 
   const yearOptions = useMemo(() => {
     const years = new Set<number>();
@@ -275,14 +221,13 @@ export default function FundsPage() {
               ? `آنالیز ${finished.length.toLocaleString('fa-IR')} گزارش تمام شد؛ ${failed.toLocaleString('fa-IR')} مورد ناموفق بود.`
               : `آنالیز ${finished.length.toLocaleString('fa-IR')} گزارش تمام شد.`,
           );
-          if (timelineFundId) await loadTimeline(timelineFundId);
         }
       } catch {
         /* نوبت بعد دوباره */
       }
     }, POLL_MS);
     return () => clearInterval(timer);
-  }, [pendingCount, funds, timelineFundId]);
+  }, [pendingCount, funds]);
 
   async function onUpload(e: FormEvent) {
     e.preventDefault();
@@ -352,26 +297,10 @@ export default function FundsPage() {
       await api(`/funds/${id}`, { method: 'DELETE' });
       setFunds((prev) => prev.filter((f) => f.id !== id));
       setMsg('گزارش حذف شد.');
-      if (timelineFundId) await loadTimeline(timelineFundId);
     } catch (err) {
       setMsg((err as Error).message);
     } finally {
       setDeletingId(null);
-    }
-  }
-
-  async function onAnalyzeTimeline() {
-    if (!timelineFundId) return;
-    setAnalyzing(true);
-    setMsg('');
-    try {
-      await api(`/funds/timeline/${timelineFundId}/analyze`, { method: 'POST' });
-      setMsg('تحلیل عملکرد ماه‌به‌ماه انجام شد.');
-      await loadTimeline(timelineFundId);
-    } catch (e) {
-      setMsg((e as Error).message);
-    } finally {
-      setAnalyzing(false);
     }
   }
 
@@ -511,98 +440,6 @@ export default function FundsPage() {
         )}
         {msg && <p className="text-sm sm:col-span-2">{msg}</p>}
       </form>
-
-      <section className="card space-y-4">
-        <div className="flex flex-wrap items-end justify-between gap-3">
-          <div>
-            <h2 className="text-lg font-semibold">عملکرد صندوق در طول زمان</h2>
-            <p className="mt-1 text-sm text-navy-800/60">
-              با بارگذاری گزارش‌های ماه‌های مختلف، تحلیل تغییر استراتژی مدیر صندوق
-            </p>
-          </div>
-          <div className="flex flex-wrap items-end gap-2">
-            <div>
-              <label className="label">صندوق</label>
-              <select
-                className="input min-w-[12rem]"
-                value={timelineFundId}
-                onChange={(e) => setTimelineFundId(e.target.value)}
-                disabled={definitions.length === 0 || analyzing}
-              >
-                {definitions.map((d) => (
-                  <option key={d.id} value={d.id}>
-                    {d.nameFa}
-                  </option>
-                ))}
-              </select>
-            </div>
-            <button
-              type="button"
-              className="btn-primary"
-              disabled={!timelineFundId || analyzing || !analyzeState?.canAnalyze}
-              title={analyzeState?.reasonFa ?? undefined}
-              onClick={onAnalyzeTimeline}
-            >
-              {analyzing ? 'در حال تحلیل...' : 'تحلیل ماه‌به‌ماه با AI'}
-            </button>
-          </div>
-        </div>
-
-        {!timelineLoading && analyzeState && !analyzeState.canAnalyze && analyzeState.reasonFa && (
-          <p className="text-xs text-navy-800/50">{analyzeState.reasonFa}</p>
-        )}
-
-        {timelineLoading ? (
-          <p className="text-sm text-navy-800/60">در حال بارگذاری...</p>
-        ) : (
-          <>
-            {timelineReports.length > 0 && (
-              <div className="flex flex-wrap gap-2">
-                {timelineReports.map((r) => (
-                  <span
-                    key={r.id}
-                    className="rounded-full bg-navy-50 px-3 py-1 text-xs text-navy-800"
-                  >
-                    {monthLabel(r)}
-                    {r.rating != null && ` · امتیاز ${formatNum(r.rating)}`}
-                  </span>
-                ))}
-              </div>
-            )}
-
-            {timelineInsights.length === 0 ? (
-              <p className="text-sm text-navy-800/50">
-                {timelineReports.length < 2
-                  ? 'حداقل دو گزارش ماهانه برای تحلیل مقایسه‌ای لازم است.'
-                  : 'تحلیل ماه‌به‌ماه هنوز انجام نشده. با آنالیز گزارش ماه بعد، خودکار ساخته می‌شود.'}
-              </p>
-            ) : (
-              <div className="space-y-4">
-                {timelineInsights.map((ins) => (
-                  <article key={ins.id} className="rounded-lg border border-navy-900/10 p-4">
-                    {(ins.fromMonth || ins.toMonth) && (
-                      <p className="text-xs text-navy-800/50">
-                        {ins.fromMonth} → {ins.toMonth}
-                      </p>
-                    )}
-                    <p className="mt-1 leading-7">{ins.summaryFa}</p>
-                    {ins.strategyChangeFa && (
-                      <p className="mt-2 text-sm text-navy-800/75">
-                        <strong>تغییر استراتژی:</strong> {ins.strategyChangeFa}
-                      </p>
-                    )}
-                    {ins.llmReasoningFa && (
-                      <p className="mt-2 text-sm leading-7 text-navy-800/70">
-                        <strong>تحلیل مدیر:</strong> {ins.llmReasoningFa}
-                      </p>
-                    )}
-                  </article>
-                ))}
-              </div>
-            )}
-          </>
-        )}
-      </section>
 
       <section className="space-y-4">
         <div className="flex flex-wrap items-end justify-between gap-3">
@@ -854,14 +691,6 @@ export default function FundsPage() {
           </div>
         )}
       </section>
-
-      {analyzing && (
-        <WaitingOverlay
-          title="در حال تحلیل ماه‌به‌ماه"
-          description="تغییر استراتژی و عملکرد صندوق در طول زمان با AI بررسی می‌شود."
-          steps={ANALYZE_STEPS}
-        />
-      )}
     </div>
   );
 }

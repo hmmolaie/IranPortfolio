@@ -77,6 +77,52 @@ function latestKnown(weights: (number | null)[]): number {
   return 0;
 }
 
+const SPARK_W = 72;
+const SPARK_H = 24;
+const SPARK_PAD = 3;
+
+/**
+ * نمودار روند کوچک وزن نماد در ماه‌ها. مثل ستون‌های جدول، زمان از راست به چپ جلو می‌رود
+ * (ماه اول سمت راست، آخرین ماه سمت چپ). ماه بدون داده جا می‌ماند و خط از رویش رد می‌شود.
+ * رنگ با جهت کلی از اولین تا آخرین ماهِ دارای داده است.
+ */
+function WeightSparkline({ weights, label }: { weights: (number | null)[]; label: string }) {
+  const known = weights
+    .map((w, i) => ({ w, i }))
+    .filter((x): x is { w: number; i: number } => x.w != null);
+  if (known.length < 2) {
+    return <span className="text-navy-800/30">—</span>;
+  }
+  const n = weights.length;
+  const vals = known.map((k) => k.w);
+  const min = Math.min(...vals);
+  const max = Math.max(...vals);
+  const span = max - min || 1;
+  const x = (i: number) => SPARK_W - SPARK_PAD - (i / Math.max(1, n - 1)) * (SPARK_W - 2 * SPARK_PAD);
+  const y = (w: number) =>
+    max === min ? SPARK_H / 2 : SPARK_PAD + (1 - (w - min) / span) * (SPARK_H - 2 * SPARK_PAD);
+  const first = known[0].w;
+  const last = known[known.length - 1];
+  const delta = last.w - first;
+  const color = Math.abs(delta) < 0.05 ? '#a8893e' : delta > 0 ? '#047857' : '#b91c1c';
+  const path = known.map((k, j) => `${j === 0 ? 'M' : 'L'}${x(k.i).toFixed(1)},${y(k.w).toFixed(1)}`).join(' ');
+  const trendFa = Math.abs(delta) < 0.05 ? 'تقریباً ثابت' : delta > 0 ? 'افزایشی' : 'کاهشی';
+  return (
+    <svg
+      width={SPARK_W}
+      height={SPARK_H}
+      viewBox={`0 0 ${SPARK_W} ${SPARK_H}`}
+      role="img"
+      aria-label={`روند ${label}: ${trendFa}`}
+      className="block"
+    >
+      <title>{`روند ماهانه: ${trendFa} (${pct(first)} تا ${pct(last.w)})`}</title>
+      <path d={path} fill="none" stroke={color} strokeWidth={1.6} strokeLinejoin="round" strokeLinecap="round" />
+      <circle cx={x(last.i)} cy={y(last.w)} r={2.2} fill={color} />
+    </svg>
+  );
+}
+
 /**
  * نقشهٔ حرارتی وزن نمادها در سبد صندوق: هر سطر یک نماد، هر ستون یک ماه.
  * پررنگ‌تر یعنی سهم بیشتر از کل دارایی صندوق؛ عدد هر خانه همان درصد است.
@@ -191,6 +237,7 @@ export function HoldingsHeatmap({ fundId }: { fundId: string }) {
                 <th className="sticky right-0 z-10 bg-white px-2 py-1 text-start font-medium text-navy-800/60">
                   نماد
                 </th>
+                <th className="px-1 py-1 text-center font-medium text-navy-800/60">روند</th>
                 {periods.map((p) => (
                   <th
                     key={p.reportId}
@@ -217,6 +264,9 @@ export function HoldingsHeatmap({ fundId }: { fundId: string }) {
                     >
                       {row.nameFa}
                     </th>
+                    <td className="px-1 py-1 align-middle">
+                      <WeightSparkline weights={row.weights} label={row.nameFa} />
+                    </td>
                     {row.weights.map((w, ci) => {
                       const alpha = w == null || w <= 0 ? 0 : 0.08 + 0.82 * Math.min(1, w / maxWeight);
                       const active = hover?.row === ri && hover?.col === ci;
@@ -275,7 +325,8 @@ export function HoldingsHeatmap({ fundId }: { fundId: string }) {
       <div className="flex flex-wrap items-center justify-between gap-2 text-xs text-navy-800/55">
         <span>
           درصد از کل دارایی صندوق در هر گزارش. «۰» یعنی نماد در آن ماه در سبد نبوده؛ «—» یعنی دارایی‌های آن گزارش
-          استخراج نشده. «تغییر آخر» به واحد درصد است.
+          استخراج نشده. «تغییر آخر» به واحد درصد است. نمودار «روند» مثل ستون‌ها از ماه اول (راست) تا آخرین ماه
+          (چپ) است؛ سبز افزایش، قرمز کاهش.
         </span>
         {rows.length > TOP_ROWS && (
           <button type="button" className="text-navy-900 underline" onClick={() => setShowAll((v) => !v)}>

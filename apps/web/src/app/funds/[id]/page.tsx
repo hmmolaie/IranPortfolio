@@ -5,6 +5,7 @@ import Link from 'next/link';
 import { useParams, useRouter } from 'next/navigation';
 import { api, formatNum, formatRial, getToken } from '@/lib/api';
 import { HoldingsHeatmap } from './holdings-heatmap';
+import { FundTimelineSection } from './fund-timeline-section';
 
 type FundDefinition = {
   id: string;
@@ -188,24 +189,12 @@ export default function FundTrendPage() {
   const [selectedSymbol, setSelectedSymbol] = useState('');
   const [symbolTrend, setSymbolTrend] = useState<SymbolTrend | null>(null);
   const [actionFilter, setActionFilter] = useState<'ALL' | 'HELD' | 'BOUGHT' | 'SOLD'>('ALL');
-  const [behavior, setBehavior] = useState<{
-    enough: boolean;
-    noteFa: string;
-    changes: Array<{ asset: string; labelFa: string; fromPct: number; toPct: number }>;
-  } | null>(null);
 
   useEffect(() => {
     if (!getToken()) {
       router.replace('/');
       return;
     }
-    api<{
-      enough: boolean;
-      noteFa: string;
-      changes: Array<{ asset: string; labelFa: string; fromPct: number; toPct: number }>;
-    }>(`/funds/definitions/${id}/behavior`)
-      .then(setBehavior)
-      .catch(() => undefined);
     api<{ fund: FundDefinition; reports: FundReport[] }>(`/funds/timeline/${id}`)
       .then((data) => {
         setFund(data.fund);
@@ -296,22 +285,6 @@ export default function FundTrendPage() {
         </p>
       </div>
 
-      {behavior && (
-        <section className="card space-y-2">
-          <h2 className="text-lg font-semibold">رفتار مشاهده‌شده در گزارش‌ها</h2>
-          <p className="text-sm leading-7 text-navy-800/75">{behavior.noteFa}</p>
-          {behavior.enough && (
-            <ul className="text-sm leading-7">
-              {behavior.changes.map((c) => (
-                <li key={c.asset}>
-                  {c.labelFa}: {formatNum(c.fromPct)}٪ تا {formatNum(c.toPct)}٪
-                </li>
-              ))}
-            </ul>
-          )}
-        </section>
-      )}
-
       {latest && (
         <div className="grid grid-cols-2 gap-3 sm:grid-cols-4">
           {SERIES.map((s) => (
@@ -335,6 +308,8 @@ export default function FundTrendPage() {
         </div>
         <HoldingsHeatmap fundId={id} />
       </section>
+
+      <FundTimelineSection fundId={id} />
 
       <section className="card space-y-4">
         <div className="flex flex-wrap items-end justify-between gap-3">
