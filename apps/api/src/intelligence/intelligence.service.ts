@@ -113,7 +113,8 @@ export class IntelligenceService {
     const profile = await this.prisma.userProfile.findUnique({ where: { userId: portfolio.userId } });
     const facts = await this.loadFacts();
     const regime = classifyRegime(facts);
-    const weights = await this.portfolioWeights(portfolio);
+    const { weights, stockWeights } = await this.portfolioBook(portfolio);
+    const builtTarget = builtTargetFromSnapshots(portfolio.snapshots);
     const dna = buildDna({
       riskTolerance: profile?.riskTolerance ?? 5,
       horizonMonths: profile?.horizonMonths ?? 12,
@@ -129,12 +130,21 @@ export class IntelligenceService {
       regime: regime.regime,
       confidence: regime.confidence,
       drivers: regime.drivers,
+      builtTarget,
     });
     const risk = scoreRisk(weights, facts.inflationPct != null);
     const drawdown = maxDrawdownPct(
       [...portfolio.snapshots].reverse().map((s) => Number(s.totalValueRial) || 0),
     );
-    const health = healthScore(weights, risk.score);
+    const health = healthScore({
+      weights,
+      target: plan.target,
+      riskScore: risk.score,
+      riskTolerance: dna.riskScore,
+      liquidityNeed: dna.liquidityNeed,
+      inflationSensitivity: dna.inflationSensitivity,
+      stockWeights,
+    });
     const alerts = buildAlerts({
       regime: regime.regime,
       enoughRegime: regime.enough,
@@ -218,7 +228,7 @@ export class IntelligenceService {
     shocks: Partial<Record<ClassKey, number>>,
   ) {
     const portfolio = await this.loadPortfolio(userId, portfolioId, isAdmin);
-    return scenarioImpact(await this.portfolioWeights(portfolio), shocks);
+    return scenarioImpact((await this.portfolioBook(portfolio)).weights, shocks);
   }
 
   async dataHealth() {
@@ -282,7 +292,8 @@ export class IntelligenceService {
     return portfolio;
   }
 
-  private async portfolioWeights(portfolio: {
+  /** وزن کلاس‌ها و وزن هر سهم از کل سبد با آخرین قیمت */
+  private async portfolioBook(portfolio: {
     cashRial: number;
     snapshots: Array<{
       items: Array<{
@@ -339,7 +350,12 @@ export class IntelligenceService {
     if (!rows.some((r) => r.assetType === 'CASH') && portfolio.cashRial > 0) {
       rows.push({ assetType: 'CASH', amountRial: portfolio.cashRial });
     }
-    return weightsFromAmounts(rows);
+    const total = rows.reduce((sum, r) => sum + (r.amountRial > 0 ? r.amountRial : 0), 0);
+    const stockWeights =
+      total > 0
+        ? rows.filter((r) => r.assetType === 'STOCK' && r.amountRial > 0).map((r) => (r.amountRial / total) * 100)
+        : [];
+    return { weights: weightsFromAmounts(rows), stockWeights };
   }
 
   private async loadFacts() {
@@ -397,6 +413,28 @@ export class IntelligenceService {
       goldPct,
     };
   }
+}
+
+/**
+ * تخصیص کلاسی System One از آخرین نسخه‌ای که آن را دارد (ساخت یا بازچینش).
+ * نسخه‌های بعدی کاربر (افزودن، ویرایش، نقد) هدف را عوض نمی‌کنند؛ فاصله از همان هدف سنجیده می‌شود.
+ */
+function builtTargetFromSnapshots(snapshots: Array<{ meta: unknown }>): Record<ClassKey, number> | null {
+  for (const snapshot of snapshots) {
+    const meta = snapshot.meta;
+    if (!meta || typeof meta !== 'object' || Array.isArray(meta)) continue;
+    const target = (meta as { systemOneTarget?: unknown }).systemOneTarget;
+    if (!target || typeof target !== 'object') continue;
+    const out = {} as Record<ClassKey, number>;
+    let any = false;
+    for (const k of CLASS_KEYS) {
+      const v = Number((target as Record<string, unknown>)[k]);
+      out[k] = Number.isFinite(v) && v > 0 ? v : 0;
+      if (out[k] > 0) any = true;
+    }
+    if (any) return out;
+  }
+  return null;
 }
 
 function asLevel(value: string | null | undefined): Level | null {

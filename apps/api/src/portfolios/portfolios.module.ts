@@ -9,9 +9,19 @@ import { WorldMarketsModule } from '../world-markets/world-markets.module';
 import { WalletModule } from '../wallet/wallet.module';
 import { TradeFeesModule } from '../trade-fees/trade-fees.module';
 import { MarketModule } from '../market/market.module';
+import { IntelligenceModule } from '../intelligence/intelligence.module';
 
 @Module({
-  imports: [LlmModule, NewsModule, UsersModule, WorldMarketsModule, WalletModule, TradeFeesModule, MarketModule],
+  imports: [
+    LlmModule,
+    NewsModule,
+    UsersModule,
+    WorldMarketsModule,
+    WalletModule,
+    TradeFeesModule,
+    MarketModule,
+    IntelligenceModule,
+  ],
   providers: [PortfoliosService, StockScreenService],
   controllers: [PortfoliosController],
   exports: [PortfoliosService],

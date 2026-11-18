@@ -3,6 +3,7 @@
 import { AssetType } from '@prisma/client';
 import { PrismaService } from '../prisma/prisma.service';
 import { rawFigure, type StockFact } from './suggest-system-one';
+import { loadTickerResolver } from '../market/ticker-resolve';
 
 const TREND_LOOKBACK_DAYS = 45;
 /** پرش روزانهٔ بیشتر از این، افزایش سرمایه یا سود نقدی است نه حرکت بازار؛ روند از بعد آن حساب می‌شود. */
@@ -96,7 +97,15 @@ async function attachTrend(prisma: PrismaService, stocks: StockFact[], tradeDate
   }
 }
 
-async function attachFundMoves(prisma: PrismaService, stocks: StockFact[]) {
+export type FundTally = { holders: number; buyers: number; sellers: number; weightSum: number };
+
+/**
+ * رفتار صندوق‌های پیگیری‌شده با هر سهم در آخرین گزارش ماهانه نسبت به گزارش ماه قبل‌ترش.
+ * کلید، نماد بورسی یکسان‌شده است: نماد یا نام کاملی که مدل از گزارش خوانده با جدول نمادها تطبیق داده می‌شود.
+ * هر صندوق یک‌بار شمرده می‌شود حتی اگر چند کاربر آن را تعریف کرده باشند.
+ */
+export async function fundMoveTally(prisma: PrismaService): Promise<Map<string, FundTally>> {
+  const tally = new Map<string, FundTally>();
   const reports = await prisma.fundReport.findMany({
     where: {
       fundDefinitionId: { not: null },
@@ -105,40 +114,60 @@ async function attachFundMoves(prisma: PrismaService, stocks: StockFact[]) {
       reportMonthNum: { not: null },
       analysisStatus: 'done',
     },
-    select: { id: true, fundDefinitionId: true, reportYear: true, reportMonthNum: true },
+    select: {
+      id: true,
+      fundDefinitionId: true,
+      reportYear: true,
+      reportMonthNum: true,
+      createdAt: true,
+      fundDefinition: { select: { nameFa: true } },
+    },
   });
-  if (!reports.length) return;
+  if (!reports.length) return tally;
   const monthIndex = (r: { reportYear: number | null; reportMonthNum: number | null }) =>
     (r.reportYear ?? 0) * 12 + (r.reportMonthNum ?? 0);
   const newest = Math.max(...reports.map(monthIndex));
+  // یک صندوق با یک نام، حتی اگر چند کاربر جدا تعریفش کرده باشند
   const byFund = new Map<string, typeof reports>();
   for (const report of reports) {
-    const list = byFund.get(report.fundDefinitionId!) ?? [];
+    const key = symbolKey(report.fundDefinition?.nameFa ?? report.fundDefinitionId!);
+    const list = byFund.get(key) ?? [];
     list.push(report);
-    byFund.set(report.fundDefinitionId!, list);
+    byFund.set(key, list);
   }
   const pairs: Array<{ latestId: string; previousId: string | null }> = [];
   for (const list of byFund.values()) {
-    list.sort((a, b) => monthIndex(b) - monthIndex(a));
-    if (newest - monthIndex(list[0]) > FUND_REPORT_MAX_AGE_MONTHS) continue;
-    pairs.push({ latestId: list[0].id, previousId: list[1]?.id ?? null });
+    // آخرین ماه؛ اگر یک ماه چند گزارش دارد تازه‌ترین ثبت
+    list.sort((a, b) => monthIndex(b) - monthIndex(a) || b.createdAt.getTime() - a.createdAt.getTime());
+    const latest = list[0];
+    if (newest - monthIndex(latest) > FUND_REPORT_MAX_AGE_MONTHS) continue;
+    // گزارش قبلی باید از ماهی قبل‌تر باشد، نه نسخهٔ دیگری از همان ماه
+    const previous = list.find((r) => monthIndex(r) < monthIndex(latest)) ?? null;
+    pairs.push({ latestId: latest.id, previousId: previous?.id ?? null });
   }
-  if (!pairs.length) return;
+  if (!pairs.length) return tally;
   const reportIds = pairs.flatMap((pair) => (pair.previousId ? [pair.latestId, pair.previousId] : [pair.latestId]));
-  const holdings = await prisma.fundHolding.findMany({
-    where: { fundReportId: { in: reportIds }, assetKind: 'STOCK' },
-    select: { fundReportId: true, symbol: true, action: true, weightPct: true },
-  });
+  const [holdings, resolve] = await Promise.all([
+    prisma.fundHolding.findMany({
+      where: { fundReportId: { in: reportIds }, assetKind: 'STOCK' },
+      select: { fundReportId: true, symbol: true, nameFa: true, action: true, weightPct: true },
+    }),
+    loadTickerResolver(prisma),
+  ]);
   const byReport = new Map<string, Map<string, { action: string; weight: number }>>();
   for (const row of holdings) {
+    const key = symbolKey(resolve(row.symbol, row.nameFa) ?? row.symbol);
     const map = byReport.get(row.fundReportId) ?? new Map<string, { action: string; weight: number }>();
-    map.set(symbolKey(row.symbol), { action: row.action, weight: row.weightPct ?? 0 });
+    const prev = map.get(key);
+    // یک سهم با دو ردیف در یک گزارش (مثلاً موجودی و خرید): وزن بیشتر و اقدام غیر موجودی می‌ماند
+    map.set(key, {
+      action: prev && prev.action !== 'HELD' ? prev.action : row.action,
+      weight: Math.max(prev?.weight ?? 0, row.weightPct ?? 0),
+    });
     byReport.set(row.fundReportId, map);
   }
 
-  type Tally = { holders: number; buyers: number; sellers: number; weightSum: number };
-  const tally = new Map<string, Tally>();
-  const bump = (key: string, patch: Partial<Tally>) => {
+  const bump = (key: string, patch: Partial<FundTally>) => {
     const row = tally.get(key) ?? { holders: 0, buyers: 0, sellers: 0, weightSum: 0 };
     row.holders += patch.holders ?? 0;
     row.buyers += patch.buyers ?? 0;
@@ -168,6 +197,11 @@ async function attachFundMoves(prisma: PrismaService, stocks: StockFact[]) {
       });
     }
   }
+  return tally;
+}
+
+async function attachFundMoves(prisma: PrismaService, stocks: StockFact[]) {
+  const tally = await fundMoveTally(prisma);
   for (const stock of stocks) {
     const row = tally.get(symbolKey(stock.symbol)) ?? tally.get(symbolKey(stock.nameFa));
     stock.fh = row?.holders ?? 0;

@@ -72,7 +72,32 @@ describe('risk and health', () => {
   it('refuses a score for an empty book', () => {
     const risk = scoreRisk(empty, false);
     assert.equal(risk.score, null);
-    assert.equal(healthScore(empty, null).score, null);
+    assert.equal(
+      healthScore({
+        weights: empty,
+        target: null,
+        riskScore: null,
+        riskTolerance: null,
+        liquidityNeed: null,
+        inflationSensitivity: null,
+      }).score,
+      null,
+    );
+  });
+
+  it('scores a book built on its own target and profile near the top', () => {
+    const built = { equity: 50, fixed: 15, gold: 15, usd: 10, cash: 10 };
+    const risk = scoreRisk(built, true);
+    const health = healthScore({
+      weights: built,
+      target: built,
+      riskScore: risk.score,
+      riskTolerance: 8,
+      liquidityNeed: 'MEDIUM',
+      inflationSensitivity: null,
+      stockWeights: [10, 10, 10, 10, 10],
+    });
+    assert.ok((health.score ?? 0) >= 85, `health ${health.score}`);
   });
 
   it('needs five marks for drawdown', () => {

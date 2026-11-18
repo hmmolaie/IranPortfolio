@@ -40,9 +40,10 @@ export const METHODOLOGY_FA = {
   confidence:
     'اطمینان از تعداد نشانه‌های واقعی است و از ۸۵ درصد بالاتر نمی‌رود، چون پهنای بازار و ارزش‌گذاری در این محاسبه نیست.',
   target:
-    'وزن هدف از تحمل ریسک اعلام‌شده شروع می‌شود. فقط اگر ریسک با اطمینان کافی باشد، چند واحد به طلا، نقد یا سهام جابه‌جا می‌شود و دوباره به ۱۰۰ می‌رسد.',
+    'اگر سبد با System One ساخته یا بازچینش شده باشد، وزن هدف همان تخصیص کلاسی است که System One در آن نوبت انتخاب کرد. در غیر این صورت وزن هدف از تحمل ریسک اعلام‌شده شروع می‌شود و فقط اگر ریسک با اطمینان کافی باشد، چند واحد به طلا، نقد یا سهام جابه‌جا می‌شود.',
   risk: 'ریسک از تمرکز وزن‌ها، سهم سهام، سهم دلار و سهم نقد در همین سبد است، نه از پیش‌بینی بازده.',
-  health: 'سلامت میانگین جزءهایی است که داده دارند. جزء بدون داده در میانگین نمی‌آید.',
+  health:
+    'سلامت تناسب سبد با هدف و پروفایل خود کاربر است: نزدیکی به وزن هدف، هم‌خوانی ریسک با تحمل ریسک اعلام‌شده، پخش وزن بین سهم‌ها، نقد کافی برای نیاز نقدینگی و پوشش تورمی به اندازهٔ نیاز. جزء بدون داده در میانگین نمی‌آید.',
   scenario:
     'اثر سناریو حساب مستقیم فرض شما روی همان کلاس است. همبستگی بین کلاس‌ها محاسبه نشده و نتیجه آینده را تضمین نمی‌کند.',
 };
@@ -198,7 +199,30 @@ export function buildPlan(input: {
   regime: RegimeCode;
   confidence: number | null;
   drivers: Driver[];
+  /** تخصیص کلاسی System One در آخرین ساخت یا بازچینش؛ اگر باشد همان وزن هدف است */
+  builtTarget?: Record<ClassKey, number> | null;
 }) {
+  if (input.builtTarget && CLASS_KEYS.some((k) => (input.builtTarget![k] ?? 0) > 0)) {
+    const target = renormalize(input.builtTarget);
+    const lines = CLASS_KEYS.map((asset) => {
+      const currentPct = round1(input.weights[asset] || 0);
+      const targetPct = target[asset];
+      const diffPct = round1(targetPct - currentPct);
+      const action = diffPct >= 2 ? 'INCREASE' : diffPct <= -2 ? 'DECREASE' : 'HOLD';
+      return {
+        asset,
+        labelFa: CLASS_LABEL_FA[asset],
+        currentPct,
+        targetPct,
+        diffPct,
+        action,
+        reasonFa: 'وزن هدف همان تخصیص System One در آخرین ساخت یا بازچینش این سبد است.',
+        confidence: null as number | null,
+        basis: 'system_one',
+      };
+    });
+    return { lines, tilted: false, target };
+  }
   const band = input.riskTolerance <= 3 ? 'low' : input.riskTolerance >= 7 ? 'high' : 'mid';
   const base = { ...BASE_BY_RISK[band] };
   const tilt = input.confidence != null && input.confidence >= 0.45 && input.regime !== 'NEUTRAL';
@@ -239,7 +263,7 @@ export function buildPlan(input: {
       basis: tilt ? 'model_rule' : 'declared_risk_only',
     };
   });
-  return { lines, tilted: tilt };
+  return { lines, tilted: tilt, target };
 }
 
 export function scoreRisk(weights: Record<ClassKey, number>, inflationKnown: boolean) {
@@ -329,47 +353,93 @@ export function maxDrawdownPct(values: number[]): { pct: number | null; noteFa: 
   };
 }
 
-export function healthScore(weights: Record<ClassKey, number>, riskScore: number | null) {
+/** ریسک مورد انتظار (مقیاس scoreRisk، ۳ تا ۸) برای تحمل ریسک ۱ تا ۱۰ */
+function expectedRiskScore(riskTolerance: number) {
+  const t = clamp(riskTolerance, 1, 10);
+  return 3 + ((t - 1) * 5) / 9;
+}
+
+const CASH_NEED_PCT: Record<Level, number> = { LOW: 3, MEDIUM: 7, HIGH: 15 };
+const HEDGE_NEED_PCT: Record<Level, number> = { LOW: 8, MEDIUM: 15, HIGH: 25 };
+
+/**
+ * سلامت = تناسب سبد با هدف و پروفایل خود کاربر، نه میزان محافظه‌کاری.
+ * سبدی که همین حالا مطابق وزن هدفش ساخته شده و ریسکش با تحمل ریسک کاربر جور است نمرهٔ بالا می‌گیرد.
+ */
+export function healthScore(input: {
+  weights: Record<ClassKey, number>;
+  target: Record<ClassKey, number> | null;
+  riskScore: number | null;
+  riskTolerance: number | null;
+  liquidityNeed: Level | null;
+  inflationSensitivity: Level | null;
+  /** وزن هر سهم از کل سبد به درصد */
+  stockWeights?: number[];
+}) {
+  const { weights, target } = input;
   const total = CLASS_KEYS.reduce((s, k) => s + (weights[k] || 0), 0);
   if (total <= 0) {
     return { score: null as number | null, parts: [] as Array<{ code: string; labelFa: string; score: number; detailFa: string }> };
   }
-  const hhi = CLASS_KEYS.reduce((s, k) => s + (weights[k] / 100) ** 2, 0);
-  const top = Math.max(...CLASS_KEYS.map((k) => weights[k]));
-  const parts = [
-    {
-      code: 'diversification',
-      labelFa: 'پراکندگی',
-      score: clamp(Math.round((1 - hhi) * 100), 0, 100),
-      detailFa: 'از پخش وزن بین پنج کلاس دارایی.',
-    },
-    {
-      code: 'concentration',
-      labelFa: 'عدم تمرکز',
-      score: clamp(Math.round(100 - top), 0, 100),
-      detailFa: `بزرگ‌ترین کلاس ${round1(top).toLocaleString('fa-IR')} درصد است.`,
-    },
-    {
-      code: 'liquidity',
-      labelFa: 'نقدشوندگی',
-      score: clamp(Math.round(Math.min(100, weights.cash * 4)), 0, 100),
-      detailFa: 'از سهم نقد. سقف این جزء وقتی نقد به ۲۵ درصد برسد پر می‌شود.',
-    },
-    {
-      code: 'inflation',
-      labelFa: 'پوشش تورمی در سبد',
-      score: clamp(Math.round(Math.min(100, (weights.gold + weights.usd) * 3)), 0, 100),
-      detailFa: 'سهم طلا و دلار است، نه پیش‌بینی تورم.',
-    },
-  ];
-  if (riskScore != null) {
+  const parts: Array<{ code: string; labelFa: string; score: number; detailFa: string }> = [];
+
+  if (target) {
+    const gap = CLASS_KEYS.reduce((s, k) => s + Math.abs((weights[k] || 0) - (target[k] || 0)), 0) / 2;
     parts.push({
-      code: 'risk',
-      labelFa: 'ریسک',
-      score: clamp(Math.round((10 - riskScore) * 10), 0, 100),
-      detailFa: 'برعکس امتیاز ریسک همین صفحه.',
+      code: 'alignment',
+      labelFa: 'نزدیکی به وزن هدف',
+      score: clamp(Math.round(100 - gap * 2), 0, 100),
+      detailFa: `${round1(gap).toLocaleString('fa-IR')} واحد درصد از سبد با وزن هدف فرق دارد.`,
     });
   }
+
+  if (input.riskScore != null && input.riskTolerance != null) {
+    const expected = expectedRiskScore(input.riskTolerance);
+    const diff = Math.abs(input.riskScore - expected);
+    parts.push({
+      code: 'risk_fit',
+      labelFa: 'تناسب ریسک با پروفایل',
+      score: clamp(Math.round(100 - diff * 20), 0, 100),
+      detailFa: `امتیاز ریسک سبد ${round1(input.riskScore).toLocaleString('fa-IR')} است و برای تحمل ریسک ${Math.round(input.riskTolerance).toLocaleString('fa-IR')} حدود ${round1(expected).toLocaleString('fa-IR')} انتظار می‌رود.`,
+    });
+  }
+
+  const stocks = (input.stockWeights ?? []).filter((w) => Number.isFinite(w) && w > 0);
+  const sleeve = stocks.reduce((s, w) => s + w, 0);
+  if (sleeve > 0) {
+    const top = (Math.max(...stocks) / sleeve) * 100;
+    const fewPenalty = stocks.length >= 4 ? 0 : (4 - stocks.length) * 10;
+    parts.push({
+      code: 'stock_spread',
+      labelFa: 'پخش وزن بین سهم‌ها',
+      score: clamp(Math.round(100 - Math.max(0, top - 25) * 1.5 - fewPenalty), 0, 100),
+      detailFa: `${stocks.length.toLocaleString('fa-IR')} سهم؛ بزرگ‌ترین سهم ${round1(top).toLocaleString('fa-IR')} درصد بخش سهام است.`,
+    });
+  }
+
+  const cashNeed = input.liquidityNeed ? CASH_NEED_PCT[input.liquidityNeed] : 5;
+  parts.push({
+    code: 'liquidity',
+    labelFa: 'نقد کافی',
+    score: clamp(Math.round(Math.min(100, (weights.cash / cashNeed) * 100)), 0, 100),
+    detailFa: `نقد ${round1(weights.cash).toLocaleString('fa-IR')} درصد است؛ برای نیاز نقدینگی ${
+      input.liquidityNeed ? LEVEL_FA[input.liquidityNeed] : 'اعلام‌نشده'
+    } حدود ${cashNeed.toLocaleString('fa-IR')} درصد کافی است.`,
+  });
+
+  const hedge = weights.gold + weights.usd;
+  const hedgeNeed = input.inflationSensitivity
+    ? HEDGE_NEED_PCT[input.inflationSensitivity]
+    : target
+      ? Math.max(0, (target.gold + target.usd) * 0.8)
+      : 10;
+  parts.push({
+    code: 'inflation',
+    labelFa: 'پوشش تورمی کافی',
+    score: hedgeNeed <= 0 ? 100 : clamp(Math.round(Math.min(100, (hedge / hedgeNeed) * 100)), 0, 100),
+    detailFa: `طلا و دلار ${round1(hedge).toLocaleString('fa-IR')} درصد است؛ نیاز حدود ${round1(hedgeNeed).toLocaleString('fa-IR')} درصد.`,
+  });
+
   const score = Math.round(parts.reduce((s, p) => s + p.score, 0) / parts.length);
   return { score, parts };
 }

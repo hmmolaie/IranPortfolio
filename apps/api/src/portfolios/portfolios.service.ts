@@ -45,6 +45,7 @@ import {
   allocationState,
   buildStockFact,
   classQuestions,
+  compactStockFacts,
   faPct,
   fillHedge,
   fillStockSleeve,
@@ -53,12 +54,61 @@ import {
   normalizeClassWeights,
   readLevelPct,
   readNoul,
+  sleeveQuestions,
+  sleeveState,
+  type SleeveClass,
   stockQuestions,
   stockSignalsFa,
   stockState,
 } from './suggest-system-one';
-import { attachStockSignals } from './stock-signals';
+import { attachStockSignals, fundMoveTally, symbolKey, type FundTally } from './stock-signals';
+import { balancedLessons } from './lesson-mix';
+import { IntelligenceService } from '../intelligence/intelligence.service';
+import { CLASS_KEYS as BOOK_CLASS_KEYS, type ClassKey as BookClassKey, weightsFromAmounts } from '../intelligence/engine';
 import { StockScreenService } from './stock-screen.service';
+
+/** معیار نمره‌دهی آنالیز سبد؛ در کد است تا پرامپت ذخیره‌شدهٔ ادمین هم آن را داشته باشد */
+const ANALYZE_SCORE_RUBRIC_FA = `معیار score (۰ تا ۱۰۰):
+- ۳۵ امتیاز: تناسب ترکیب با userProfile (ریسک‌پذیری، افق، نیاز نقدینگی، حساسیت تورم و ارز) و نزدیکی currentClassWeights به buildTarget.
+- ۲۵ امتیاز: کیفیت سهم‌ها از روی signals هر قلم (ارزش‌گذاری pe و ep، روند r5 و r20، نوسان v20، جریان پول حقیقی rf5، رفتار صندوق‌های برتر fh و fb و fs، امتیاز غربال sp).
+- ۲۰ امتیاز: تنوع و تمرکز، هم بین کلاس‌ها و هم بین سهم‌ها.
+- ۱۵ امتیاز: هم‌خوانی با macro و marketRegime، طلا و دلار، اخبار ایران و جهان و lessons.
+- ۵ امتیاز: کارمزد و نقدشوندگی.
+buildTarget تخصیصی است که System One با همین شواهد برای این کاربر ساخته است. اگر سبد به آن نزدیک است، به‌خاطر سلیقهٔ متفاوت نمره کم نکن؛ فقط ضعفی را بشمار که در دادهٔ ورودی دیده می‌شود و در weaknessesFa همان داده را نام ببر. اگر buildTarget خالی است، فقط پروفایل معیار است.`;
+
+const SIGNALS_LEGEND_FA =
+  'کلیدهای signals: px قیمت، eps، pe، ep بازده سود به درصد، val ارزش معامله، chg تغییر روز٪، r5 و r20 تغییر قیمت ۵ و ۲۰ روزه٪، v20 نوسان روزانهٔ ۲۰ روزه٪، av20 میانگین ارزش معامله، rf5 خالص خرید حقیقی ۵ روزه٪ حجم، fh تعداد صندوق‌های برتر دارنده، fb خریدار و fs فروشنده در آخرین گزارش ماهانه، fw میانگین وزن در آن صندوق‌ها٪، sp امتیاز غربال روزانهٔ بازار٪.';
+
+/** سهم بیرون از غربال روزانه اگر دست‌کم این تعداد صندوق در آخرین ماه خریده باشند سنجیده می‌شود */
+const FUND_PICK_MIN_BUYERS = 2;
+const FUND_PICK_EXTRA = 8;
+/** چند نماد پرمعامله که System One برای کلاس صندوق طلا یا صندوق سرمایه‌گذاری بینشان انتخاب می‌کند */
+const SLEEVE_CANDIDATES = 6;
+
+/** وزن کلاس‌های سبد (به زبان هوش سبد) از اقلام ساخته‌شده؛ همان «وزن هدف» این نسخه */
+function builtClassTarget(
+  items: Array<{ assetType: string; amountRial: number }>,
+  capitalRial: number,
+): Record<BookClassKey, number> | null {
+  const invested = items.reduce((sum, item) => sum + (item.amountRial > 0 ? item.amountRial : 0), 0);
+  const rows = items.map((item) => ({ assetType: item.assetType, amountRial: item.amountRial }));
+  const leftover = capitalRial - invested;
+  if (leftover > 0 && !items.some((item) => item.assetType === 'CASH')) {
+    rows.push({ assetType: 'CASH', amountRial: leftover });
+  }
+  const weights = weightsFromAmounts(rows);
+  return BOOK_CLASS_KEYS.some((k) => weights[k] > 0) ? weights : null;
+}
+
+function snapshotTarget(snapshots: Array<{ meta: unknown }>): Record<BookClassKey, number> | null {
+  for (const snapshot of snapshots) {
+    const meta = snapshot.meta;
+    if (!meta || typeof meta !== 'object' || Array.isArray(meta)) continue;
+    const target = (meta as { systemOneTarget?: Record<string, number> }).systemOneTarget;
+    if (target && typeof target === 'object') return target as Record<BookClassKey, number>;
+  }
+  return null;
+}
 
 type PortfolioNewsRow = {
   batch: { newsDateKey: string };
@@ -157,6 +207,7 @@ export class PortfoliosService {
     private readonly tradeFees: TradeFeesService,
     private readonly market: MarketService,
     private readonly screen: StockScreenService,
+    private readonly intelligence: IntelligenceService,
   ) {}
 
   /** بعد از اینجست شبانه، غربال روزانهٔ سهم‌ها یک‌بار ساخته می‌شود تا پیشنهاد کاربر منتظر کل بازار نماند. */
@@ -191,6 +242,17 @@ export class PortfoliosService {
       .filter((row) => screen.scores.has(row.symbol))
       .sort((a, b) => (screen.scores.get(b.symbol) ?? 0) - (screen.scores.get(a.symbol) ?? 0))
       .slice(0, SCREEN_SHORTLIST);
+    // سهمی که دست‌کم دو صندوق برتر در آخرین گزارش ماهانه خریده‌اند هم سنجیده می‌شود، حتی بیرون از غربال روزانه
+    const inList = new Set(shortlist.map((row) => row.symbol));
+    const tally = await fundMoveTally(this.prisma).catch(() => new Map<string, FundTally>());
+    const fundPicks = snapshot.rows
+      .filter((row) => !inList.has(row.symbol))
+      .map((row) => ({ row, t: tally.get(symbolKey(row.symbol)) ?? tally.get(symbolKey(row.nameFa)) }))
+      .filter((x) => (x.t?.buyers ?? 0) >= FUND_PICK_MIN_BUYERS)
+      .sort((a, b) => (b.t!.buyers - a.t!.buyers) || (b.t!.holders - a.t!.holders))
+      .slice(0, FUND_PICK_EXTRA)
+      .map((x) => x.row);
+    shortlist.push(...fundPicks);
     await attachStockSignals(this.prisma, shortlist, snapshot.tradeDate);
     for (const row of shortlist) row.sp = Math.round((screen.scores.get(row.symbol) ?? 0) * 100);
     return shortlist;
@@ -486,7 +548,7 @@ export class PortfoliosService {
           items: [],
         });
       }
-      return await this.createSnapshotFromItems(userId, portfolioId, first);
+      return await this.createSnapshotFromItems(userId, portfolioId, { ...first, systemOne: true });
     } catch (e) {
       await this.wallet.refund(userId, charged, 'suggest');
       throw e;
@@ -690,8 +752,8 @@ export class PortfoliosService {
 
     const capital = portfolio.capitalRial;
     const stockItems = fillStockSleeve(capital, (capital * weights.stock) / 100, picks);
-    const goldEtf = weights.gold_etf > 0 ? await this.busiestTradable(AssetType.GOLD_ETF) : null;
-    const fund = weights.fund > 0 ? await this.busiestTradable(AssetType.FUND) : null;
+    const goldEtf = weights.gold_etf > 0 ? await this.pickSleeve(userId, investor, market, 'gold_etf') : null;
+    const fund = weights.fund > 0 ? await this.pickSleeve(userId, investor, market, 'fund') : null;
     const items: Array<{
       symbol: string;
       assetType: AssetType;
@@ -706,20 +768,10 @@ export class PortfoliosService {
     pushClass('physical_gold', 'PHYSICAL_GOLD', AssetType.PHYSICAL_GOLD, 'سهم طلای فیزیکی از سرمایه، بعد از نرمال‌سازی امتیاز کلاس‌ها.');
     pushClass('physical_usd', 'PHYSICAL_USD', AssetType.PHYSICAL_USD, 'سهم دلار فیزیکی از سرمایه، بعد از نرمال‌سازی امتیاز کلاس‌ها.');
     if (goldEtf) {
-      pushClass(
-        'gold_etf',
-        goldEtf.symbol,
-        AssetType.GOLD_ETF,
-        'پرمعامله‌ترین صندوق طلای بدون صف برای همان درصد کلاس صندوق طلا.',
-      );
+      pushClass('gold_etf', goldEtf.symbol, AssetType.GOLD_ETF, goldEtf.reasonFa);
     }
     if (fund) {
-      pushClass(
-        'fund',
-        fund.symbol,
-        AssetType.FUND,
-        'پرمعامله‌ترین صندوق بدون صف برای همان درصد کلاس صندوق.',
-      );
+      pushClass('fund', fund.symbol, AssetType.FUND, fund.reasonFa);
     }
     for (const stock of stockItems) {
       items.push({
@@ -801,13 +853,8 @@ export class PortfoliosService {
 
   private async decisionMarket(userId: string): Promise<MarketState> {
     const platformUserId = (await this.users.getAdminUserId()) ?? userId;
-    const [lessons, economicNews, worldMacroNews, fxHistory, spot] = await Promise.all([
-      this.prisma.lesson.findMany({
-        where: { userId: platformUserId },
-        orderBy: { createdAt: 'desc' },
-        take: 10,
-        select: { titleFa: true, bodyFa: true },
-      }),
+    const [lessons, economicNews, worldMacroNews, fxHistory, spot, macro, regime] = await Promise.all([
+      balancedLessons(this.prisma, platformUserId, 10),
       this.news.getForPortfolioContext(userId, 20, 14),
       this.worldMarkets.recentMacroNews(),
       this.prisma.spotPriceDaily.findMany({
@@ -816,6 +863,8 @@ export class PortfoliosService {
         select: { dateKey: true, usdIrr: true, goldGramRial: true },
       }),
       this.prisma.spotPriceDaily.findFirst({ orderBy: { dateKey: 'desc' } }),
+      this.prisma.macroSnapshot.findFirst({ orderBy: { asOfDate: 'desc' } }),
+      this.intelligence.currentRegime(false).catch(() => null),
     ]);
     const news = splitNewsForPortfolio(economicNews);
     return {
@@ -847,11 +896,24 @@ export class PortfoliosService {
         summary: clipText(item.summaryFa, 200) ?? '',
         iranImpact: clipText(item.iranImpactFa, 200),
       })),
+      macro: macro
+        ? {
+            asOf: macro.asOfDate.toISOString().slice(0, 10),
+            inflationPct: macro.inflationPct,
+            interestRatePct: macro.interestRatePct,
+            geoRiskScore: macro.geoRiskScore,
+            summary: clipText(macro.summaryFa, 300),
+          }
+        : null,
+      regime: regime
+        ? {
+            code: regime.regime,
+            labelFa: regime.labelFa,
+            confidence: regime.confidence,
+            drivers: regime.drivers.map((d) => d.labelFa),
+          }
+        : null,
     };
-  }
-
-  private async tradableOnLatest(assetType: AssetType): Promise<StockFact[]> {
-    return (await this.tradableSnapshot(assetType)).rows;
   }
 
   /** نمادهای معامله‌شده و بدون صف در آخرین روز معاملاتی، همراه همان تاریخ. */
@@ -905,10 +967,54 @@ export class PortfoliosService {
     return { tradeDate: latest.tradeDate, rows };
   }
 
-  private async busiestTradable(assetType: AssetType): Promise<StockFact | null> {
-    const rows = await this.tradableOnLatest(assetType);
-    rows.sort((a, b) => (b.volume ?? 0) - (a.volume ?? 0));
-    return rows[0] ?? null;
+  /**
+   * نماد کلاس صندوق طلا یا صندوق سرمایه‌گذاری: System One از میان پرمعامله‌ترین نمادهای بدون صف
+   * با روند و ارقام هر کدام یکی را انتخاب می‌کند. اگر مدل جواب ندهد پرمعامله‌ترین می‌ماند.
+   */
+  private async pickSleeve(
+    userId: string,
+    investor: InvestorState,
+    market: MarketState,
+    sleeve: SleeveClass,
+  ): Promise<{ symbol: string; reasonFa: string } | null> {
+    const assetType = sleeve === 'gold_etf' ? AssetType.GOLD_ETF : AssetType.FUND;
+    const label = sleeve === 'gold_etf' ? 'صندوق طلا' : 'صندوق سرمایه‌گذاری';
+    const snapshot = await this.tradableSnapshot(assetType);
+    const turnover = (row: StockFact) => row.valueRial ?? (row.volume ?? 0) * row.price;
+    const candidates = [...snapshot.rows].sort((a, b) => turnover(b) - turnover(a)).slice(0, SLEEVE_CANDIDATES);
+    if (!candidates.length) return null;
+    const busiest = {
+      symbol: candidates[0].symbol,
+      reasonFa: `پرمعامله‌ترین ${label} بدون صف برای همان درصد کلاس.`,
+    };
+    if (candidates.length === 1 || !snapshot.tradeDate) return busiest;
+    try {
+      await attachStockSignals(this.prisma, candidates, snapshot.tradeDate);
+      const answers = await this.llm.systemOne(
+        userId,
+        'portfolio_suggest_multi',
+        sleeveState(investor, market, candidates, sleeve),
+        sleeveQuestions(candidates, sleeve),
+      );
+      let best = 0;
+      let bestNoul = -1;
+      candidates.forEach((_, index) => {
+        const noul = readNoul(answers[`p${index}`]);
+        if (noul > bestNoul) {
+          best = index;
+          bestNoul = noul;
+        }
+      });
+      const pick = candidates[best];
+      const why = stockSignalsFa(pick);
+      return {
+        symbol: pick.symbol,
+        reasonFa: `${label} انتخاب System One از ${candidates.length.toLocaleString('fa-IR')} نماد پرمعاملهٔ بدون صف با احتمال ${Math.round(bestNoul * 100).toLocaleString('fa-IR')}٪.${why ? ` ${why}` : ''}`,
+      };
+    } catch (e) {
+      this.logger.warn(`انتخاب ${label}: ${(e as Error).message.slice(0, 200)}`);
+      return busiest;
+    }
   }
 
   private async attachMissingPrices<T extends { symbol: string }>(
@@ -952,6 +1058,7 @@ export class PortfoliosService {
     return this.createSnapshotFromItems(userId, portfolioId, {
       strategySummaryFa: summary,
       items: data.items,
+      systemOne: true,
     });
   }
 
@@ -966,18 +1073,22 @@ export class PortfoliosService {
         weightPct: number;
         reasonFa: string;
       }>;
+      /** ساخته‌شده با System One؛ وزن کلاس‌ها به‌عنوان وزن هدف هوش سبد و آنالیز ذخیره می‌شود */
+      systemOne?: boolean;
     },
   ) {
     const portfolio = await this.get(userId, portfolioId);
     const universe = await this.attachMissingPrices(await this.buildUniverse(), out.items ?? []);
     const items = this.materializeItems(out.items ?? [], portfolio.capitalRial, universe);
     const totalValueRial = items.reduce((s, i) => s + i.amountRial, 0);
+    const target = out.systemOne ? builtClassTarget(items, portfolio.capitalRial) : null;
     return this.prisma.portfolioSnapshot.create({
       data: {
         portfolioId,
         kind: SnapshotKind.SUGGESTION,
         strategySummaryFa: out.strategySummaryFa ?? 'پیشنهاد سبد',
         totalValueRial: Math.min(totalValueRial, portfolio.capitalRial),
+        ...(target ? { meta: { systemOneTarget: target } } : {}),
         items: { create: items },
       },
       include: { items: true },
@@ -1302,11 +1413,15 @@ ${historyText}`,
     const portfolio = await this.get(userId, portfolioId);
     const latest = portfolio.snapshots[0];
     const snapshot = await this.suggest(userId, portfolioId, { skipBilling: true });
+    const builtMeta =
+      snapshot.meta && typeof snapshot.meta === 'object' && !Array.isArray(snapshot.meta)
+        ? (snapshot.meta as Record<string, unknown>)
+        : {};
     await this.prisma.portfolioSnapshot.update({
       where: { id: snapshot.id },
       data: {
         kind: SnapshotKind.REBALANCE,
-        meta: { previousSnapshotId: latest?.id, noteFa },
+        meta: { ...builtMeta, previousSnapshotId: latest?.id, noteFa } as Prisma.InputJsonValue,
       },
     });
     return this.prisma.portfolioSnapshot.findUnique({
@@ -1838,6 +1953,26 @@ ${historyText}`,
     };
   }
 
+  /** ارقام و سیگنال‌های سهم‌های داخل سبد، همان کلیدهایی که System One هنگام انتخاب دید */
+  private async heldStockSignals(items: Array<{ symbol: string; assetType: string }>) {
+    const out = new Map<string, Record<string, string | number>>();
+    const held = new Set(items.filter((i) => i.assetType === AssetType.STOCK).map((i) => i.symbol));
+    if (!held.size) return out;
+    try {
+      const snapshot = await this.tradableSnapshot(AssetType.STOCK);
+      if (!snapshot.tradeDate) return out;
+      const rows = snapshot.rows.filter((row) => held.has(row.symbol));
+      await attachStockSignals(this.prisma, rows, snapshot.tradeDate);
+      for (const row of rows) {
+        const { i: _i, symbol: _symbol, name: _name, ...facts } = compactStockFacts(row);
+        out.set(row.symbol, facts);
+      }
+    } catch (e) {
+      this.logger.warn(`سیگنال سهم‌های سبد برای آنالیز: ${(e as Error).message.slice(0, 200)}`);
+    }
+    return out;
+  }
+
   async analyzeCurrent(
     userId: string,
     portfolioId: string,
@@ -1852,25 +1987,12 @@ ${historyText}`,
     const macro = personal
       ? null
       : await this.prisma.macroSnapshot.findFirst({ orderBy: { asOfDate: 'desc' } });
-    const economicNews = personal ? [] : await this.news.getForPortfolioContext(userId, 40, 30);
+    // همان شواهدی که System One هنگام ساخت سبد دید: اخبار، درس‌ها، طلا و دلار، کلان و ریسک بازار
+    const market = personal ? null : await this.decisionMarket(userId);
     const worldMacroNews = personal ? [] : await this.worldMarkets.recentMacroNews();
-    const fxHistory = personal
-      ? []
-      : await this.prisma.spotPriceDaily.findMany({
-          where: { dateKey: { gte: daysAgoDateKey(30) } },
-          orderBy: { dateKey: 'asc' },
-          select: { dateKey: true, usdIrr: true, goldGramRial: true },
-          take: 35,
-        });
-    const platformUserId = (await this.users.getAdminUserId()) ?? userId;
-    const lessons = personal
-      ? []
-      : await this.prisma.lesson.findMany({
-          where: { userId: platformUserId },
-          orderBy: { createdAt: 'desc' },
-          take: 30,
-        });
     const profile = await this.prisma.userProfile.findUnique({ where: { userId } });
+    const buildTarget = snapshotTarget(portfolio.snapshots);
+    const stockSignals = await this.heldStockSignals(latest.items);
 
     const pricedItems = latest.items.map((i) => {
       const u = universe.find((x) => x.symbol === i.symbol);
@@ -1884,13 +2006,21 @@ ${historyText}`,
         lastMarketPrice: u?.lastPrice ?? null,
         pe: u?.pe ?? null,
         reasonFa: i.reasonFa,
+        signals: i.assetType === AssetType.STOCK ? stockSignals.get(i.symbol) ?? null : null,
       };
     });
+    const currentClassWeights = weightsFromAmounts([
+      ...pricedItems.map((item) => ({ assetType: item.assetType, amountRial: Number(item.amountRial) || 0 })),
+      ...(pricedItems.some((item) => item.assetType === AssetType.CASH) || !(portfolio.cashRial > 0)
+        ? []
+        : [{ assetType: 'CASH', amountRial: portfolio.cashRial }]),
+    ]);
 
     const fees = await this.tradeFees.read();
     const optionBoard = await this.market.getOptionBoard().catch(() => null);
     let system = await this.llm.getSystemPrompt(userId, 'portfolio_analyze');
     system += `\n\n${feeInstructionFa(fees)}`;
+    system += `\n\n${ANALYZE_SCORE_RUBRIC_FA}`;
     if (personal) {
       system += `
 
@@ -1915,7 +2045,6 @@ summaryFa و نقاط قوت و ضعف گزارش وضعیت سبد هستند �
       cashRial: portfolio.cashRial,
       preferencesNoteFa: portfolio.preferencesNoteFa,
     };
-    const news = splitNewsForPortfolio(economicNews);
     const fullPrompt = JSON.stringify(
       personal
         ? {
@@ -1923,7 +2052,7 @@ summaryFa و نقاط قوت و ضعف گزارش وضعیت سبد هستند �
             userProfile: compactProfile(profile),
             currentItems: pricedItems.map((item) => ({
               ...item,
-              reasonFa: clipText(item.reasonFa, 160),
+              reasonFa: clipText(item.reasonFa, 400),
             })),
             tradeFees: fees,
             optionBoard: optionBoard ? optionBoardForPrompt(optionBoard) : null,
@@ -1935,8 +2064,12 @@ summaryFa و نقاط قوت و ضعف گزارش وضعیت سبد هستند �
             userProfile: compactProfile(profile),
             currentItems: pricedItems.map((item) => ({
               ...item,
-              reasonFa: clipText(item.reasonFa, 160),
+              reasonFa: clipText(item.reasonFa, 400),
             })),
+            buildTarget,
+            currentClassWeights,
+            signalsLegend: SIGNALS_LEGEND_FA,
+            marketRegime: market?.regime ?? null,
             macro: macro
               ? {
                   asOfDate: macro.asOfDate,
@@ -1947,16 +2080,8 @@ summaryFa و نقاط قوت و ضعف گزارش وضعیت سبد هستند �
                   summaryFa: clipText(macro.summaryFa, 400),
                 }
               : null,
-            economicNews: news.economicNews.map((item) => ({
-              ...item,
-              summary: clipText(item.summary, 220),
-              marketImpact: clipText(item.marketImpact, 180),
-            })),
-            investmentOpportunities: news.investmentOpportunities.map((item) => ({
-              ...item,
-              summary: clipText(item.summary, 220),
-              participateHow: clipText(item.participateHow, 180),
-            })),
+            economicNews: market?.iranNews ?? [],
+            investmentOpportunities: market?.opportunities ?? [],
             worldMacroNews: worldMacroNews.map((item) => ({
               dateKey: item.dateKey,
               titleFa: item.titleFa,
@@ -1965,11 +2090,8 @@ summaryFa و نقاط قوت و ضعف گزارش وضعیت سبد هستند �
               assetsFa: item.assetsFa,
               impactDirection: item.impactDirection,
             })),
-            fxHistory: fxHistory.slice(-10),
-            lessons: lessons.slice(0, 8).map((lesson) => ({
-              title: lesson.titleFa,
-              body: clipText(lesson.bodyFa, 220),
-            })),
+            fxHistory: market?.recent ?? [],
+            lessons: market?.lessons ?? [],
             tradeFees: fees,
             optionBoard: optionBoard ? optionBoardForPrompt(optionBoard) : null,
             optionRuleFa:

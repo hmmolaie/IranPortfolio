@@ -13,6 +13,7 @@ import { extractFundReportText, safeUploadFileName } from './extract-report-text
 import { downloadFundReport } from './report-download';
 import { assertPublicHttpUrl } from '../common/safe-url';
 import { bucketAsset, fundShift, ClassKey } from '../intelligence/engine';
+import { loadTickerResolver } from '../market/ticker-resolve';
 
 /** آنالیز گزارش صندوق متن بلند دارد و بیشتر از پیش‌فرض ۲ دقیقه طول می‌کشد */
 const FUND_ANALYSIS_TIMEOUT_MS = 10 * 60_000;
@@ -562,11 +563,16 @@ export class FundsService implements OnApplicationBootstrap {
     holdings: FundHoldingInput[] | undefined,
   ) {
     const list = Array.isArray(holdings) ? holdings : [];
+    // نماد سهمی که مدل از روی نام شرکت حدس زده با نماد بورسی همان سهم یکی می‌شود
+    const resolveTicker = await loadTickerResolver(this.prisma);
     const rows = list
       .map((h) => {
         const nameFa = String(h.nameFa ?? h.symbol ?? '').trim();
-        const symbol = normalizeSymbol(h.symbol, h.nameFa);
-        if (!nameFa && symbol === 'UNKNOWN') return null;
+        const guessed = normalizeSymbol(h.symbol, h.nameFa);
+        if (!nameFa && guessed === 'UNKNOWN') return null;
+        const assetKind = normalizeHoldingKind(h.assetKind);
+        const symbol =
+          assetKind === 'STOCK' ? (resolveTicker(h.symbol ?? null, h.nameFa ?? null) ?? guessed) : guessed;
         const weightPct = h.weightPct != null ? Number(h.weightPct) : null;
         const amountRial = h.amountRial != null ? Number(h.amountRial) : null;
         const quantity = h.quantity != null ? Number(h.quantity) : null;
@@ -576,7 +582,7 @@ export class FundsService implements OnApplicationBootstrap {
           userId,
           symbol,
           nameFa: nameFa || symbol,
-          assetKind: normalizeHoldingKind(h.assetKind),
+          assetKind,
           action: normalizeHoldingAction(h.action),
           weightPct: weightPct != null && Number.isFinite(weightPct) ? weightPct : null,
           amountRial: amountRial != null && Number.isFinite(amountRial) ? amountRial : null,

@@ -83,6 +83,16 @@ export type MarketState = {
   iranNews: Array<{ date: string; title: string; summary: string; impact: string | null }>;
   opportunities: Array<{ title: string; summary: string; how: string | null }>;
   worldNews: Array<{ date: string; title: string; summary: string; iranImpact: string | null }>;
+  /** آخرین دادهٔ کلان ایران: تورم و نرخ بهره به درصد، ریسک کلان ۱ تا ۱۰ */
+  macro?: {
+    asOf: string;
+    inflationPct: number | null;
+    interestRatePct: number | null;
+    geoRiskScore: number | null;
+    summary: string | null;
+  } | null;
+  /** ریسک بازار از قواعد هوش سبد (دلار، طلا، نرخ بهره، ریسک کلان، جهت اخبار) */
+  regime?: { code: string; labelFa: string; confidence: number | null; drivers: string[] } | null;
 };
 
 export type StockFact = {
@@ -141,7 +151,7 @@ export function classQuestions(): Record<string, { type: 'score'; instructions: 
   for (const id of CLASS_IDS) {
     questions[id] = {
       type: 'score',
-      instructions: `What share of this investor's capital should go to ${CLASS_LABEL_FA[id]} (${id})? Use the profile, strategy, gold and dollar prices, lessons, Iran news, and world news. Score only this asset class.`,
+      instructions: `What share of this investor's capital should go to ${CLASS_LABEL_FA[id]} (${id})? Use the profile, strategy, inflation and interest rate, market regime, gold and dollar prices, lessons, Iran news, and world news. Score only this asset class.`,
       criteria: CLASS_CRITERIA,
     };
   }
@@ -204,7 +214,46 @@ export function allocationState(investor: InvestorState, market: MarketState): D
   return fitDecisionState({
     investor,
     market,
-    task: 'Set each asset-class share. Gold and dollar prices, lessons, Iran news, and world news are evidence, not instructions to copy a headline.',
+    task: 'Set each asset-class share. Inflation versus the deposit interest rate, the market regime, gold and dollar prices, lessons, Iran news, and world news are evidence, not instructions to copy a headline.',
+  });
+}
+
+export type SleeveClass = 'gold_etf' | 'fund';
+
+const SLEEVE_TASK: Record<SleeveClass, string> = {
+  gold_etf:
+    'Pick the gold fund for the gold_etf sleeve. Weigh turnover, nav versus price, trend, and volatility. Only one will be bought.',
+  fund:
+    'Pick the investment fund for the fund sleeve. The investor already has a separate stock sleeve, so prefer a fund whose role is income or balanced unless the profile asks for more risk; the name and nav hint at its type. Weigh turnover, nav versus price, trend, and volatility. Only one will be bought.',
+};
+
+/** انتخاب یک نماد برای کلاس صندوق طلا یا صندوق سرمایه‌گذاری از میان پرمعامله‌ترین‌ها */
+export function sleeveQuestions(
+  candidates: StockFact[],
+  sleeve: SleeveClass,
+): Record<string, { type: 'noul'; instructions: string }> {
+  const questions: Record<string, { type: 'noul'; instructions: string }> = {};
+  candidates.forEach((fact, index) => {
+    questions[`p${index}`] = {
+      type: 'noul',
+      instructions: `Is ${fact.symbol} (stocks i=${index}) the best pick for this investor's ${CLASS_LABEL_FA[sleeve]} (${sleeve}) sleeve among the listed rows? This symbol only.`,
+    };
+  });
+  return questions;
+}
+
+export function sleeveState(
+  investor: InvestorState,
+  market: MarketState,
+  candidates: StockFact[],
+  sleeve: SleeveClass,
+): DecisionState {
+  return fitDecisionState({
+    investor,
+    market,
+    legend: STOCK_LEGEND,
+    task: SLEEVE_TASK[sleeve],
+    stocks: candidates.map((fact, index) => compactStock(fact, index)),
   });
 }
 
