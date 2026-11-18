@@ -36,6 +36,7 @@ type SortKey =
   | 'premium'
   | 'totalCost'
   | 'costGap'
+  | 'costGapPct'
   | 'buyQueue'
   | 'sellQueue'
   | 'daysLeft'
@@ -51,6 +52,7 @@ const COLUMNS: Array<{ key: SortKey; label: string }> = [
   { key: 'premium', label: 'قیمت اختیار' },
   { key: 'totalCost', label: 'مبلغ تمام شده' },
   { key: 'costGap', label: 'مبلغ تفاوت با دارایی پایه' },
+  { key: 'costGapPct', label: 'درصد تفاوت با دارایی پایه' },
   { key: 'buyQueue', label: 'حجم صف خرید' },
   { key: 'sellQueue', label: 'حجم صف فروش' },
   { key: 'daysLeft', label: 'روز مانده' },
@@ -132,6 +134,14 @@ function costGap(row: OptionsTableRow): number | null {
   return total - underlying;
 }
 
+/** درصد تفاوت با دارایی پایه = مبلغ تفاوت با دارایی پایه ÷ قیمت پایه × ۱۰۰ */
+function costGapPct(row: OptionsTableRow): number | null {
+  const gap = costGap(row);
+  const underlying = rowNumber(row.underlyingPrice);
+  if (gap == null || underlying == null || !(underlying > 0)) return null;
+  return (gap / underlying) * 100;
+}
+
 function formatQueue(value: number | null | undefined): string {
   if (value == null) return '—';
   return formatNum(value);
@@ -146,6 +156,7 @@ function sortValue(row: OptionsTableRow, key: SortKey): string | number | null {
   if (key === 'premium') return row.premium;
   if (key === 'totalCost') return totalCost(row);
   if (key === 'costGap') return costGap(row);
+  if (key === 'costGapPct') return costGapPct(row);
   if (key === 'buyQueue') return row.buyQueueVolume ?? null;
   if (key === 'sellQueue') return row.sellQueueVolume ?? null;
   if (key === 'daysLeft') return row.daysLeft;
@@ -374,7 +385,7 @@ export function OptionsValueTable({
               {COLUMNS.map((column) => (
                 <th
                   key={column.key}
-                  className={`px-3 py-3 text-start font-medium${column.key === 'profit' ? ' w-28' : ''}`}
+                  className={`px-3 py-3 text-start font-medium${column.key === 'profit' ? ' w-20' : ''}`}
                 >
                   <button type="button" className="font-medium text-white" onClick={() => toggleSort(column.key)}>
                     {column.label}
@@ -410,24 +421,38 @@ export function OptionsValueTable({
                     </span>
                   );
                 })()}</td>
+                <td className="px-3 py-2.5">{(() => {
+                  const pctGap = costGapPct(row);
+                  if (pctGap == null) return '—';
+                  return (
+                    <span
+                      dir="ltr"
+                      className={pctGap > 0 ? 'text-red-700' : pctGap < 0 ? 'text-emerald-700' : undefined}
+                    >
+                      {pctGap.toLocaleString('fa-IR', { maximumFractionDigits: 1 })}٪
+                    </span>
+                  );
+                })()}</td>
                 <td className="px-3 py-2.5">{formatQueue(row.buyQueueVolume)}</td>
                 <td className="px-3 py-2.5">{formatQueue(row.sellQueueVolume)}</td>
                 <td className="px-3 py-2.5">
                   {row.daysLeft == null ? '—' : Math.round(row.daysLeft).toLocaleString('fa-IR')}
                 </td>
-                <td className="w-28 px-2 py-2.5">
+                <td className="w-20 px-2 py-2.5">
                   {row.profitRial == null || row.profitPct == null ? (
                     <span className="text-navy-800/45">—</span>
                   ) : (
                     <>
-                      <div className={row.profitRial >= 0 ? 'font-medium text-emerald-700' : 'font-medium text-red-700'}>
+                      <div
+                        className={row.profitRial >= 0 ? 'font-medium text-emerald-700' : 'font-medium text-red-700'}
+                        title={`${row.profitPct.toLocaleString('fa-IR')}٪ نسبت به قیمت اختیار${
+                          row.contractSize != null ? ` · اندازهٔ قرارداد ${formatNum(row.contractSize)}` : ''
+                        }`}
+                      >
                         {Math.round(row.profitRial).toLocaleString('fa-IR')}
                       </div>
-                      <div
-                        className="text-xs leading-5 text-navy-800/55"
-                        title={row.contractSize != null ? `اندازهٔ قرارداد ${formatNum(row.contractSize)}` : undefined}
-                      >
-                        {row.profitPct.toLocaleString('fa-IR')}٪ قیمت اختیار
+                      <div className="text-[11px] leading-4 text-navy-800/55">
+                        {row.profitPct.toLocaleString('fa-IR', { maximumFractionDigits: 0 })}٪
                       </div>
                     </>
                   )}
