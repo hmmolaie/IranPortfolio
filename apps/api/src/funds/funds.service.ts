@@ -283,8 +283,7 @@ export class FundsService implements OnApplicationBootstrap {
           ? `${ins.toReportYear}-${String(ins.toReportMonthNum).padStart(2, '0')}`
           : null),
     }));
-    const pair = await this.latestMonthPair(userId, fundDefinitionId);
-    return { fund: def, reports, insights, analyze: pair.state };
+    return { fund: def, reports, insights };
   }
 
   async remove(userId: string, id: string) {
@@ -507,7 +506,7 @@ export class FundsService implements OnApplicationBootstrap {
       );
 
       if (report.fundDefinitionId) {
-        await this.autoTimelineForReport(report.userId, report.fundDefinitionId, id);
+        await this.autoTimelineForFund(report.userId, report.fundDefinitionId);
       }
     } catch (e) {
       const message = (e as Error).message?.slice(0, 1000) || 'خطای نامشخص';
@@ -737,10 +736,6 @@ export class FundsService implements OnApplicationBootstrap {
     return month > 1 ? { year, month: month - 1 } : { year: year - 1, month: 12 };
   }
 
-  private nextMonth(year: number, month: number) {
-    return month < 12 ? { year, month: month + 1 } : { year: year + 1, month: 1 };
-  }
-
   /** آخرین گزارش آنالیزشدهٔ یک ماه مشخص از صندوق */
   private findDoneReport(userId: string, fundDefinitionId: string, year: number, month: number) {
     return this.prisma.fundReport.findFirst({
@@ -756,11 +751,12 @@ export class FundsService implements OnApplicationBootstrap {
   }
 
   /**
-   * آخرین ماه آنالیزشدهٔ صندوق و ماه قبلش؛ دکمهٔ «تحلیل ماه‌به‌ماه با AI» فقط وقتی فعال است
-   * که هر دو ماه گزارش داشته باشند و برای آن ماه هنوز تحلیلی ثبت نشده باشد.
+   * بعد از آنالیز هر گزارش: همهٔ ماه‌های این صندوق که گزارش ماه قبلشان هست ولی هنوز با آن مقایسه
+   * نشده‌اند (از جمله ماه‌هایی که قبلاً از قلم افتاده‌اند) به ترتیب زمان تحلیل می‌شوند.
+   * ماهی که تحلیل دارد دوباره به مدل نمی‌رود. خطا فقط لاگ می‌شود و نوبت بعد دوباره امتحان می‌شود.
    */
-  private async latestMonthPair(userId: string, fundDefinitionId: string) {
-    const curr = await this.prisma.fundReport.findFirst({
+  private async autoTimelineForFund(userId: string, fundDefinitionId: string) {
+    const reports = await this.prisma.fundReport.findMany({
       where: {
         userId,
         fundDefinitionId,
@@ -768,68 +764,31 @@ export class FundsService implements OnApplicationBootstrap {
         reportYear: { not: null },
         reportMonthNum: { not: null },
       },
-      orderBy: [{ reportYear: 'desc' }, { reportMonthNum: 'desc' }, { createdAt: 'desc' }],
+      orderBy: [{ reportYear: 'asc' }, { reportMonthNum: 'asc' }, { createdAt: 'desc' }],
+      select: { id: true, reportYear: true, reportMonthNum: true },
     });
-    if (!curr || curr.reportYear == null || curr.reportMonthNum == null) {
-      return {
-        curr: null,
-        state: { canAnalyze: false, reasonFa: 'هنوز گزارش آنالیزشده‌ای نیست.' as string | null },
-      };
+    const done = await this.prisma.fundTimelineInsight.findMany({
+      where: { fundDefinitionId, toReportYear: { not: null } },
+      select: { toReportYear: true, toReportMonthNum: true },
+    });
+    const monthKey = (y: number, m: number) => `${y}-${m}`;
+    const analyzed = new Set(done.map((d) => monthKey(d.toReportYear!, d.toReportMonthNum!)));
+    // برای هر ماه تازه‌ترین گزارش (به خاطر createdAt desc اولی همان است)
+    const byMonth = new Map<string, string>();
+    for (const r of reports) {
+      const k = monthKey(r.reportYear!, r.reportMonthNum!);
+      if (!byMonth.has(k)) byMonth.set(k, r.id);
     }
-    const existing = await this.findMonthInsight(fundDefinitionId, curr.reportYear, curr.reportMonthNum);
-    if (existing) {
-      return {
-        curr,
-        state: {
-          canAnalyze: false,
-          reasonFa: `تحلیل ماه‌به‌ماه ${curr.reportMonth} قبلاً انجام شده است.` as string | null,
-        },
-      };
-    }
-    const p = this.previousMonth(curr.reportYear, curr.reportMonthNum);
-    const prev = await this.findDoneReport(userId, fundDefinitionId, p.year, p.month);
-    if (!prev) {
-      return {
-        curr,
-        state: {
-          canAnalyze: false,
-          reasonFa: `برای ماه قبل از ${curr.reportMonth} گزارش آنالیزشده‌ای نیست.` as string | null,
-        },
-      };
-    }
-    return { curr, state: { canAnalyze: true, reasonFa: null as string | null } };
-  }
 
-  /** دکمهٔ «تحلیل ماه‌به‌ماه با AI»: آخرین ماه با ماه قبلش، فقط یک‌بار برای هر صندوق و ماه */
-  async analyzeTimeline(userId: string, fundDefinitionId: string) {
-    await this.requireDefinition(userId, fundDefinitionId);
-    const { curr, state } = await this.latestMonthPair(userId, fundDefinitionId);
-    if (!curr || !state.canAnalyze) {
-      throw new BadRequestException(state.reasonFa ?? 'تحلیل ماه‌به‌ماه ممکن نیست');
-    }
-    const insight = await this.compareWithPreviousMonth(userId, fundDefinitionId, curr.id);
-    if (!insight) throw new BadRequestException('تحلیل ماه‌به‌ماه این ماه قبلاً انجام شده یا در حال انجام است.');
-    return { ok: true, insight };
-  }
-
-  /**
-   * بعد از آنالیز یک گزارش: اگر ماه قبلش گزارش دارد همین ماه با ماه قبل مقایسه می‌شود،
-   * و اگر ماه بعدش هم گزارش دارد و تحلیل نشده، ماه بعد با همین ماه. خطا فقط لاگ می‌شود.
-   */
-  private async autoTimelineForReport(userId: string, fundDefinitionId: string, reportId: string) {
-    const report = await this.prisma.fundReport.findUnique({ where: { id: reportId } });
-    if (!report || report.reportYear == null || report.reportMonthNum == null) return;
-
-    const targets: string[] = [report.id];
-    const n = this.nextMonth(report.reportYear, report.reportMonthNum);
-    const next = await this.findDoneReport(userId, fundDefinitionId, n.year, n.month);
-    if (next) targets.push(next.id);
-
-    for (const id of targets) {
+    for (const [k, reportId] of byMonth) {
+      if (analyzed.has(k)) continue;
+      const [y, m] = k.split('-').map(Number);
+      const p = this.previousMonth(y, m);
+      if (!byMonth.has(monthKey(p.year, p.month))) continue;
       try {
-        await this.compareWithPreviousMonth(userId, fundDefinitionId, id);
+        await this.compareWithPreviousMonth(userId, fundDefinitionId, reportId);
       } catch (e) {
-        this.logger.warn(`تحلیل ماه‌به‌ماه خودکار صندوق ${fundDefinitionId}: ${(e as Error).message}`);
+        this.logger.warn(`تحلیل ماه‌به‌ماه خودکار صندوق ${fundDefinitionId} (${k}): ${(e as Error).message}`);
       }
     }
   }

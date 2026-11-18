@@ -2,7 +2,6 @@
 
 import { useCallback, useEffect, useState } from 'react';
 import { api, formatNum } from '@/lib/api';
-import { WaitingOverlay } from '@/components/WaitingOverlay';
 
 type TimelineReport = {
   id: string;
@@ -22,12 +21,6 @@ type TimelineInsight = {
   createdAt: string;
 };
 
-/** دکمهٔ تحلیل ماه‌به‌ماه: برای هر صندوق و ماه فقط یک‌بار */
-type TimelineAnalyzeState = {
-  canAnalyze: boolean;
-  reasonFa: string | null;
-};
-
 const MONTHS_FA = [
   'فروردین',
   'اردیبهشت',
@@ -43,13 +36,6 @@ const MONTHS_FA = [
   'اسفند',
 ];
 
-const ANALYZE_STEPS = [
-  'جمع‌آوری گزارش‌های ماهانه...',
-  'مقایسه ترکیب سبدها...',
-  'تحلیل تغییر استراتژی با AI...',
-  'ثبت بینش ماه‌به‌ماه...',
-];
-
 function monthLabel(r: TimelineReport) {
   if (r.reportYear && r.reportMonthNum) {
     return `${MONTHS_FA[r.reportMonthNum - 1] ?? r.reportMonthNum} ${r.reportYear.toLocaleString('fa-IR', { useGrouping: false })}`;
@@ -57,14 +43,17 @@ function monthLabel(r: TimelineReport) {
   return r.reportMonth;
 }
 
-/** عملکرد صندوق در طول زمان: تحلیل ماه‌به‌ماه با AI برای همین صندوق */
+/**
+ * عملکرد صندوق در طول زمان: تحلیل‌های ماه‌به‌ماه همین صندوق.
+ * تحلیل دستی ندارد؛ با آنالیز هر گزارش، ماه‌هایی که با ماه قبلشان مقایسه نشده‌اند خودکار تحلیل می‌شوند.
+ */
 export function FundTimelineSection({ fundId }: { fundId: string }) {
   const [reports, setReports] = useState<TimelineReport[]>([]);
   const [insights, setInsights] = useState<TimelineInsight[]>([]);
-  const [analyzeState, setAnalyzeState] = useState<TimelineAnalyzeState | null>(null);
   const [loading, setLoading] = useState(true);
-  const [analyzing, setAnalyzing] = useState(false);
   const [msg, setMsg] = useState('');
+  /** پیش‌فرض فقط تحلیل آخرین ماه؛ «مشاهده گزارش ماه قبل» یکی‌یکی ماه‌های قبل را باز می‌کند */
+  const [shownCount, setShownCount] = useState(1);
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -72,11 +61,10 @@ export function FundTimelineSection({ fundId }: { fundId: string }) {
       const data = await api<{
         reports: TimelineReport[];
         insights: TimelineInsight[];
-        analyze?: TimelineAnalyzeState;
       }>(`/funds/timeline/${fundId}`);
       setReports(data.reports ?? []);
       setInsights(data.insights ?? []);
-      setAnalyzeState(data.analyze ?? null);
+      setShownCount(1);
     } catch (e) {
       setMsg((e as Error).message);
     } finally {
@@ -88,44 +76,17 @@ export function FundTimelineSection({ fundId }: { fundId: string }) {
     load().catch(() => undefined);
   }, [load]);
 
-  async function onAnalyze() {
-    setAnalyzing(true);
-    setMsg('');
-    try {
-      await api(`/funds/timeline/${fundId}/analyze`, { method: 'POST' });
-      setMsg('تحلیل عملکرد ماه‌به‌ماه انجام شد.');
-      await load();
-    } catch (e) {
-      setMsg((e as Error).message);
-    } finally {
-      setAnalyzing(false);
-    }
-  }
-
   return (
     <section className="card space-y-4">
-      <div className="flex flex-wrap items-end justify-between gap-3">
-        <div>
-          <h2 className="text-lg font-semibold">عملکرد صندوق در طول زمان</h2>
-          <p className="mt-1 text-sm text-navy-800/60">
-            تحلیل تغییر استراتژی مدیر صندوق از مقایسهٔ گزارش هر ماه با ماه قبل
-          </p>
-        </div>
-        <button
-          type="button"
-          className="btn-primary"
-          disabled={analyzing || loading || !analyzeState?.canAnalyze}
-          title={analyzeState?.reasonFa ?? undefined}
-          onClick={onAnalyze}
-        >
-          {analyzing ? 'در حال تحلیل...' : 'تحلیل ماه‌به‌ماه با AI'}
-        </button>
+      <div>
+        <h2 className="text-lg font-semibold">عملکرد صندوق در طول زمان</h2>
+        <p className="mt-1 text-sm text-navy-800/60">
+          تحلیل تغییر استراتژی مدیر صندوق از مقایسهٔ گزارش هر ماه با ماه قبل؛ با آنالیز هر گزارش خودکار ساخته
+          می‌شود.
+        </p>
       </div>
 
-      {!loading && analyzeState && !analyzeState.canAnalyze && analyzeState.reasonFa && (
-        <p className="text-xs text-navy-800/50">{analyzeState.reasonFa}</p>
-      )}
-      {msg && <p className="text-sm">{msg}</p>}
+      {msg && <p className="text-sm text-red-700">{msg}</p>}
 
       {loading ? (
         <p className="text-sm text-navy-800/60">در حال بارگذاری...</p>
@@ -146,11 +107,11 @@ export function FundTimelineSection({ fundId }: { fundId: string }) {
             <p className="text-sm text-navy-800/50">
               {reports.length < 2
                 ? 'حداقل دو گزارش ماهانه برای تحلیل مقایسه‌ای لازم است.'
-                : 'تحلیل ماه‌به‌ماه هنوز انجام نشده. با آنالیز گزارش ماه بعد، خودکار ساخته می‌شود.'}
+                : 'هنوز تحلیلی نیست؛ برای دو ماه پشت‌سرهم گزارش آنالیزشده لازم است و بعد از آنالیز خودکار ساخته می‌شود.'}
             </p>
           ) : (
             <div className="space-y-4">
-              {insights.map((ins) => (
+              {insights.slice(0, shownCount).map((ins, i, shown) => (
                 <article key={ins.id} className="rounded-lg border border-navy-900/10 p-4">
                   {(ins.fromMonth || ins.toMonth) && (
                     <p className="text-xs text-navy-800/50">
@@ -168,19 +129,23 @@ export function FundTimelineSection({ fundId }: { fundId: string }) {
                       <strong>تحلیل مدیر:</strong> {ins.llmReasoningFa}
                     </p>
                   )}
+                  {i === shown.length - 1 && shownCount < insights.length && (
+                    <div className="mt-3 border-t border-navy-900/10 pt-3">
+                      <button
+                        type="button"
+                        className="text-sm font-medium text-gold-700 hover:underline"
+                        onClick={() => setShownCount((c) => c + 1)}
+                      >
+                        مشاهده گزارش ماه قبل
+                        {insights[shownCount]?.toMonth ? ` (${insights[shownCount].toMonth})` : ''}
+                      </button>
+                    </div>
+                  )}
                 </article>
               ))}
             </div>
           )}
         </>
-      )}
-
-      {analyzing && (
-        <WaitingOverlay
-          title="در حال تحلیل ماه‌به‌ماه"
-          description="تغییر استراتژی و عملکرد صندوق در طول زمان با AI بررسی می‌شود."
-          steps={ANALYZE_STEPS}
-        />
       )}
     </section>
   );

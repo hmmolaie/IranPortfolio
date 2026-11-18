@@ -136,14 +136,6 @@ export class FundsController {
     return this.funds.getTimeline(req.user.userId, fundDefinitionId);
   }
 
-  @Post('timeline/:fundDefinitionId/analyze')
-  analyzeTimeline(
-    @Req() req: { user: { userId: string } },
-    @Param('fundDefinitionId') fundDefinitionId: string,
-  ) {
-    return this.funds.analyzeTimeline(req.user.userId, fundDefinitionId);
-  }
-
   /** تغییر وزن کلاس‌ها بین گزارش‌های موجود؛ مشاهده است نه پیش‌بینی */
   @Get('definitions/:id/behavior')
   behavior(@Req() req: { user: { userId: string } }, @Param('id') id: string) {
