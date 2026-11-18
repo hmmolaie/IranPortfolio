@@ -118,12 +118,26 @@ const INITIAL_FILTERS: OptionFilters = {
   maxDays: '',
 };
 
-/** مبلغ تمام شده = قیمت اختیار + اعمال */
+/**
+ * مبلغ تمام شده (نقطهٔ سربه‌سر):
+ * اختیار خرید = اعمال + قیمت اختیار، اختیار فروش = اعمال − قیمت اختیار
+ */
 function totalCost(row: OptionsTableRow): number | null {
   const premium = rowNumber(row.premium);
   const strike = rowNumber(row.strike);
   if (premium == null || !(premium > 0) || strike == null) return null;
-  return premium + strike;
+  return row.side === 'PUT' ? strike - premium : strike + premium;
+}
+
+/**
+ * رنگ مبلغ و درصد تفاوت: سود خریدار سبز، زیان قرمز.
+ * اختیار خرید وقتی سود می‌دهد که سربه‌سر زیر قیمت پایه باشد (تفاوت منفی)؛
+ * اختیار فروش وقتی که سربه‌سر بالای قیمت پایه باشد (تفاوت مثبت).
+ */
+function gapClass(row: OptionsTableRow, gap: number): string | undefined {
+  if (gap === 0) return undefined;
+  const profitable = row.side === 'PUT' ? gap > 0 : gap < 0;
+  return profitable ? 'text-emerald-700' : 'text-red-700';
 }
 
 /** مبلغ تفاوت با دارایی پایه = مبلغ تمام شده − قیمت پایه */
@@ -416,7 +430,7 @@ export function OptionsValueTable({
                   const gap = costGap(row);
                   if (gap == null) return '—';
                   return (
-                    <span dir="ltr" className={gap > 0 ? 'text-red-700' : gap < 0 ? 'text-emerald-700' : undefined}>
+                    <span dir="ltr" className={gapClass(row, gap)}>
                       {formatNum(gap)}
                     </span>
                   );
@@ -427,7 +441,7 @@ export function OptionsValueTable({
                   return (
                     <span
                       dir="ltr"
-                      className={pctGap > 0 ? 'text-red-700' : pctGap < 0 ? 'text-emerald-700' : undefined}
+                      className={gapClass(row, pctGap)}
                     >
                       {pctGap.toLocaleString('fa-IR', { maximumFractionDigits: 1 })}٪
                     </span>
