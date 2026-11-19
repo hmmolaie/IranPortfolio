@@ -132,10 +132,20 @@ export type StockFact = {
   fw?: number | null;
   /** احتمال غربال روزانه به درصد */
   sp?: number | null;
+  /** آخرین صورت مالی بارگذاری‌شده: امتیاز بنیادی پس از اثر قدمت، قدمت به ماه، P/E و P/B از صورت مالی، ROE، رشد سود، بدهی به حقوق مالکانه، نسبت جاری و اثر تغییر یک‌ماههٔ دلار و کالاها */
+  fq?: number | null;
+  fage?: number | null;
+  fpe?: number | null;
+  fpb?: number | null;
+  froe?: number | null;
+  fgr?: number | null;
+  fde?: number | null;
+  fcr?: number | null;
+  fmi?: number | null;
 };
 
 const STOCK_LEGEND =
-  'Stock keys: px last price in rial, cl close if different, eps, pe price/eps, ep earnings yield percent (eps/price*100), vol shares, val turnover rial, chg percent versus previous close, hi lo day high and low, n trade count, rb rs real-person buy and sell volume, lb ls legal-person buy and sell volume, spe sector pe, nav fund nav. Trend keys: r5 r20 price change percent over the last 5 and 20 trading days (restarted after a corporate-action gap), v20 daily return volatility percent over 20 days, av20 average daily turnover rial over 20 days, rf5 real-person net buy as percent of volume over 5 days. Fund-manager keys from the latest monthly reports of tracked top funds: fh funds holding it, fb funds that added to it, fs funds that cut it, fw average weight percent among holders. sp market-wide screen probability percent today. A missing key is unknown.';
+  'Stock keys: px last price in rial, cl close if different, eps, pe price/eps, ep earnings yield percent (eps/price*100), vol shares, val turnover rial, chg percent versus previous close, hi lo day high and low, n trade count, rb rs real-person buy and sell volume, lb ls legal-person buy and sell volume, spe sector pe, nav fund nav. Trend keys: r5 r20 price change percent over the last 5 and 20 trading days (restarted after a corporate-action gap), v20 daily return volatility percent over 20 days, av20 average daily turnover rial over 20 days, rf5 real-person net buy as percent of volume over 5 days. Fund-manager keys from the latest monthly reports of tracked top funds: fh funds holding it, fb funds that added to it, fs funds that cut it, fw average weight percent among holders. sp market-wide screen probability percent today. Financial-statement keys from the latest uploaded audited or interim statement: fq fundamental score 0-100 (valuation, profitability, growth, balance-sheet health; already pulled toward 50 when the statement is old), fage months since the statement period ended (older means weaker evidence), fpe price over annualized statement EPS, fpb price over book value per share, froe return on equity percent, fgr net profit growth percent versus the same period last year, fde total liabilities over equity, fcr current ratio, fmi effect of the last month of dollar, oil, copper, steel and gold moves on this company given its sensitivity (positive helps profits). A missing key is unknown.';
 
 type DecisionState = {
   investor: InvestorState;
@@ -169,7 +179,7 @@ export function stockQuestions(
     const who = stock.symbol;
     questions[`p${index}`] = {
       type: 'noul',
-      instructions: `Include ${who} (stocks i=${index})? Use its px, eps, pe, ep, trend, fund-manager moves and the other figures in the legend, plus profile, gold, dollar, lessons, and news. This symbol only.`,
+      instructions: `Include ${who} (stocks i=${index})? Use its px, eps, pe, ep, trend, fund-manager moves, financial-statement keys (fq, fpe, froe, fgr, fde, fcr, fmi, weighted down by fage) and the other figures in the legend, plus profile, gold, dollar, lessons, and news. This symbol only.`,
     };
     questions[`s${index}`] = {
       type: 'score',
@@ -574,6 +584,15 @@ function compactStock(stock: StockFact, index: number): Record<string, string | 
   put('fs', stock.fs ?? null, 0);
   put('fw', stock.fw ?? null, 2);
   put('sp', stock.sp ?? null, 0);
+  put('fq', stock.fq ?? null, 0);
+  put('fage', stock.fage ?? null, 0);
+  put('fpe', stock.fpe ?? null, 1);
+  put('fpb', stock.fpb ?? null, 1);
+  put('froe', stock.froe ?? null, 0);
+  put('fgr', stock.fgr ?? null, 0);
+  put('fde', stock.fde ?? null, 2);
+  put('fcr', stock.fcr ?? null, 2);
+  put('fmi', stock.fmi ?? null, 1);
   return row;
 }
 

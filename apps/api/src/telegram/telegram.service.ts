@@ -15,6 +15,7 @@ import { LlmService } from '../llm/llm.service';
 import { WalletService } from '../wallet/wallet.service';
 import { IntelligenceService } from '../intelligence/intelligence.service';
 import { MarketService } from '../market/market.service';
+import { FundamentalsService } from '../fundamentals/fundamentals.service';
 import { optionBoardTelegramLines } from '../market/option-board';
 import { renderPortfolioPiePng } from './pie-chart-png';
 import { fallbackDigestVoiceScript, trimSpokenScript } from './digest-voice';
@@ -87,6 +88,7 @@ export class TelegramService implements OnModuleInit {
     private readonly wallet: WalletService,
     private readonly intelligence: IntelligenceService,
     private readonly market: MarketService,
+    private readonly fundamentals: FundamentalsService,
   ) {}
 
   onModuleInit() {
@@ -762,6 +764,21 @@ export class TelegramService implements OnModuleInit {
       }
     } catch (e) {
       this.logger.warn(`خلاصه بازچینش ${userId}: ${(e as Error).message.slice(0, 140)}`);
+    }
+
+    // بنیاد سهم‌های سبد از صورت‌های مالی و اثر تغییر اخیر دلار و کالاها
+    try {
+      const brief = await this.fundamentals.holderBriefFa(userId);
+      if (brief) {
+        await this.tg(token, 'sendMessage', {
+          chat_id: chatId,
+          text: brief,
+          parse_mode: 'HTML',
+          disable_web_page_preview: true,
+        });
+      }
+    } catch (e) {
+      this.logger.warn(`بنیاد سهم‌های سبد ${userId}: ${(e as Error).message.slice(0, 140)}`);
     }
     }
 

@@ -9,9 +9,19 @@ import { LlmModule } from '../llm/llm.module';
 import { WalletModule } from '../wallet/wallet.module';
 import { IntelligenceModule } from '../intelligence/intelligence.module';
 import { MarketModule } from '../market/market.module';
+import { FundamentalsModule } from '../fundamentals/fundamentals.module';
 
 @Module({
-  imports: [PortfoliosModule, NewsModule, UsersModule, LlmModule, WalletModule, IntelligenceModule, MarketModule],
+  imports: [
+    PortfoliosModule,
+    NewsModule,
+    UsersModule,
+    LlmModule,
+    WalletModule,
+    IntelligenceModule,
+    MarketModule,
+    FundamentalsModule,
+  ],
   controllers: [TelegramController],
   providers: [TelegramService, HoldingAlertsService],
   exports: [TelegramService],

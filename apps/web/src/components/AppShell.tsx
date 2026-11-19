@@ -8,12 +8,22 @@ import clsx from 'clsx';
 import { ToastProvider, useToast } from '@/components/Toast';
 import { InstallAppPrompt } from '@/components/InstallAppPrompt';
 
-const allLinks: Array<{ href: string; label: string; adminOnly?: boolean; resellerOnly?: boolean; optionsMarket?: boolean }> = [
+type PageAccess = 'smartMoney' | 'fundamental';
+
+const allLinks: Array<{
+  href: string;
+  label: string;
+  adminOnly?: boolean;
+  resellerOnly?: boolean;
+  optionsMarket?: boolean;
+  page?: PageAccess;
+}> = [
   { href: '/dashboard', label: 'داشبورد' },
   { href: '/market', label: 'بازار سهام تهران' },
   { href: '/options', label: 'بازار اختیار معامله', optionsMarket: true },
   { href: '/portfolios', label: 'سبدها' },
-  { href: '/smart-money', label: 'پول هوشمند' },
+  { href: '/smart-money', label: 'پول هوشمند', page: 'smartMoney' },
+  { href: '/fundamentals', label: 'پیشنهادهای بنیادی', page: 'fundamental' },
   { href: '/funds', label: 'صندوق‌ها', adminOnly: true },
   { href: '/lessons', label: 'درس‌آموخته‌ها', adminOnly: true },
   { href: '/macro', label: 'اقتصاد ایران', adminOnly: true },
@@ -37,6 +47,7 @@ export function AppShell({ children }: { children: React.ReactNode }) {
   const [authed, setAuthed] = useState(false);
   const [role, setRole] = useState<UserRole | null>(null);
   const [optionsAccess, setOptionsAccess] = useState(false);
+  const [pageAccess, setPageAccess] = useState<Record<PageAccess, boolean>>({ smartMoney: false, fundamental: false });
   const [userLabel, setUserLabel] = useState('');
   const meLoaded = useRef(false);
   const isAuthPage = pathname === '/login' || pathname === '/login2' || pathname === '/register' || pathname === '/';
@@ -56,6 +67,7 @@ export function AppShell({ children }: { children: React.ReactNode }) {
       meLoaded.current = false;
       setRole(null);
       setOptionsAccess(false);
+      setPageAccess({ smartMoney: false, fundamental: false });
       setUserLabel('');
       return;
     }
@@ -65,7 +77,7 @@ export function AppShell({ children }: { children: React.ReactNode }) {
     ensureAuthCookie();
     if (meLoaded.current) return;
     let alive = true;
-    api<{ role?: UserRole; email?: string; name?: string | null; optionsMarketAccess?: boolean }>('/users/me')
+    api<{ role?: UserRole; email?: string; name?: string | null; optionsMarketAccess?: boolean; smartMoneyAccess?: boolean; fundamentalAccess?: boolean }>('/users/me')
       .then((u) => {
         if (!alive) return;
         if (u.role) {
@@ -73,6 +85,10 @@ export function AppShell({ children }: { children: React.ReactNode }) {
           setRole(u.role);
         }
         setOptionsAccess(u.role === 'ADMIN' || Boolean(u.optionsMarketAccess));
+        setPageAccess({
+          smartMoney: u.role === 'ADMIN' || Boolean(u.smartMoneyAccess),
+          fundamental: u.role === 'ADMIN' || Boolean(u.fundamentalAccess),
+        });
         setUserLabel(u.name?.trim() || u.email || '');
         meLoaded.current = true;
       })
@@ -86,6 +102,7 @@ export function AppShell({ children }: { children: React.ReactNode }) {
         setAuthed(false);
         setRole(null);
         setOptionsAccess(false);
+        setPageAccess({ smartMoney: false, fundamental: false });
         setUserLabel('');
         if (!isAuthPage) router.replace('/');
       });
@@ -103,6 +120,7 @@ export function AppShell({ children }: { children: React.ReactNode }) {
       setAuthed(false);
       setRole(null);
       setOptionsAccess(false);
+      setPageAccess({ smartMoney: false, fundamental: false });
       setUserLabel('');
       router.replace('/');
     }
@@ -159,6 +177,7 @@ export function AppShell({ children }: { children: React.ReactNode }) {
     if (l.adminOnly) return role === 'ADMIN';
     if (l.resellerOnly) return role === 'RESELLER';
     if (l.optionsMarket) return role === 'ADMIN' || optionsAccess;
+    if (l.page) return role === 'ADMIN' || pageAccess[l.page];
     return true;
   });
 
@@ -168,6 +187,7 @@ export function AppShell({ children }: { children: React.ReactNode }) {
     setAuthed(false);
     setRole(null);
     setOptionsAccess(false);
+    setPageAccess({ smartMoney: false, fundamental: false });
     setUserLabel('');
     window.location.assign('/');
   }

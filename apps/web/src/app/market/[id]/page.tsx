@@ -7,6 +7,7 @@ import { ASSET_TYPE_LABELS_FA, AssetType } from '@sabadyar/shared';
 import { api, formatNum, getToken } from '@/lib/api';
 import { OptionsTableRow, OptionsValueTable } from '@/components/OptionsValueTable';
 import { CodalNotices } from '@/components/CodalNotices';
+import { FinancialStatements } from '@/components/FinancialStatements';
 import { OptionPayoffCalculator } from '@/components/OptionPayoffCalculator';
 import clsx from 'clsx';
 import { formatShamsiDate } from '@/lib/shamsi-date';
@@ -761,6 +762,8 @@ export default function MarketInstrumentPage() {
       )}
 
       <CodalNotices instrumentId={id} />
+
+      {inst.assetType === 'STOCK' && <FinancialStatements instrumentId={id} />}
     </div>
   );
 }

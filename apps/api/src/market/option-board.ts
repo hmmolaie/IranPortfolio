@@ -96,6 +96,14 @@ export function daysLeftFromLabels(nameFa: string, symbol = ''): number | null {
   return jalaliToJulianDay(expiry.jy, expiry.jm, expiry.jd) - jalaliToJulianDay(today.jy, today.jm, today.jd);
 }
 
+/** چند روز از یک تاریخ شمسی گذشته است (به وقت تهران) */
+export function jalaliDaysAgo(jy: number, jm: number, jd: number, now = new Date()): number {
+  const key = new Intl.DateTimeFormat('en-CA', { timeZone: 'Asia/Tehran' }).format(now);
+  const [gy, gm, gd] = key.split('-').map(Number);
+  const today = gregorianToJalali(gy, gm, gd);
+  return jalaliToJulianDay(today.jy, today.jm, today.jd) - jalaliToJulianDay(jy, jm, jd);
+}
+
 export function optionMetaExpired(
   meta: unknown,
   assetType?: string,

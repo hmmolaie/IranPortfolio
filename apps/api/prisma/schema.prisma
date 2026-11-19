@@ -68,6 +68,10 @@ model User {
   resellerId     String?
   /// بازار اختیار معامله؛ پیش‌فرض بسته است و ادمین یا معرف آن را باز می‌کند
   optionsMarketAccess Boolean @default(false)
+  /// صفحهٔ پول هوشمند؛ ادمین از مدیریت کاربران باز می‌کند
+  smartMoneyAccess Boolean @default(false)
+  /// صفحهٔ پیشنهادهای بنیادی؛ ادمین از مدیریت کاربران باز می‌کند
+  fundamentalAccess Boolean @default(false)
   /// پیشنهاد، آنالیز و بازچینش سبد با هوش مصنوعی
   aiPortfolioEnabled Boolean @default(true)
   /// گفتگو و بقیهٔ فراخوانی‌های مدل زبانی برای همین کاربر
@@ -335,6 +339,7 @@ model Instrument {
 
   priceBars     PriceBar[]
   snapshotItems SnapshotItem[]
+  financialStatements FinancialStatement[]
 
   @@unique([symbol, assetType])
   @@index([assetType])
@@ -1128,4 +1133,52 @@ model ForexGraphEdge {
 
   @@index([snapshotId])
   @@index([snapshotId, fromCode])
+}
+
+/**
+ * صورت مالی یا گزارش مالی یک سهم (سالانه، میان‌دوره‌ای، ترازنامه و ...) که ادمین در صفحهٔ سهم بارگذاری می‌کند.
+ * مدل زبانی ارقام اصلی را استخراج می‌کند؛ نسبت‌ها و امتیاز بنیادی در کد از همین ارقام حساب می‌شوند.
+ */
+model FinancialStatement {
+  id             String   @id @default(cuid())
+  instrumentId   String
+  symbol         String
+  uploadedById   String?
+  fileName       String
+  filePath       String
+  /// pdf | excel
+  fileKind       String
+  extractedText  String?
+  /// annual | interim9 | interim6 | interim3 | balance | other
+  reportType     String?
+  /// پایان دوره به شمسی، مثل 1404/12/29
+  periodEndFa    String?
+  /// همان تاریخ به شکل عددی 14041229 برای مرتب‌سازی و قدمت
+  periodEndKey   Int?
+  /// طول دوره به ماه (۳، ۶، ۹، ۱۲)
+  periodMonths   Int?
+  audited        Boolean?
+  consolidated   Boolean?
+  /// ارقام اصلی به میلیون ریال (EPS به ریال)
+  figures        Json?
+  /// حساسیت سود شرکت به دلار، نفت، فلزات و نرخ بهره (-۲ تا +۲)
+  sensitivity    Json?
+  summaryFa      String?
+  strengthsFa    String?
+  weaknessesFa   String?
+  risksFa        String?
+  /// نظر مدل دربارهٔ کیفیت بنیادی، ۰ تا ۱۰
+  llmScore       Float?
+  /// pending | running | done | failed
+  analysisStatus String   @default("pending")
+  analysisError  String?
+  analysisJson   Json?
+  createdAt      DateTime @default(now())
+  updatedAt      DateTime @updatedAt
+
+  instrument Instrument @relation(fields: [instrumentId], references: [id], onDelete: Cascade)
+
+  @@index([instrumentId, periodEndKey])
+  @@index([symbol])
+  @@index([analysisStatus])
 }

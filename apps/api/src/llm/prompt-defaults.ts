@@ -63,6 +63,62 @@ export const LLM_PROMPT_DEFAULTS: Record<string, PromptDefinition> = {
   "llmReasoningFa": "چرا مدیر احتمالاً این تصمیم را گرفته"
 }`,
   },
+  financial_statement_analysis: {
+    labelFa: 'تحلیل صورت مالی سهم',
+    descriptionFa: 'بعد از بارگذاری PDF/Excel صورت مالی یا گزارش مالی یک سهم در صفحهٔ همان سهم',
+    systemPrompt: `تو تحلیل‌گر خبرهٔ بنیادی سهام بورس تهران هستی.
+ورودی متن PDF یا جدول‌های اکسل کدال از صورت‌های مالی یک شرکت است (سالانه، میان‌دوره‌ای ۳ و ۶ و ۹ ماهه، ترازنامه یا گزارش دیگر).
+متن PDF فارسی ممکن است جابه‌جا یا برعکس خوانده شده باشد؛ عددها را با دقت از ردیف درست بردار.
+
+قواعد استخراج:
+- فقط عددی را بنویس که در ورودی دیدی؛ حدس نزن. اگر نبود null بگذار.
+- همهٔ مبالغ را به میلیون ریال بنویس (کدال معمولاً میلیون ریال است؛ اگر واحد هزار ریال یا ریال بود تبدیل کن). eps و dps و prevEps به ریال هستند.
+- عدد داخل پرانتز منفی است.
+- اگر صورت تلفیقی (گروه) و جداگانه (شرکت اصلی) هر دو هست، ارقام تلفیقی را بردار و consolidated را true بگذار.
+- ستون اول دورهٔ جاری است؛ prevRevenue و prevNetProfit و prevEps و prevOperatingProfit از ستون مقایسه‌ای دورهٔ مشابه قبل.
+- borrowings جمع تسهیلات مالی کوتاه‌مدت و بلندمدت است. capex مبلغ مثبت پرداخت برای خرید دارایی ثابت مشهود.
+- shares فقط اگر تعداد سهام صریح آمده؛ وگرنه null.
+- reportType: annual (۱۲ ماهه)، interim9، interim6، interim3، balance (فقط صورت وضعیت مالی)، other.
+- periodEndFa تاریخ پایان دوره به شمسی با شکل 1404/12/29 و periodMonths طول دوره به ماه.
+- audited اگر «حسابرسی شده» است true.
+
+تحلیل خبره:
+- summaryFa: ۳ تا ۵ جمله دربارهٔ وضعیت بنیادی شرکت، روند فروش و سود، نقدینگی و بدهی.
+- strengthsFa و weaknessesFa و risksFa: هرکدام چند جملهٔ کوتاه با عدد (مثلاً موجودی انبار، نقد، دریافتنی، تعهدات ارزی، نظر حسابرس، بند شرط).
+- sensitivity: اثر افزایش هر عامل بر سود شرکت از -2 (خیلی منفی) تا 2 (خیلی مثبت)، صفر یعنی بی‌اثر. کلیدها: usd دلار، oil نفت، copper مس، steel فولاد، gold طلا، rate نرخ بهره داخلی. مثلاً صادرکنندهٔ فلز با دلار و قیمت جهانی فلز مثبت است و شرکت وابسته به مواد اولیهٔ وارداتی با دلار منفی. noteFa یک جمله دلیل.
+- exportSalesPct اگر سهم صادرات از فروش معلوم است.
+- llmScore کیفیت بنیادی از ۰ تا ۱۰ با در نظر گرفتن سودآوری، رشد، نقدینگی، بدهی و کیفیت سود (جریان نقد عملیاتی در برابر سود).
+- توصیهٔ قطعی خرید یا فروش ننویس.
+
+فقط JSON معتبر برگردان:
+{
+  "companyFa": "نام شرکت",
+  "symbolFa": "نماد اگر در متن هست",
+  "reportType": "annual",
+  "periodEndFa": "1404/12/29",
+  "periodMonths": 12,
+  "audited": true,
+  "consolidated": true,
+  "unitFa": "میلیون ریال",
+  "figures": {
+    "revenue": 0, "costOfRevenue": 0, "grossProfit": 0, "operatingProfit": 0, "financeCost": 0,
+    "netProfit": 0, "netProfitParent": 0, "eps": 0, "dps": null,
+    "cash": 0, "shortTermInvestments": 0, "receivables": 0, "inventory": 0, "prepayments": 0,
+    "currentAssets": 0, "fixedAssets": 0, "totalAssets": 0,
+    "currentLiabilities": 0, "totalLiabilities": 0, "borrowings": 0,
+    "equity": 0, "capital": 0, "retainedEarnings": 0,
+    "operatingCashFlow": 0, "capex": 0, "shares": null,
+    "prevRevenue": 0, "prevNetProfit": 0, "prevEps": 0, "prevOperatingProfit": 0,
+    "exportSalesPct": null
+  },
+  "sensitivity": {"usd": 1, "oil": 0, "copper": 2, "steel": 0, "gold": 0, "rate": -1, "noteFa": "..."},
+  "summaryFa": "...",
+  "strengthsFa": "...",
+  "weaknessesFa": "...",
+  "risksFa": "...",
+  "llmScore": 7.5
+}`,
+  },
   portfolio_suggest_multi: {
     labelFa: 'پیشنهاد چند استراتژی سبد',
     descriptionFa: 'دیگر برای تشکیل سبد خوانده نمی‌شود. تشکیل سبد با مدل System One انجام می‌شود.',

@@ -82,6 +82,16 @@ class OptionsAccessDto {
   enabled!: boolean;
 }
 
+class PageAccessDto {
+  @IsOptional()
+  @IsBoolean()
+  smartMoney?: boolean;
+
+  @IsOptional()
+  @IsBoolean()
+  fundamental?: boolean;
+}
+
 class AiAccessDto {
   @IsOptional()
   @IsBoolean()
@@ -281,6 +291,13 @@ export class UsersController {
   @UseGuards(AdminGuard)
   setOptionsAccess(@Param('id') id: string, @Body() dto: OptionsAccessDto) {
     return this.users.setOptionsAccessByAdmin(id, dto.enabled);
+  }
+
+  /** دسترسی صفحه‌های پول هوشمند و پیشنهادهای بنیادی */
+  @Patch(':id/page-access')
+  @UseGuards(AdminGuard)
+  setPageAccess(@Param('id') id: string, @Body() dto: PageAccessDto) {
+    return this.users.setPageAccessByAdmin(id, { smartMoney: dto.smartMoney, fundamental: dto.fundamental });
   }
 
   @Patch(':id/status')

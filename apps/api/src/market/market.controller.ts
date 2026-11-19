@@ -99,7 +99,10 @@ export class MarketController {
   }
 
   @Get('smart-money')
-  smartMoney() {
+  async smartMoney(@Req() req: { user: { userId: string } }) {
+    if (!(await this.users.canUsePage(req.user.userId, 'smartMoney'))) {
+      throw new ForbiddenException('دسترسی به پول هوشمند برای حساب شما باز نشده است');
+    }
     return this.market.smartMoney();
   }
 

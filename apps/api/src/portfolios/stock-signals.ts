@@ -4,6 +4,7 @@ import { AssetType } from '@prisma/client';
 import { PrismaService } from '../prisma/prisma.service';
 import { rawFigure, type StockFact } from './suggest-system-one';
 import { loadTickerResolver } from '../market/ticker-resolve';
+import { loadLatestFundamentalViews } from '../fundamentals/fundamental-views';
 
 const TREND_LOOKBACK_DAYS = 45;
 /** پرش روزانهٔ بیشتر از این، افزایش سرمایه یا سود نقدی است نه حرکت بازار؛ روند از بعد آن حساب می‌شود. */
@@ -28,7 +29,35 @@ export function symbolKey(value: string): string {
 
 export async function attachStockSignals(prisma: PrismaService, stocks: StockFact[], tradeDate: Date) {
   if (!stocks.length) return;
-  await Promise.all([attachTrend(prisma, stocks, tradeDate), attachFundMoves(prisma, stocks)]);
+  await Promise.all([
+    attachTrend(prisma, stocks, tradeDate),
+    attachFundMoves(prisma, stocks),
+    attachFundamentals(prisma, stocks).catch(() => undefined),
+  ]);
+}
+
+/**
+ * آخرین صورت مالی بارگذاری‌شدهٔ هر سهم با قیمت روز همان ردیف: امتیاز بنیادی (پس از اثر قدمت گزارش)،
+ * نسبت‌های اصلی و اثر تغییر اخیر دلار و کالاها. صورت مالی خیلی قدیمی فقط قدمتش را می‌فرستد.
+ */
+async function attachFundamentals(prisma: PrismaService, stocks: StockFact[]) {
+  const prices = new Map(stocks.map((s) => [s.symbol, s.price]));
+  const views = await loadLatestFundamentalViews(prisma, stocks.map((s) => s.symbol), prices);
+  const bySymbol = new Map(views.map((v) => [v.symbol, v]));
+  for (const stock of stocks) {
+    const v = bySymbol.get(stock.symbol);
+    if (!v) continue;
+    stock.fage = v.score.ageMonths;
+    if (v.score.stale) continue;
+    stock.fq = v.score.effective;
+    stock.fpe = v.ratios.pe;
+    stock.fpb = v.ratios.pb;
+    stock.froe = v.ratios.roe;
+    stock.fgr = v.ratios.profitGrowth;
+    stock.fde = v.ratios.debtToEquity;
+    stock.fcr = v.ratios.currentRatio;
+    stock.fmi = v.macro && v.macro.lines.length ? v.macro.score : null;
+  }
 }
 
 async function attachTrend(prisma: PrismaService, stocks: StockFact[], tradeDate: Date) {

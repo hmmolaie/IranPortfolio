@@ -42,6 +42,8 @@ export class UsersService {
         referralActive: true,
         discountPct: true,
         optionsMarketAccess: true,
+        smartMoneyAccess: true,
+        fundamentalAccess: true,
         aiPortfolioEnabled: true,
         llmEnabled: true,
         profile: {
@@ -61,6 +63,8 @@ export class UsersService {
       referralActive: row.referralActive,
       discountPct: row.discountPct,
       optionsMarketAccess: row.optionsMarketAccess,
+      smartMoneyAccess: row.smartMoneyAccess,
+      fundamentalAccess: row.fundamentalAccess,
       aiPortfolioEnabled: row.aiPortfolioEnabled,
       llmEnabled: row.llmEnabled,
       clientCount: row._count.clients,
@@ -285,6 +289,34 @@ export class UsersService {
     if (!user?.isActive) return false;
     if (user.role === UserRole.ADMIN) return true;
     return user.optionsMarketAccess;
+  }
+
+  /** صفحه‌های پول هوشمند و پیشنهادهای بنیادی: ادمین همیشه، بقیه اگر ادمین باز کرده باشد */
+  async canUsePage(userId: string, page: 'smartMoney' | 'fundamental'): Promise<boolean> {
+    const user = await this.prisma.user.findUnique({
+      where: { id: userId },
+      select: { role: true, isActive: true, smartMoneyAccess: true, fundamentalAccess: true },
+    });
+    if (!user?.isActive) return false;
+    if (user.role === UserRole.ADMIN) return true;
+    return page === 'smartMoney' ? user.smartMoneyAccess : user.fundamentalAccess;
+  }
+
+  async setPageAccessByAdmin(userId: string, input: { smartMoney?: boolean; fundamental?: boolean }) {
+    if (input.smartMoney == null && input.fundamental == null) {
+      throw new BadRequestException('مشخص کنید کدام صفحه عوض شود');
+    }
+    const user = await this.prisma.user.findUnique({ where: { id: userId } });
+    if (!user || user.role === UserRole.ADMIN) throw new NotFoundException('کاربر یافت نشد');
+    const row = await this.prisma.user.update({
+      where: { id: userId },
+      data: {
+        ...(input.smartMoney != null ? { smartMoneyAccess: input.smartMoney } : {}),
+        ...(input.fundamental != null ? { fundamentalAccess: input.fundamental } : {}),
+      },
+      select: { smartMoneyAccess: true, fundamentalAccess: true },
+    });
+    return { ok: true, ...row };
   }
 
   async aiAccess(userId: string): Promise<{ llm: boolean; portfolio: boolean }> {

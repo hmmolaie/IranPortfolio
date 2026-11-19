@@ -219,6 +219,17 @@ export async function fetchYahooDailyHistory(
   return [];
 }
 
+/** کندل روزانهٔ چند ماه اخیر یک نماد یاهو (مثلاً BZ=F نفت برنت) برای تغییر کوتاه‌مدت */
+export async function fetchYahooRecentCloses(
+  symbol: string,
+  quoteUrl: string,
+  range = '3mo',
+): Promise<Array<{ tradeDate: string; close: number }>> {
+  const quote = new URL(quoteUrl);
+  const auth = isYahooHost(quote.hostname) ? await yahooAuth(quote.origin) : null;
+  return fetchChartSeries(`${quote.origin}/v8/finance/chart`, symbol, auth, range);
+}
+
 export async function fetchYahooCryptoPrices(
   symbols: string[],
   quoteUrl: string,

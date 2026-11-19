@@ -19,6 +19,8 @@ type AppUser = {
   referralActive?: boolean;
   discountPct?: number;
   optionsMarketAccess?: boolean;
+  smartMoneyAccess?: boolean;
+  fundamentalAccess?: boolean;
   aiPortfolioEnabled?: boolean;
   llmEnabled?: boolean;
   clientCount?: number;
@@ -209,6 +211,24 @@ export default function AdminUsersPage() {
       });
       await loadUsers();
       toast.success(user.optionsMarketAccess ? 'دسترسی بازار اختیار بسته شد.' : 'دسترسی بازار اختیار باز شد.');
+    } catch (err) {
+      toast.error((err as Error).message);
+    } finally {
+      setLoading(false);
+    }
+  }
+
+  async function togglePageAccess(user: AppUser, page: 'smartMoney' | 'fundamental') {
+    const current = page === 'smartMoney' ? Boolean(user.smartMoneyAccess) : Boolean(user.fundamentalAccess);
+    const label = page === 'smartMoney' ? 'پول هوشمند' : 'پیشنهادهای بنیادی';
+    setLoading(true);
+    try {
+      await api(`/users/${user.id}/page-access`, {
+        method: 'PATCH',
+        body: JSON.stringify({ [page]: !current }),
+      });
+      await loadUsers();
+      toast.success(current ? `دسترسی ${label} بسته شد.` : `دسترسی ${label} باز شد.`);
     } catch (err) {
       toast.error((err as Error).message);
     } finally {
@@ -470,6 +490,24 @@ export default function AdminUsersPage() {
                         onClick={() => void toggleOptionsAccess(u)}
                       >
                         {u.optionsMarketAccess ? 'بستن اختیار' : 'دسترسی اختیار'}
+                      </button>
+                    )}
+                    {u.role !== 'ADMIN' && (
+                      <button
+                        type="button"
+                        className="text-xs text-navy-800 hover:underline"
+                        onClick={() => void togglePageAccess(u, 'smartMoney')}
+                      >
+                        {u.smartMoneyAccess ? 'بستن پول هوشمند' : 'دسترسی پول هوشمند'}
+                      </button>
+                    )}
+                    {u.role !== 'ADMIN' && (
+                      <button
+                        type="button"
+                        className="text-xs text-navy-800 hover:underline"
+                        onClick={() => void togglePageAccess(u, 'fundamental')}
+                      >
+                        {u.fundamentalAccess ? 'بستن پیشنهاد بنیادی' : 'دسترسی پیشنهاد بنیادی'}
                       </button>
                     )}
                     {u.role !== 'ADMIN' && (

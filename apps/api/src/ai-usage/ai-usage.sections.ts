@@ -30,6 +30,7 @@ export const QUOTA_PURPOSES = new Set([
 const SECTION_LABELS: Record<string, string> = {
   fund_report_analysis: 'تحلیل صندوق',
   fund_timeline_analysis: 'تحلیل ماه‌به‌ماه صندوق',
+  financial_statement_analysis: 'تحلیل صورت مالی سهم',
   portfolio_suggest_multi: 'پیشنهاد سبد',
   portfolio_stock_screen: 'غربال روزانهٔ سهام',
   portfolio_hedge: 'پوشش ریسک',
@@ -67,6 +68,7 @@ export const SYSTEM_HISTORY_PURPOSES = new Set([
   'world_x_signals',
   'fund_report_analysis',
   'fund_timeline_analysis',
+  'financial_statement_analysis',
   'telegram_digest_voice',
   'tts',
   'portfolio_stock_screen',
