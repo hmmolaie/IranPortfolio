@@ -9,6 +9,7 @@ import { OptionsTableRow, OptionsValueTable } from '@/components/OptionsValueTab
 import { CodalNotices } from '@/components/CodalNotices';
 import { FinancialStatements } from '@/components/FinancialStatements';
 import { OptionPayoffCalculator } from '@/components/OptionPayoffCalculator';
+import { WeightSparkline } from '@/components/WeightSparkline';
 import clsx from 'clsx';
 import { formatShamsiDate } from '@/lib/shamsi-date';
 
@@ -89,6 +90,8 @@ type FundHolder = {
   quantity: number | null;
   reportYear: number | null;
   reportMonthNum: number | null;
+  /** وزن نماد در هر ماه گزارش‌شدهٔ صندوق، قدیمی به جدید */
+  weights?: (number | null)[];
 };
 
 /** در ساعت بازار، صف و قیمت اختیارها هر دقیقه دوباره خوانده می‌شود. */
@@ -633,8 +636,18 @@ export default function MarketInstrumentPage() {
                     <th className="px-2 py-2 font-medium">قیمت اعمال</th>
                     <th className="px-2 py-2 font-medium">قیمت اختیار</th>
                     <th className="px-2 py-2 font-medium">روز مانده</th>
-                    <th className="px-2 py-2 font-medium">قیمت تمام‌شده</th>
-                    <th className="px-2 py-2 font-medium">فاصله با سهم</th>
+                    <th
+                      className="px-2 py-2 font-medium"
+                      title="اختیار خرید: اعمال + قیمت اختیار. اختیار فروش: قیمت سهم + قیمت اختیار."
+                    >
+                      قیمت تمام‌شده
+                    </th>
+                    <th
+                      className="px-2 py-2 font-medium"
+                      title="اختیار خرید: (قیمت تمام‌شده − قیمت سهم) ÷ قیمت سهم. اختیار فروش: (قیمت تمام‌شده − اعمال) ÷ اعمال. منفی یعنی در سود."
+                    >
+                      درصد تفاوت
+                    </th>
                     <th className="px-2 py-2 font-medium">هزینهٔ هر قرارداد</th>
                   </tr>
                 </thead>
@@ -666,7 +679,7 @@ export default function MarketInstrumentPage() {
                       </td>
                       <td className="px-2 py-2.5">{formatNum(row.daysLeft)}</td>
                       <td className="px-2 py-2.5">{formatNum(row.effectivePrice)}</td>
-                      <td className="px-2 py-2.5">{formatPct(row.side === 'CALL' ? row.gapPct : -row.gapPct)}</td>
+                      <td className="px-2 py-2.5">{formatPct(row.gapPct)}</td>
                       <td className="px-2 py-2.5">{formatNum(row.costPerContract)}</td>
                     </tr>
                   ))}
@@ -710,6 +723,7 @@ export default function MarketInstrumentPage() {
             <h2 className="text-base font-semibold text-navy-900">صندوق‌هایی که این نماد را دارند</h2>
             <p className="mt-2 text-sm text-navy-800/70">
               از آخرین گزارش ماهانهٔ ثبت‌شدهٔ هر صندوق. «سهم از صندوق» یعنی چند درصد دارایی آن صندوق همین نماد است.
+              «روند» همان نمودار وزن این نماد در گزارش‌های ماهانهٔ صندوق است (ماه اول راست، آخرین ماه چپ).
             </p>
           </div>
           <div className="overflow-x-auto">
@@ -717,6 +731,7 @@ export default function MarketInstrumentPage() {
               <thead>
                 <tr className="border-b border-navy-900/10 text-right text-xs text-navy-800/50">
                   <th className="px-2 py-2 font-medium">صندوق</th>
+                  <th className="px-2 py-2 text-center font-medium">روند</th>
                   <th className="px-2 py-2 font-medium">سهم از صندوق</th>
                   <th className="px-2 py-2 font-medium">ارزش (ریال)</th>
                   <th className="px-2 py-2 font-medium">تعداد</th>
@@ -740,6 +755,9 @@ export default function MarketInstrumentPage() {
                       {row.fundSymbol && (
                         <span className="ms-2 text-xs text-navy-800/45">{row.fundSymbol}</span>
                       )}
+                    </td>
+                    <td className="px-2 py-2.5">
+                      <WeightSparkline weights={row.weights ?? []} label={row.fundNameFa} />
                     </td>
                     <td className="px-2 py-2.5">
                       {row.weightPct != null

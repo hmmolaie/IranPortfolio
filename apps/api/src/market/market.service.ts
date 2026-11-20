@@ -940,6 +940,7 @@ export class MarketService implements OnModuleInit {
         fundDefinitionId: true,
         reportYear: true,
         reportMonthNum: true,
+        createdAt: true,
         fundDefinition: { select: { nameFa: true, symbolCode: true } },
       },
     });
@@ -981,6 +982,10 @@ export class MarketService implements OnModuleInit {
         })
       : [];
     const instrumentBySymbol = new Map(listed.map((row) => [symbolKey(row.symbol), row.id]));
+    const weightsByFund = await this.fundWeightTrends(
+      reports.filter((r) => matched.some((m) => m.fundDefinitionId === r.fundDefinitionId)),
+      (row) => wanted.has(symbolKey(row.symbol)) || wanted.has(symbolKey(row.nameFa)),
+    );
 
     const items = matched
       .map((report) => {
@@ -996,10 +1001,61 @@ export class MarketService implements OnModuleInit {
           quantity: row.quantity,
           reportYear: report.reportYear,
           reportMonthNum: report.reportMonthNum,
+          /** وزن همین نماد در هر ماه گزارش‌شدهٔ صندوق، قدیمی به جدید؛ null یعنی گزارش آن ماه دارایی ندارد */
+          weights: weightsByFund.get(report.fundDefinitionId!) ?? [],
         };
       })
       .sort((a, b) => (b.weightPct ?? -1) - (a.weightPct ?? -1) || (b.amountRial ?? 0) - (a.amountRial ?? 0));
     return { items };
+  }
+
+  /**
+   * روند وزن یک نماد در هر صندوق، مثل ستون «روند» نقشهٔ حرارتی صفحهٔ صندوق: از هر ماه آخرین گزارش
+   * آنالیزشده؛ نمادی که در گزارش نیست صفر و گزارشی که هیچ دارایی استخراج‌شده ندارد null است.
+   */
+  private async fundWeightTrends(
+    reports: Array<{
+      id: string;
+      fundDefinitionId: string | null;
+      reportYear: number | null;
+      reportMonthNum: number | null;
+      createdAt: Date;
+    }>,
+    matches: (row: { symbol: string; nameFa: string }) => boolean,
+  ): Promise<Map<string, (number | null)[]>> {
+    const byFundMonth = new Map<string, (typeof reports)[number]>();
+    for (const r of reports) {
+      if (!r.fundDefinitionId) continue;
+      const key = `${r.fundDefinitionId}:${r.reportYear}:${r.reportMonthNum}`;
+      const current = byFundMonth.get(key);
+      if (!current || r.createdAt > current.createdAt) byFundMonth.set(key, r);
+    }
+    const picked = [...byFundMonth.values()];
+    if (!picked.length) return new Map();
+
+    const holdings = await this.prisma.fundHolding.findMany({
+      where: { fundReportId: { in: picked.map((r) => r.id) }, action: 'HELD', weightPct: { not: null } },
+      select: { fundReportId: true, symbol: true, nameFa: true, weightPct: true },
+    });
+    const hasData = new Set<string>();
+    const weightByReport = new Map<string, number>();
+    for (const h of holdings) {
+      hasData.add(h.fundReportId);
+      if (!matches(h)) continue;
+      weightByReport.set(h.fundReportId, (weightByReport.get(h.fundReportId) ?? 0) + (h.weightPct ?? 0));
+    }
+
+    const out = new Map<string, (number | null)[]>();
+    const sorted = picked.sort(
+      (a, b) =>
+        (a.reportYear ?? 0) * 12 + (a.reportMonthNum ?? 0) - ((b.reportYear ?? 0) * 12 + (b.reportMonthNum ?? 0)),
+    );
+    for (const r of sorted) {
+      const list = out.get(r.fundDefinitionId!) ?? [];
+      list.push(hasData.has(r.id) ? Math.round((weightByReport.get(r.id) ?? 0) * 100) / 100 : null);
+      out.set(r.fundDefinitionId!, list);
+    }
+    return out;
   }
 
   private async latestInflationPct(): Promise<number | null> {
