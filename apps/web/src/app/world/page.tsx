@@ -61,6 +61,7 @@ type WorldList = {
   yahooComparedCount?: number;
   quotes: QuoteStat[];
   macroNews: MacroNews[];
+  macroNewsUpdatedAt?: string | null;
   macroNewsSummaryFa?: string | null;
   macroNewsSourceNoteFa?: string | null;
   markets: WorldMarket[];
@@ -462,20 +463,10 @@ export default function WorldEconomyPage() {
             <div>
               <p className="text-xs font-medium tracking-wide text-gold-400">بازار جهانی رمزارز</p>
               <h1 className="mt-1 text-3xl font-bold">اقتصاد دنیا</h1>
-              <p className="mt-2 max-w-xl text-sm leading-7 text-white/70">
-                در ساعتی که مدیر برای اقتصاد دنیا گذاشته، نمادهای بیت‌پین ذخیره می‌شوند و مبلغ هر رمزارز با یاهو فایننس
-                مقایسه می‌گردد.
-              </p>
               {data && data.markets.length > 0 && (data.yahooComparedCount ?? 0) === 0 && (
                 <p className="mt-3 max-w-xl text-sm leading-7 text-amber-100">
                   اختلاف قیمت با یاهو فایننس در این داده نیست. به‌روزرسانی فوری را بزنید یا آدرس API را در
                   تنظیمات بررسی کنید.
-                </p>
-              )}
-              {(data?.yahooComparedCount ?? 0) > 0 && (
-                <p className="mt-3 text-sm text-white/80">
-                  مقایسه با یاهو فایننس:{' '}
-                  {(data?.yahooComparedCount ?? 0).toLocaleString('fa-IR')} نماد
                 </p>
               )}
             </div>
@@ -520,11 +511,18 @@ export default function WorldEconomyPage() {
               {refreshError}
             </pre>
           )}
-          <div className="relative mt-6 grid gap-3 sm:grid-cols-4">
+          <div className="relative mt-6 grid gap-3 sm:grid-cols-3 lg:grid-cols-5">
             <div className="rounded-2xl bg-white/10 px-4 py-3">
               <div className="text-xs text-white/55">تعداد نماد</div>
               <div className="mt-1 text-2xl font-semibold tabular-nums">
                 {(data?.symbolCount ?? 0).toLocaleString('fa-IR')}
+              </div>
+            </div>
+            <div className="rounded-2xl bg-white/10 px-4 py-3">
+              <div className="text-xs text-white/55">مقایسهٔ قیمت بیت‌پین با یاهو فایننس</div>
+              <div className="mt-1 text-2xl font-semibold tabular-nums">
+                {(data?.yahooComparedCount ?? 0).toLocaleString('fa-IR')}
+                <span className="ms-1 text-sm font-normal text-white/60">نماد</span>
               </div>
             </div>
             {[
@@ -561,7 +559,13 @@ export default function WorldEconomyPage() {
 
       <section className="space-y-4">
         <div className="flex flex-wrap items-baseline justify-between gap-2">
-          <h2 className="text-lg font-semibold">اخبار کلان اقتصاد جهان</h2>
+          <div>
+            <h2 className="text-lg font-semibold">اخبار کلان اقتصاد جهان</h2>
+            <p className="mt-1 text-xs text-navy-800/60">
+              آخرین به‌روزرسانی:{' '}
+              {data?.macroNewsUpdatedAt ? formatShamsiDateTime(data.macroNewsUpdatedAt) : '—'}
+            </p>
+          </div>
           <span className="text-xs text-navy-800/50">
             اثرگذار بر نفت، طلا، دلار، فلزات و رمزارز
           </span>

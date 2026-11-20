@@ -290,6 +290,7 @@ export class WorldMarketsService implements OnModuleInit {
           impactDirection: true,
           relevanceScore: true,
           sourceHintFa: true,
+          fetchedAt: true,
         },
       }),
       readMarketSourceApi(this.prisma),
@@ -320,6 +321,11 @@ export class WorldMarketsService implements OnModuleInit {
         }))
         .sort((a, b) => b.count - a.count),
       macroNews,
+      /** زمان آخرین ذخیرهٔ اخبار کلان جهان */
+      macroNewsUpdatedAt: macroNews.reduce<Date | null>(
+        (latest, n) => (!latest || n.fetchedAt > latest ? n.fetchedAt : latest),
+        null,
+      ),
       macroNewsSummaryFa: refresh?.xSummaryFa ?? null,
       macroNewsSourceNoteFa: refresh?.xSourceNoteFa ?? null,
       markets,
