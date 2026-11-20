@@ -665,19 +665,19 @@ function realProfitForHolding(input: {
 }
 
 /**
- * ورودی سود واقعی. اختیار خرید: سود = ارزش ذاتی − قیمت اختیار، نسبت به قیمت اختیار.
+ * سود هر واحد و مبنای درصد آن.
+ * اختیار خرید: سود = ارزش ذاتی − قیمت اختیار، نسبت به قیمت اختیار.
  * اختیار فروش: مبلغ تمام شده = قیمت پایه + قیمت اختیار و سود = اعمال − مبلغ تمام شده، نسبت به مبلغ تمام شده.
  */
-function realProfitInput(
+function optionProfit(
   side: OptionSide,
   strike: number,
   spot: number | null,
   premium: number | null,
-  profitPerUnit: number | null,
 ): { profitPerUnit: number; base: number } | null {
-  if (premium == null || !(premium > 0)) return null;
-  if (side === 'CALL') return profitPerUnit == null ? null : { profitPerUnit, base: premium };
-  if (spot == null || !(spot > 0)) return null;
+  if (premium == null || !(premium > 0) || spot == null) return null;
+  if (side === 'CALL') return { profitPerUnit: Math.max(0, spot - strike) - premium, base: premium };
+  if (!(spot > 0)) return null;
   const cost = spot + premium;
   return { profitPerUnit: strike - cost, base: cost };
 }
@@ -704,15 +704,13 @@ export function listValuableOptions(rows: BoardSource[], inflationPct: number | 
       (parsed.underlyingPrice != null && parsed.underlyingPrice > 0 ? parsed.underlyingPrice : null);
     const contractSize = parsed.contractSize != null && parsed.contractSize > 0 ? parsed.contractSize : null;
     const sideFa = parsed.sideFa ?? (parsed.side === 'CALL' ? 'اختیار خرید' : 'اختیار فروش');
-    const intrinsic =
-      spot == null ? null : parsed.side === 'CALL' ? Math.max(0, spot - parsed.strike) : Math.max(0, parsed.strike - spot);
-    const profitPerUnit = intrinsic == null || premium == null ? null : intrinsic - premium;
-    const profitPct = profitPerUnit == null || premium == null || !(premium > 0) ? null : (profitPerUnit / premium) * 100;
-    const realIn = realProfitInput(parsed.side, parsed.strike, spot, premium, profitPerUnit);
+    const profit = optionProfit(parsed.side, parsed.strike, spot, premium);
+    const profitPerUnit = profit?.profitPerUnit ?? null;
+    const profitPct = profit == null ? null : (profit.profitPerUnit / profit.base) * 100;
     const real =
-      realIn == null || parsed.daysLeft == null
+      profit == null || parsed.daysLeft == null
         ? null
-        : realProfitForHolding({ ...realIn, daysLeft: parsed.daysLeft, inflationPct });
+        : realProfitForHolding({ ...profit, daysLeft: parsed.daysLeft, inflationPct });
     const daysNote =
       parsed.daysLeft == null ? '' : ` تا سررسید ${Math.round(parsed.daysLeft).toLocaleString('en-US')} روز مانده.`;
     out.push({

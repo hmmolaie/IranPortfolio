@@ -644,7 +644,7 @@ export default function MarketInstrumentPage() {
                     </th>
                     <th
                       className="px-2 py-2 font-medium"
-                      title="اختیار خرید: (قیمت تمام‌شده − قیمت سهم) ÷ قیمت سهم. اختیار فروش: (قیمت تمام‌شده − اعمال) ÷ اعمال. منفی یعنی در سود."
+                      title="اختیار خرید: (قیمت تمام‌شده − قیمت سهم) ÷ قیمت سهم؛ منفی یعنی در سود. اختیار فروش: (اعمال − قیمت تمام‌شده) ÷ اعمال؛ مثبت یعنی در سود."
                     >
                       درصد تفاوت
                     </th>
@@ -679,7 +679,7 @@ export default function MarketInstrumentPage() {
                       </td>
                       <td className="px-2 py-2.5">{formatNum(row.daysLeft)}</td>
                       <td className="px-2 py-2.5">{formatNum(row.effectivePrice)}</td>
-                      <td className="px-2 py-2.5">{formatPct(row.gapPct)}</td>
+                      <td className="px-2 py-2.5">{formatPct(row.side === 'CALL' ? row.gapPct : -row.gapPct)}</td>
                       <td className="px-2 py-2.5">{formatNum(row.costPerContract)}</td>
                     </tr>
                   ))}
