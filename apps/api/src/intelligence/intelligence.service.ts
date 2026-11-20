@@ -242,6 +242,15 @@ export class IntelligenceService {
       this.prisma.worldMarketRefresh.aggregate({ _count: true, _max: { dateKey: true } }),
       this.prisma.marketIngestStatus.findUnique({ where: { id: 'latest' } }),
     ]);
+    const [statementCount, lastStatement, codalSync] = await Promise.all([
+      this.prisma.financialStatement.count({ where: { analysisStatus: 'done' } }),
+      this.prisma.financialStatement.findFirst({
+        where: { analysisStatus: 'done', publishedAt: { not: null } },
+        orderBy: { publishedAt: 'desc' },
+        select: { publishedAtFa: true, publishedAt: true },
+      }),
+      this.prisma.codalStatementSync.findUnique({ where: { id: 'default' } }),
+    ]);
     const row = (
       nameFa: string,
       count: number,
@@ -269,6 +278,7 @@ export class IntelligenceService {
         row('اخبار', news._count, news._max.newsDateKey ?? null),
         row('گزارش صندوق', funds._count, funds._max.createdAt ? funds._max.createdAt.toISOString().slice(0, 10) : null),
         row('اقتصاد دنیا', world._count, world._max.dateKey ?? null),
+        statementsRow(statementCount, lastStatement, codalSync),
       ],
     };
   }
@@ -446,6 +456,40 @@ function shiftDate(dateKey: string, days: number) {
   const d = new Date(`${dateKey}T12:00:00Z`);
   d.setUTCDate(d.getUTCDate() + days);
   return d.toISOString().slice(0, 10);
+}
+
+/** گزارش‌هایی که زودتر از این منتشر شده باشند یعنی همگام‌سازی کدال عقب افتاده */
+const STATEMENT_STALE_DAYS = 45;
+
+/**
+ * ردیف سلامت دادهٔ صورت‌های مالی: آخرین زمان انتشار کدالِ آنالیزشده (دستی یا خودکار).
+ * اگر آخرین همگام‌سازی کدال متوقف شده باشد خطا نشان داده می‌شود.
+ */
+function statementsRow(
+  count: number,
+  last: { publishedAtFa: string | null; publishedAt: Date | null } | null,
+  sync: { lastPublishedFa: string | null; lastRunStatus: string | null; lastRunMessage: string | null } | null,
+): { nameFa: string; count: number; last: string | null; status: 'ok' | 'warn' | 'empty' | 'error'; errorFa: string | null } {
+  const nameFa = 'صورت‌های مالی کدال (آخرین انتشار آنالیزشده)';
+  const lastFa = last?.publishedAtFa ?? sync?.lastPublishedFa ?? null;
+  if (sync?.lastRunStatus && ['stopped_ai', 'stopped_crawl', 'failed'].includes(sync.lastRunStatus)) {
+    return {
+      nameFa,
+      count,
+      last: lastFa,
+      status: 'error',
+      errorFa: sync.lastRunMessage?.slice(0, 300) || 'آخرین همگام‌سازی کدال متوقف شد.',
+    };
+  }
+  if (!count || !lastFa) return { nameFa, count, last: lastFa, status: 'empty', errorFa: null };
+  const ageDays = last?.publishedAt ? (Date.now() - last.publishedAt.getTime()) / 86_400_000 : null;
+  return {
+    nameFa,
+    count,
+    last: lastFa,
+    status: ageDays != null && ageDays > STATEMENT_STALE_DAYS ? 'warn' : 'ok',
+    errorFa: null,
+  };
 }
 
 export { CLASS_KEYS };

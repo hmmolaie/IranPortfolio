@@ -819,6 +819,9 @@ model ContentRefreshSchedule {
   marketMinute    Int      @default(0)
   /// فاصلهٔ خواندن قیمت دلار و طلا در پس‌زمینه، به ساعت
   spotIntervalHours Int    @default(1)
+  /// ساعت همگام‌سازی صورت‌های مالی از کدال (پیش‌فرض ۱:۰۰ تهران)
+  codalHour       Int      @default(1)
+  codalMinute     Int      @default(0)
   createdAt       DateTime @default(now())
   updatedAt       DateTime @updatedAt
 }
@@ -1169,10 +1172,24 @@ model FinancialStatement {
   risksFa        String?
   /// نظر مدل دربارهٔ کیفیت بنیادی، ۰ تا ۱۰
   llmScore       Float?
-  /// pending | running | done | failed
+  /// pending | running | done | failed | duplicate
   analysisStatus String   @default("pending")
   analysisError  String?
   analysisJson   Json?
+  /// manual (بارگذاری ادمین در صفحهٔ سهم) | codal (همگام‌سازی خودکار یا دستی از کدال)
+  source         String   @default("manual")
+  /// شمارهٔ پیگیری اطلاعیهٔ کدال
+  tracingNo      Int?
+  /// عنوان اطلاعیهٔ کدال
+  noticeTitle    String?
+  /// زمان انتشار در کدال به شمسی، مثل 1405/01/25 12:30
+  publishedAtFa  String?
+  /// همان زمان انتشار به‌صورت تاریخ (وقت تهران)
+  publishedAt    DateTime?
+  /// sha256 خود فایل؛ همان فایل دوباره آنالیز نمی‌شود
+  contentHash    String?
+  /// sha256 متن استخراج‌شده؛ پیش از فرستادن به مدل چک می‌شود
+  textHash       String?
   createdAt      DateTime @default(now())
   updatedAt      DateTime @updatedAt
 
@@ -1181,4 +1198,31 @@ model FinancialStatement {
   @@index([instrumentId, periodEndKey])
   @@index([symbol])
   @@index([analysisStatus])
+  @@index([tracingNo])
+  @@index([contentHash])
+  @@index([textHash])
+  @@index([publishedAt])
+}
+
+/// همگام‌سازی صورت‌های مالی از کدال (تک‌ردیفی). بازهٔ بعدی از فردای آخرین انتشار آنالیزشده شروع می‌شود.
+model CodalStatementSync {
+  id                String    @id @default("default")
+  /// شروع بازهٔ جستجو در کدال، شمسی مثل 1405/01/01
+  fromDateFa        String
+  /// پایان بازه، معمولاً یک ماه بعد از شروع
+  toDateFa          String
+  /// آخرین زمان انتشار اطلاعیه‌ای که با موفقیت دانلود و آنالیز شد
+  lastPublishedFa   String?
+  lastPublishedAt   DateTime?
+  lastRunAt         DateTime?
+  lastRunFinishedAt DateTime?
+  /// auto | manual
+  lastRunTrigger    String?
+  /// ok | stopped_ai | stopped_crawl | failed
+  lastRunStatus     String?
+  lastRunMessage    String?
+  /// روز تهرانی آخرین اجرای زمان‌بندی‌شده؛ هر روز فقط یک‌بار
+  lastAutoDateKey   String?
+  createdAt         DateTime  @default(now())
+  updatedAt         DateTime  @updatedAt
 }

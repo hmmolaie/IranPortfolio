@@ -92,8 +92,11 @@ type StatementItem = {
   llmScore: number | null;
   companyFa: string | null;
   mismatchFa: string | null;
-  analysisStatus: 'pending' | 'running' | 'done' | 'failed';
+  analysisStatus: 'pending' | 'running' | 'done' | 'failed' | 'duplicate';
   analysisError: string | null;
+  source?: 'manual' | 'codal' | string;
+  noticeTitle?: string | null;
+  publishedAtFa?: string | null;
   createdAt: string;
   isLatest: boolean;
   view: FundamentalView | null;
@@ -371,6 +374,8 @@ export function FinancialStatements({ instrumentId }: { instrumentId: string }) 
   const [failed, setFailed] = useState(false);
   const [open, setOpen] = useState<Record<string, boolean>>({});
   const [file, setFile] = useState<File | null>(null);
+  const [noticeTitle, setNoticeTitle] = useState('');
+  const [publishedAtFa, setPublishedAtFa] = useState('');
   const [busy, setBusy] = useState(false);
   const fileRef = useRef<HTMLInputElement>(null);
   const isAdmin = getUserRole() === 'ADMIN';
@@ -408,9 +413,13 @@ export function FinancialStatements({ instrumentId }: { instrumentId: string }) 
     try {
       const fd = new FormData();
       fd.append('file', file);
+      if (noticeTitle.trim()) fd.append('noticeTitle', noticeTitle.trim());
+      if (publishedAtFa.trim()) fd.append('publishedAtFa', publishedAtFa.trim());
       await api(`/fundamentals/instruments/${instrumentId}/upload`, { method: 'POST', body: fd });
       toast.success('فایل ثبت شد و تحلیل آن در پس‌زمینه انجام می‌شود.');
       setFile(null);
+      setNoticeTitle('');
+      setPublishedAtFa('');
       if (fileRef.current) fileRef.current.value = '';
       await load();
     } catch (err) {
@@ -471,7 +480,34 @@ export function FinancialStatements({ instrumentId }: { instrumentId: string }) 
             />
             <p className="mt-1 text-xs text-navy-800/55">
               سالانه، میان‌دوره‌ای ۳ و ۶ و ۹ ماهه یا ترازنامه. نوع و تاریخ پایان دوره از خود فایل خوانده می‌شود. اکسل کدال دقیق‌تر از PDF است.
+              گزارشی که قبلاً ثبت شده (همان فایل، یا همان عنوان اطلاعیه در همان روز انتشار) دوباره آنالیز نمی‌شود.
             </p>
+          </div>
+          <div className="min-w-[14rem] flex-1">
+            <label className="label" htmlFor="statement-title">
+              عنوان اطلاعیه در کدال (اختیاری)
+            </label>
+            <input
+              id="statement-title"
+              className="input"
+              value={noticeTitle}
+              maxLength={500}
+              onChange={(e) => setNoticeTitle(e.target.value)}
+            />
+          </div>
+          <div>
+            <label className="label" htmlFor="statement-published">
+              زمان انتشار (اختیاری)
+            </label>
+            <input
+              id="statement-published"
+              className="input max-w-[12rem]"
+              dir="ltr"
+              placeholder="1405/01/25 12:30"
+              value={publishedAtFa}
+              maxLength={40}
+              onChange={(e) => setPublishedAtFa(e.target.value)}
+            />
           </div>
           <button type="submit" className="btn-primary" disabled={!file || busy}>
             {busy ? 'در حال ارسال…' : 'بارگذاری و تحلیل'}
@@ -515,8 +551,19 @@ export function FinancialStatements({ instrumentId }: { instrumentId: string }) 
                 {item.analysisStatus === 'failed' && (
                   <span className="rounded-full bg-red-50 px-2 py-0.5 text-xs text-red-800">تحلیل ناموفق</span>
                 )}
+                {item.analysisStatus === 'duplicate' && (
+                  <span className="rounded-full bg-navy-900/5 px-2 py-0.5 text-xs text-navy-800/70">تکراری</span>
+                )}
+                {item.source === 'codal' && (
+                  <span className="rounded-full bg-navy-900/5 px-2 py-0.5 text-xs">از کدال</span>
+                )}
                 <span className="ms-auto text-xs text-navy-800/50">
-                  {item.fileName} · {formatShamsiDateTime(item.createdAt, 'short')}
+                  {item.noticeTitle ?? item.fileName}
+                  {item.publishedAtFa
+                    ? ` · انتشار ${item.publishedAtFa.replace(/\d/g, (d) => '۰۱۲۳۴۵۶۷۸۹'[Number(d)])}`
+                    : ''}
+                  {' · ثبت '}
+                  {formatShamsiDateTime(item.createdAt, 'short')}
                 </span>
                 {isAdmin && (
                   <span className="flex gap-3 text-xs">
@@ -532,7 +579,7 @@ export function FinancialStatements({ instrumentId }: { instrumentId: string }) 
                 )}
               </div>
               {isAdmin && item.mismatchFa && <p className="text-sm text-amber-800">{item.mismatchFa}</p>}
-              {isAdmin && item.analysisStatus === 'failed' && item.analysisError && (
+              {isAdmin && (item.analysisStatus === 'failed' || item.analysisStatus === 'duplicate') && item.analysisError && (
                 <p className="whitespace-pre-line text-sm text-red-700">{item.analysisError}</p>
               )}
               {expanded && <StatementView item={item} />}

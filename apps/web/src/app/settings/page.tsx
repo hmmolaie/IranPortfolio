@@ -9,6 +9,7 @@ import { useToast } from '@/components/Toast';
 import { WebAuthnSettings } from '@/components/WebAuthnSettings';
 import { OnlineUsersPanel } from '@/components/OnlineUsersPanel';
 import { WalletAdminPanel, WalletPanel } from './wallet-panel';
+import { CodalSyncPanel } from './codal-sync-panel';
 import { formatShamsiDate, formatShamsiDateTime } from '@/lib/shamsi-date';
 
 type ProviderId = 'openrouter' | 'openai' | 'custom';
@@ -43,6 +44,7 @@ type SettingsTab =
   | 'worldApis'
   | 'iranMarketApi'
   | 'refreshTimes'
+  | 'codalSync'
   | 'telegramAssistant'
   | 'mobileLogin'
   | 'onlineUsers'
@@ -63,6 +65,7 @@ const TABS: { id: SettingsTab; label: string; adminOnly?: boolean }[] = [
   { id: 'worldApis', label: 'API اقتصاد دنیا', adminOnly: true },
   { id: 'iranMarketApi', label: 'API بورس ایران', adminOnly: true },
   { id: 'refreshTimes', label: 'ساعت به‌روزرسانی', adminOnly: true },
+  { id: 'codalSync', label: 'به‌روزرسانی اطلاعات از کدال', adminOnly: true },
   { id: 'telegramAssistant', label: 'دستیار تلگرام', adminOnly: true },
   { id: 'walletAdmin', label: 'تنظیمات کیف پول', adminOnly: true },
   { id: 'mobileLogin', label: 'ورود از طریق موبایل', adminOnly: true },
@@ -101,6 +104,8 @@ function errorPurposeFa(purpose: string): string {
   if (purpose === 'market_ingest') return 'به‌روزرسانی بازار';
   if (purpose === 'backend') return 'بک‌اند';
   if (purpose === 'system') return 'سیستم';
+  if (purpose === 'codal_statements') return 'به‌روزرسانی از کدال';
+  if (purpose === 'financial_statement_analysis') return 'آنالیز صورت مالی';
   return purpose;
 }
 
@@ -232,6 +237,8 @@ export default function SettingsPage() {
     marketHour: 22,
     marketMinute: 0,
     spotIntervalHours: 1,
+    codalHour: 1,
+    codalMinute: 0,
   });
   const [refreshTimeBusy, setRefreshTimeBusy] = useState(false);
   const [refreshTimeFeedback, setRefreshTimeFeedback] = useState<{ ok: boolean; text: string } | null>(null);
@@ -306,6 +313,8 @@ export default function SettingsPage() {
       marketHour?: number;
       marketMinute?: number;
       spotIntervalHours?: number;
+      codalHour?: number;
+      codalMinute?: number;
     }>('/news/schedule');
     setRefreshTimes({
       iranNewsHour: cfg.iranNewsHour ?? 8,
@@ -315,6 +324,8 @@ export default function SettingsPage() {
       marketHour: cfg.marketHour ?? 22,
       marketMinute: cfg.marketMinute ?? 0,
       spotIntervalHours: cfg.spotIntervalHours ?? 1,
+      codalHour: cfg.codalHour ?? 1,
+      codalMinute: cfg.codalMinute ?? 0,
     });
   }
 
@@ -624,6 +635,8 @@ export default function SettingsPage() {
         marketHour: number;
         marketMinute: number;
         spotIntervalHours: number;
+        codalHour: number;
+        codalMinute: number;
       }>('/news/schedule', {
         method: 'PUT',
         body: JSON.stringify(refreshTimes),
@@ -2101,6 +2114,23 @@ export default function SettingsPage() {
             />
           </div>
           <div>
+            <label className="label">ساعت صورت‌های مالی کدال</label>
+            <input
+              className="input max-w-[10rem]"
+              type="time"
+              dir="ltr"
+              value={clockValue(refreshTimes.codalHour, refreshTimes.codalMinute)}
+              onChange={(e) => {
+                const [h, m] = e.target.value.split(':').map(Number);
+                if (!Number.isInteger(h) || !Number.isInteger(m)) return;
+                setRefreshTimes({ ...refreshTimes, codalHour: h, codalMinute: m });
+              }}
+            />
+            <p className="mt-1 text-xs leading-6 text-navy-800/55">
+              روزی یک‌بار صورت‌های مالی تازهٔ کدال دانلود و آنالیز می‌شود؛ بازهٔ تاریخ در تب «به‌روزرسانی اطلاعات از کدال» است.
+            </p>
+          </div>
+          <div>
             <label className="label">فاصلهٔ دلار و طلا (ساعت)</label>
             <input
               className="input max-w-[10rem]"
@@ -2138,6 +2168,7 @@ export default function SettingsPage() {
         </form>
       )}
 
+      {tab === 'codalSync' && isAdmin && <CodalSyncPanel />}
 
       {tab === 'telegramAssistant' && isAdmin && (
         <form onSubmit={saveAssistant} className="card grid max-w-2xl gap-4">

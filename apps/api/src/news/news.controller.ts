@@ -40,6 +40,16 @@ class SaveRefreshScheduleDto {
   @Min(1)
   @Max(24)
   spotIntervalHours!: number;
+
+  @IsInt()
+  @Min(0)
+  @Max(23)
+  codalHour!: number;
+
+  @IsInt()
+  @Min(0)
+  @Max(59)
+  codalMinute!: number;
 }
 
 class ListQueryDto {

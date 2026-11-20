@@ -840,7 +840,7 @@ function gregorianToJulianDay(gy: number, gm: number, gd: number): number {
   return day;
 }
 
-function gregorianToJalali(gy: number, gm: number, gd: number): { jy: number; jm: number; jd: number } {
+export function gregorianToJalali(gy: number, gm: number, gd: number): { jy: number; jm: number; jd: number } {
   const jdn = gregorianToJulianDay(gy, gm, gd);
   let jy = gy - 621;
   const r = jalCal(jy);
@@ -858,7 +858,7 @@ function gregorianToJalali(gy: number, gm: number, gd: number): { jy: number; jm
   return { jy, jm: 7 + div(k, 30), jd: mod(k, 30) + 1 };
 }
 
-function jalaliToJulianDay(jy: number, jm: number, jd: number): number {
+export function jalaliToJulianDay(jy: number, jm: number, jd: number): number {
   const r = jalCal(jy);
   return gregorianToJulianDay(r.gy, 3, r.march) + (jm - 1) * 31 - div(jm, 7) * (jm - 7) + jd - 1;
 }

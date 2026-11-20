@@ -59,6 +59,8 @@ export class NewsService {
     marketHour: number;
     marketMinute: number;
     spotIntervalHours: number;
+    codalHour: number;
+    codalMinute: number;
   }) {
     return saveRefreshSchedule(this.prisma, data);
   }

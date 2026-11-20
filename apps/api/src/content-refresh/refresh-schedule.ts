@@ -11,6 +11,8 @@ export type ContentRefreshSchedule = {
   marketHour: number;
   marketMinute: number;
   spotIntervalHours: number;
+  codalHour: number;
+  codalMinute: number;
 };
 
 const DEFAULTS: ContentRefreshSchedule = {
@@ -21,6 +23,8 @@ const DEFAULTS: ContentRefreshSchedule = {
   marketHour: 22,
   marketMinute: 0,
   spotIntervalHours: 1,
+  codalHour: 1,
+  codalMinute: 0,
 };
 
 function clock(hour: number | null | undefined, minute: number | null | undefined, fallbackH: number, fallbackM: number) {
@@ -35,6 +39,7 @@ export async function readRefreshSchedule(prisma: PrismaService): Promise<Conten
   const iran = clock(row?.iranNewsHour, row?.iranNewsMinute, DEFAULTS.iranNewsHour, DEFAULTS.iranNewsMinute);
   const world = clock(row?.worldHour, row?.worldMinute, DEFAULTS.worldHour, DEFAULTS.worldMinute);
   const market = clock(row?.marketHour, row?.marketMinute, DEFAULTS.marketHour, DEFAULTS.marketMinute);
+  const codal = clock(row?.codalHour, row?.codalMinute, DEFAULTS.codalHour, DEFAULTS.codalMinute);
   return {
     iranNewsHour: iran.hour,
     iranNewsMinute: iran.minute,
@@ -43,6 +48,8 @@ export async function readRefreshSchedule(prisma: PrismaService): Promise<Conten
     marketHour: market.hour,
     marketMinute: market.minute,
     spotIntervalHours: row?.spotIntervalHours ?? DEFAULTS.spotIntervalHours,
+    codalHour: codal.hour,
+    codalMinute: codal.minute,
   };
 }
 
@@ -59,6 +66,7 @@ export async function saveRefreshSchedule(
   assertClock(data.iranNewsHour, data.iranNewsMinute, 'اخبار ایران');
   assertClock(data.worldHour, data.worldMinute, 'اقتصاد دنیا');
   assertClock(data.marketHour, data.marketMinute, 'بازار سهام');
+  assertClock(data.codalHour, data.codalMinute, 'صورت‌های مالی کدال');
   if (
     !Number.isInteger(data.spotIntervalHours) ||
     data.spotIntervalHours < 1 ||
