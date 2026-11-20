@@ -58,7 +58,7 @@ const COLUMNS: Array<{ key: SortKey; label: string; help?: string; fixed?: boole
   {
     key: 'costGap',
     label: 'مبلغ تفاوت با دارایی پایه',
-    help: 'اختیار خرید: مبلغ تمام شده − قیمت پایه؛ منفی (سبز) یعنی همین حالا در سود. اختیار فروش: اعمال − مبلغ تمام شده؛ مثبت (سبز) یعنی همین حالا در سود.',
+    help: 'اختیار خرید: قیمت پایه − مبلغ تمام شده. اختیار فروش: اعمال − مبلغ تمام شده. مثبت (سبز) یعنی همین حالا در سود و منفی (قرمز) یعنی زیان.',
   },
   {
     key: 'costGapPct',
@@ -158,22 +158,21 @@ function gapReference(row: OptionsTableRow): number | null {
   return row.side === 'PUT' ? rowNumber(row.strike) : rowNumber(row.underlyingPrice);
 }
 
-/**
- * رنگ مبلغ و درصد تفاوت: سود سبز، زیان قرمز.
- * اختیار خرید وقتی در سود است که تفاوت منفی باشد؛ اختیار فروش وقتی که مثبت باشد (اعمال بالاتر از مبلغ تمام شده).
- */
-function gapClass(row: OptionsTableRow, gap: number): string | undefined {
+/** رنگ مبلغ و درصد تفاوت برای هر دو نوع: مثبت یعنی در سود (سبز)، منفی زیان (قرمز) */
+function gapClass(gap: number): string | undefined {
   if (gap === 0) return undefined;
-  const profitable = row.side === 'PUT' ? gap > 0 : gap < 0;
-  return profitable ? 'text-emerald-700' : 'text-red-700';
+  return gap > 0 ? 'text-emerald-700' : 'text-red-700';
 }
 
-/** مبلغ تفاوت با دارایی پایه: اختیار خرید = مبلغ تمام شده − قیمت پایه، اختیار فروش = اعمال − مبلغ تمام شده */
+/**
+ * مبلغ تفاوت با دارایی پایه؛ مثبت یعنی همین حالا در سود.
+ * اختیار خرید = قیمت پایه − مبلغ تمام شده، اختیار فروش = اعمال − مبلغ تمام شده
+ */
 function costGap(row: OptionsTableRow): number | null {
   const total = totalCost(row);
   const reference = gapReference(row);
   if (total == null || reference == null) return null;
-  return row.side === 'PUT' ? reference - total : total - reference;
+  return reference - total;
 }
 
 /** درصد تفاوت با دارایی پایه: مبلغ تفاوت ÷ (اختیار خرید: قیمت پایه، اختیار فروش: اعمال) × ۱۰۰ */
@@ -214,7 +213,7 @@ function cellContent(row: OptionsTableRow, key: SortKey): React.ReactNode {
       const gap = costGap(row);
       if (gap == null) return '—';
       return (
-        <span dir="ltr" className={gapClass(row, gap)}>
+        <span dir="ltr" className={gapClass(gap)}>
           {formatNum(gap)}
         </span>
       );
@@ -223,7 +222,7 @@ function cellContent(row: OptionsTableRow, key: SortKey): React.ReactNode {
       const pctGap = costGapPct(row);
       if (pctGap == null) return '—';
       return (
-        <span dir="ltr" className={gapClass(row, pctGap)}>
+        <span dir="ltr" className={gapClass(pctGap)}>
           {pctGap.toLocaleString('fa-IR', { maximumFractionDigits: 1 })}٪
         </span>
       );
