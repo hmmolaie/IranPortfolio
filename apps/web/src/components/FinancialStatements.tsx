@@ -478,10 +478,6 @@ export function FinancialStatements({ instrumentId }: { instrumentId: string }) 
               className="input"
               onChange={(e) => setFile(e.target.files?.[0] ?? null)}
             />
-            <p className="mt-1 text-xs text-navy-800/55">
-              سالانه، میان‌دوره‌ای ۳ و ۶ و ۹ ماهه یا ترازنامه. نوع و تاریخ پایان دوره از خود فایل خوانده می‌شود. اکسل کدال دقیق‌تر از PDF است.
-              گزارشی که قبلاً ثبت شده (همان فایل، یا همان عنوان اطلاعیه در همان روز انتشار) دوباره آنالیز نمی‌شود.
-            </p>
           </div>
           <div className="min-w-[14rem] flex-1">
             <label className="label" htmlFor="statement-title">
