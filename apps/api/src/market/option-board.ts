@@ -639,25 +639,47 @@ export type ValuableOption = {
   reasonFa: string;
 };
 
-/** سود واقعیِ همان بازه: سود دوره را با تورمِ روزهای مانده تا سررسید تعدیل می‌کند. */
+/**
+ * سود واقعیِ همان بازه: سود دوره را با تورمِ روزهای مانده تا سررسید تعدیل می‌کند.
+ * base مبلغی است که سود نسبت به آن سنجیده می‌شود: اختیار خرید قیمت اختیار،
+ * اختیار فروش مبلغ تمام شده (قیمت پایه + قیمت اختیار).
+ */
 function realProfitForHolding(input: {
   profitPerUnit: number;
-  premium: number;
+  base: number;
   daysLeft: number;
   inflationPct: number | null;
 }): { realProfitRial: number; realProfitPct: number } | null {
-  const { profitPerUnit, premium, daysLeft, inflationPct } = input;
-  if (inflationPct == null || !Number.isFinite(inflationPct) || !(premium > 0) || !(daysLeft > 0)) return null;
+  const { profitPerUnit, base, daysLeft, inflationPct } = input;
+  if (inflationPct == null || !Number.isFinite(inflationPct) || !(base > 0) || !(daysLeft > 0)) return null;
   const annual = inflationPct / 100;
   if (annual <= -1) return null;
   const periodFactor = (1 + annual) ** (daysLeft / 365);
   if (!(periodFactor > 0)) return null;
-  const real = (1 + profitPerUnit / premium) / periodFactor - 1;
+  const real = (1 + profitPerUnit / base) / periodFactor - 1;
   return {
     realProfitPct: Math.round(real * 100),
     // برای یک سهم پایه، نه کل قرارداد؛ اندازهٔ قرارداد جدا نشان داده می‌شود
-    realProfitRial: Math.round(real * premium),
+    realProfitRial: Math.round(real * base),
   };
+}
+
+/**
+ * ورودی سود واقعی. اختیار خرید: سود = ارزش ذاتی − قیمت اختیار، نسبت به قیمت اختیار.
+ * اختیار فروش: مبلغ تمام شده = قیمت پایه + قیمت اختیار و سود = اعمال − مبلغ تمام شده، نسبت به مبلغ تمام شده.
+ */
+function realProfitInput(
+  side: OptionSide,
+  strike: number,
+  spot: number | null,
+  premium: number | null,
+  profitPerUnit: number | null,
+): { profitPerUnit: number; base: number } | null {
+  if (premium == null || !(premium > 0)) return null;
+  if (side === 'CALL') return profitPerUnit == null ? null : { profitPerUnit, base: premium };
+  if (spot == null || !(spot > 0)) return null;
+  const cost = spot + premium;
+  return { profitPerUnit: strike - cost, base: cost };
 }
 
 export function listValuableOptions(rows: BoardSource[], inflationPct: number | null = null): ValuableOption[] {
@@ -686,15 +708,11 @@ export function listValuableOptions(rows: BoardSource[], inflationPct: number | 
       spot == null ? null : parsed.side === 'CALL' ? Math.max(0, spot - parsed.strike) : Math.max(0, parsed.strike - spot);
     const profitPerUnit = intrinsic == null || premium == null ? null : intrinsic - premium;
     const profitPct = profitPerUnit == null || premium == null || !(premium > 0) ? null : (profitPerUnit / premium) * 100;
+    const realIn = realProfitInput(parsed.side, parsed.strike, spot, premium, profitPerUnit);
     const real =
-      profitPerUnit == null || premium == null || !(premium > 0) || parsed.daysLeft == null
+      realIn == null || parsed.daysLeft == null
         ? null
-        : realProfitForHolding({
-            profitPerUnit,
-            premium,
-            daysLeft: parsed.daysLeft,
-            inflationPct,
-          });
+        : realProfitForHolding({ ...realIn, daysLeft: parsed.daysLeft, inflationPct });
     const daysNote =
       parsed.daysLeft == null ? '' : ` تا سررسید ${Math.round(parsed.daysLeft).toLocaleString('en-US')} روز مانده.`;
     out.push({

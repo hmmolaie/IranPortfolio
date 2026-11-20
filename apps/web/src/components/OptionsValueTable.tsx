@@ -53,14 +53,18 @@ const COLUMNS: Array<{ key: SortKey; label: string; help?: string; fixed?: boole
   {
     key: 'totalCost',
     label: 'مبلغ تمام شده',
-    help: 'نقطهٔ سربه‌سر. اختیار خرید: اعمال + قیمت اختیار. اختیار فروش: اعمال − قیمت اختیار.',
+    help: 'اختیار خرید: اعمال + قیمت اختیار. اختیار فروش: قیمت پایه + قیمت اختیار.',
   },
   {
     key: 'costGap',
     label: 'مبلغ تفاوت با دارایی پایه',
-    help: 'مبلغ تمام شده − قیمت پایه. سبز یعنی همین حالا در سود: برای اختیار خرید منفی و برای اختیار فروش مثبت.',
+    help: 'اختیار خرید: مبلغ تمام شده − قیمت پایه. اختیار فروش: مبلغ تمام شده − اعمال. منفی (سبز) یعنی همین حالا در سود.',
   },
-  { key: 'costGapPct', label: 'درصد تفاوت با دارایی پایه', help: 'مبلغ تفاوت ÷ قیمت پایه × ۱۰۰' },
+  {
+    key: 'costGapPct',
+    label: 'درصد تفاوت با دارایی پایه',
+    help: 'اختیار خرید: مبلغ تفاوت ÷ قیمت پایه × ۱۰۰. اختیار فروش: مبلغ تفاوت ÷ اعمال × ۱۰۰.',
+  },
   { key: 'buyQueue', label: 'حجم صف خرید' },
   { key: 'sellQueue', label: 'حجم صف فروش' },
   { key: 'daysLeft', label: 'روز مانده', help: 'روز تقویمی تا سررسید' },
@@ -69,7 +73,11 @@ const COLUMNS: Array<{ key: SortKey; label: string; help?: string; fixed?: boole
     label: 'سود',
     help: 'سود هر واحد اگر همین حالا اعمال شود: ارزش ذاتی − قیمت اختیار. درصد نسبت به قیمت اختیار است.',
   },
-  { key: 'realProfit', label: 'سود واقعی', help: 'همان سود پس از کسر تورم تا سررسید' },
+  {
+    key: 'realProfit',
+    label: 'سود واقعی',
+    help: 'پس از کسر تورم تا سررسید. اختیار خرید: همان سود نسبت به قیمت اختیار. اختیار فروش: (اعمال − مبلغ تمام شده) نسبت به مبلغ تمام شده.',
+  },
 ];
 
 function parseFilterNumber(raw: string): number | null {
@@ -131,41 +139,45 @@ const INITIAL_FILTERS: OptionFilters = {
 };
 
 /**
- * مبلغ تمام شده (نقطهٔ سربه‌سر):
- * اختیار خرید = اعمال + قیمت اختیار، اختیار فروش = اعمال − قیمت اختیار
+ * مبلغ تمام شده:
+ * اختیار خرید = اعمال + قیمت اختیار، اختیار فروش = قیمت پایه + قیمت اختیار
  */
 function totalCost(row: OptionsTableRow): number | null {
   const premium = rowNumber(row.premium);
+  if (premium == null || !(premium > 0)) return null;
+  if (row.side === 'PUT') {
+    const underlying = rowNumber(row.underlyingPrice);
+    return underlying == null ? null : underlying + premium;
+  }
   const strike = rowNumber(row.strike);
-  if (premium == null || !(premium > 0) || strike == null) return null;
-  return row.side === 'PUT' ? strike - premium : strike + premium;
+  return strike == null ? null : strike + premium;
 }
 
-/**
- * رنگ مبلغ و درصد تفاوت: سود خریدار سبز، زیان قرمز.
- * اختیار خرید وقتی سود می‌دهد که سربه‌سر زیر قیمت پایه باشد (تفاوت منفی)؛
- * اختیار فروش وقتی که سربه‌سر بالای قیمت پایه باشد (تفاوت مثبت).
- */
-function gapClass(row: OptionsTableRow, gap: number): string | undefined {
+/** مبنای مقایسه: اختیار خرید قیمت پایه، اختیار فروش اعمال */
+function gapReference(row: OptionsTableRow): number | null {
+  return row.side === 'PUT' ? rowNumber(row.strike) : rowNumber(row.underlyingPrice);
+}
+
+/** رنگ مبلغ و درصد تفاوت: منفی یعنی همین حالا در سود (سبز)، مثبت زیان (قرمز)؛ برای هر دو نوع */
+function gapClass(gap: number): string | undefined {
   if (gap === 0) return undefined;
-  const profitable = row.side === 'PUT' ? gap > 0 : gap < 0;
-  return profitable ? 'text-emerald-700' : 'text-red-700';
+  return gap < 0 ? 'text-emerald-700' : 'text-red-700';
 }
 
-/** مبلغ تفاوت با دارایی پایه = مبلغ تمام شده − قیمت پایه */
+/** مبلغ تفاوت با دارایی پایه: اختیار خرید = مبلغ تمام شده − قیمت پایه، اختیار فروش = مبلغ تمام شده − اعمال */
 function costGap(row: OptionsTableRow): number | null {
   const total = totalCost(row);
-  const underlying = rowNumber(row.underlyingPrice);
-  if (total == null || underlying == null) return null;
-  return total - underlying;
+  const reference = gapReference(row);
+  if (total == null || reference == null) return null;
+  return total - reference;
 }
 
-/** درصد تفاوت با دارایی پایه = مبلغ تفاوت با دارایی پایه ÷ قیمت پایه × ۱۰۰ */
+/** درصد تفاوت با دارایی پایه: مبلغ تفاوت ÷ (اختیار خرید: قیمت پایه، اختیار فروش: اعمال) × ۱۰۰ */
 function costGapPct(row: OptionsTableRow): number | null {
   const gap = costGap(row);
-  const underlying = rowNumber(row.underlyingPrice);
-  if (gap == null || underlying == null || !(underlying > 0)) return null;
-  return (gap / underlying) * 100;
+  const reference = gapReference(row);
+  if (gap == null || reference == null || !(reference > 0)) return null;
+  return (gap / reference) * 100;
 }
 
 function formatQueue(value: number | null | undefined): string {
@@ -198,7 +210,7 @@ function cellContent(row: OptionsTableRow, key: SortKey): React.ReactNode {
       const gap = costGap(row);
       if (gap == null) return '—';
       return (
-        <span dir="ltr" className={gapClass(row, gap)}>
+        <span dir="ltr" className={gapClass(gap)}>
           {formatNum(gap)}
         </span>
       );
@@ -207,7 +219,7 @@ function cellContent(row: OptionsTableRow, key: SortKey): React.ReactNode {
       const pctGap = costGapPct(row);
       if (pctGap == null) return '—';
       return (
-        <span dir="ltr" className={gapClass(row, pctGap)}>
+        <span dir="ltr" className={gapClass(pctGap)}>
           {pctGap.toLocaleString('fa-IR', { maximumFractionDigits: 1 })}٪
         </span>
       );

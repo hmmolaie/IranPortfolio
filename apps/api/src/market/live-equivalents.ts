@@ -31,9 +31,12 @@ export type LiveEquivalent = {
   premiumSource: 'live' | 'stored';
   askVolume: number | null;
   contractSize: number | null;
-  /** اختیار خرید: اعمال + قیمت اختیار. اختیار فروش: اعمال − قیمت اختیار. */
+  /** اختیار خرید: اعمال + قیمت اختیار. اختیار فروش: قیمت سهم + قیمت اختیار. */
   effectivePrice: number;
-  /** اختیار خرید: چند درصد گران‌تر از خرید خود سهم. اختیار فروش: چند درصد کمتر از فروش خود سهم. */
+  /**
+   * اختیار خرید: (قیمت تمام‌شده − قیمت سهم) ÷ قیمت سهم. اختیار فروش: (قیمت تمام‌شده − اعمال) ÷ اعمال.
+   * منفی یعنی همین حالا در سود.
+   */
   gapPct: number;
   costPerContract: number;
   noteFa: string;
@@ -124,9 +127,11 @@ export function buildEquivalent(
 ): LiveEquivalent | null {
   if (!(premium > 0) || !(spot > 0) || option.daysLeft == null) return null;
   const call = option.side === 'CALL';
-  const effectivePrice = call ? option.strike + premium : option.strike - premium;
+  const effectivePrice = call ? option.strike + premium : spot + premium;
   if (!(effectivePrice > 0)) return null;
-  const gap = call ? ((effectivePrice - spot) / spot) * 100 : ((spot - effectivePrice) / spot) * 100;
+  const gap = call
+    ? ((effectivePrice - spot) / spot) * 100
+    : ((effectivePrice - option.strike) / option.strike) * 100;
   if (gap > MAX_GAP_PCT) return null;
   const gapPct = Math.round(gap * 10) / 10;
   const size = option.contractSize != null && option.contractSize > 0 ? option.contractSize : 1;
@@ -136,8 +141,8 @@ export function buildEquivalent(
       ? `خرید این اختیار و اعمال آن در سررسید، سهم را حدود ${amount}٪ بالاتر از قیمت فعلی تمام می‌کند.`
       : `خرید این اختیار و اعمال آن در سررسید، سهم را حدود ${amount}٪ پایین‌تر از قیمت فعلی تمام می‌کند.`
     : gapPct >= 0
-      ? `خرید این اختیار و اعمال آن در سررسید، فروش سهم را حدود ${amount}٪ پایین‌تر از قیمت فعلی تمام می‌کند.`
-      : `خرید این اختیار و اعمال آن در سررسید، فروش سهم را حدود ${amount}٪ بالاتر از قیمت فعلی تمام می‌کند.`;
+      ? `خرید سهم به‌همراه این اختیار حدود ${amount}٪ بیشتر از قیمت اعمال تمام می‌شود؛ اعمال در سررسید همین اندازه زیان دارد.`
+      : `خرید سهم به‌همراه این اختیار حدود ${amount}٪ کمتر از قیمت اعمال تمام می‌شود؛ اعمال در سررسید همین اندازه سود دارد.`;
   return {
     id: option.id,
     symbol: option.symbol,
